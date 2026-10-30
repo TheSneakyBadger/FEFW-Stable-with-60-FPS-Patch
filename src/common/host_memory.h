@@ -80,6 +80,10 @@ public:
         return virtual_base;
     }
 
+    [[nodiscard]] size_t VirtualSize() const noexcept {
+        return virtual_size;
+    }
+
     bool IsInVirtualRange(void* address) const noexcept {
         return address >= virtual_base && address < virtual_base + virtual_size;
     }
