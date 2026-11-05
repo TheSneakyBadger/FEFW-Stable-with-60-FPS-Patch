@@ -27,6 +27,7 @@
 #include "core/loader/nca.h"
 #include "core/loader/nro.h"
 #include "core/loader/nso.h"
+#include "core/loader/nup.h"
 #include "core/loader/nsp.h"
 #include "core/loader/xci.h"
 
@@ -133,6 +134,8 @@ FileType IdentifyFile(FileSys::VirtualFile file) {
         return *nsp_type;
     } else if (const auto xci_type = IdentifyFileLoader<AppLoader_XCI>(file)) {
         return *xci_type;
+    } else if (const auto nup_type = IdentifyFileLoader<AppLoader_NUP>(file)) {
+        return *nup_type;
     } else if (const auto nro_type = IdentifyFileLoader<AppLoader_NRO>(file)) {
         return *nro_type;
     } else if (const auto nca_type = IdentifyFileLoader<AppLoader_NCA>(file)) {
@@ -150,7 +153,7 @@ FileType IdentifyFile(FileSys::VirtualFile file) {
 
 bool IsContainerType(FileType type) {
     return type == FileType::NSP || type == FileType::NSZ || type == FileType::XCI ||
-           type == FileType::XCZ;
+           type == FileType::XCZ || type == FileType::NUP;
 }
 
 bool IsBootableGameContainer(FileSys::VirtualFile file, FileType type, u64 program_id,
@@ -164,6 +167,24 @@ bool IsBootableGameContainer(FileSys::VirtualFile file, FileType type, u64 progr
     }
 
     if (!IsContainerType(type)) {
+        return false;
+    }
+
+    if (type == FileType::NUP) {
+        FileSys::NupContainer nup{file};
+        if (nup.GetStatus() != ResultStatus::Success) {
+            return false;
+        }
+        // A base package boots normally; a standalone update (no base) carries
+        // a complete patched tree and boots on its own (SPEC section 4.1.2).
+        if (const auto base = nup.FindBasePackage();
+            base.has_value() && nup.GetExeFSDir(*base) != nullptr) {
+            return true;
+        }
+        if (const auto update = nup.FindBestUpdatePackage();
+            update.has_value() && nup.GetExeFSDir(*update) != nullptr) {
+            return true;
+        }
         return false;
     }
 
@@ -194,6 +215,8 @@ FileType GuessFromFilename(const std::string& name) {
         return FileType::NSZ;
     else if (extension == "kip")
         return FileType::KIP;
+    else if (extension == "nup")
+        return FileType::NUP;
     return FileType::Unknown;
 }
 
@@ -217,6 +240,8 @@ std::string GetFileTypeString(FileType type) {
         return "NSZ";
     case FileType::KIP:
         return "KIP";
+    case FileType::NUP:
+        return "NUP";
     case FileType::DeconstructedRomDirectory:
         return "Directory";
     case FileType::Error:
@@ -227,7 +252,7 @@ std::string GetFileTypeString(FileType type) {
     return "unknown";
 }
 
-constexpr std::array<const char*, 68> RESULT_MESSAGES{
+constexpr std::array<const char*, 70> RESULT_MESSAGES{
     "The operation completed successfully.",
     "The loader requested to load is already loaded.",
     "The operation is not implemented.",
@@ -296,6 +321,8 @@ constexpr std::array<const char*, 68> RESULT_MESSAGES{
     "The INI file contains more than the maximum allowable number of KIP files.",
     "Integrity verification could not be performed for this file.",
     "Integrity verification failed.",
+    "The NUP container is malformed or its TOC hash does not match.",
+    "The NUP container does not contain a loadable base package.",
 };
 
 std::string GetResultStatusString(ResultStatus status) {
@@ -370,6 +397,10 @@ static std::unique_ptr<AppLoader> GetFileLoader(Core::System& system, FileSys::V
     // NX KIP (Kernel Internal Process) file format
     case FileType::KIP:
         return std::make_unique<AppLoader_KIP>(std::move(file));
+
+    // NUP (NX Package) container format.
+    case FileType::NUP:
+        return std::make_unique<AppLoader_NUP>(std::move(file));
 
     // NX deconstructed ROM directory.
     case FileType::DeconstructedRomDirectory:

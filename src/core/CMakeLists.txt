@@ -124,6 +124,8 @@ add_library(core STATIC
     file_sys/kernel_executable.h
     file_sys/nca_metadata.cpp
     file_sys/nca_metadata.h
+    file_sys/nup_container.cpp
+    file_sys/nup_container.h
     file_sys/partition_filesystem.cpp
     file_sys/partition_filesystem.h
     file_sys/patch_manager.cpp
@@ -1166,6 +1168,8 @@ add_library(core STATIC
     loader/nso.h
     loader/nsp.cpp
     loader/nsp.h
+    loader/nup.cpp
+    loader/nup.h
     loader/xci.cpp
     loader/xci.h
     memory.cpp
