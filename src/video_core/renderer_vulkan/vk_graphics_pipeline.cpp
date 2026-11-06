@@ -80,7 +80,7 @@ void NoteHandleTableBytes(GPUVAddr base, std::span<const u8> bytes) {
 /// Fortune's Weave writes some texture-handle tables with compute shaders a few draws before the
 /// draws that index them, so reading them on the CPU waited for all GPU work submitted so far
 /// (a Finish, about once a frame, 0.2-1.3 ms). Those tables come out identical frame after frame
-/// (every download in Dagdion). Once a table has downloaded identically STREAK times in a row,
+/// (every download in Dagsion). Once a table has downloaded identically STREAK times in a row,
 /// draws use the bytes already in guest memory, and a copy of the GPU's version, recorded without
 /// waiting, is compared once the GPU has finished it. A difference stops this for the table until
 /// it is stable again; the draws in between (about a frame) used the previous handles.

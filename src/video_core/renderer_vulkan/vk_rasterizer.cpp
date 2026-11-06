@@ -956,7 +956,7 @@ private:
 // The draw thread takes the cache locks for every draw (~40% of the time in busy Fortune's Weave
 // scenes) and takes them again well under a microsecond after releasing them: a guest CPU thread
 // woken by the release usually found them taken again, and waited ~17 us per write on average
-// (0.6-0.9 s per second across the cores in Dagdion). A draw now first lets the writes already
+// (0.6-0.9 s per second across the cores in Dagsion). A draw now first lets the writes already
 // waiting go (they hold the locks for well under a microsecond), for at most ~20 us.
 void RasterizerVulkan::YieldToCpuWrites() {
     if (cpu_writes_in_flight.load(std::memory_order_acquire) == 0 || !CpuWritePriority()) {
