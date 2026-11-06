@@ -125,9 +125,10 @@ void TranslatorVisitor::ATOMS_cas(u64 insn) {
         throw NotImplementedException("Instruction ATOMS (cas) is not implemented");
     }
     const s32 byte_offset{static_cast<s32>(cas.word_offset.Value() * 4)};
-    const IR::U32 offset{cas.addr_reg == IR::Reg::RZ
-                             ? ir.Imm32(static_cast<u32>(byte_offset))
-                             : ir.IAdd(X(cas.addr_reg), ir.Imm32(byte_offset))};
+    IR::U32 offset{ir.Imm32(static_cast<u32>(byte_offset))};
+    if (cas.addr_reg != IR::Reg::RZ) {
+        offset = ir.IAdd(X(cas.addr_reg), ir.Imm32(byte_offset));
+    }
     X(cas.dest_reg, ir.SharedAtomicCompareExchange(offset, X(cas.compare_reg), X(cas.value_reg)));
 }
 
