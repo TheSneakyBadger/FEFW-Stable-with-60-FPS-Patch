@@ -118,10 +118,7 @@ struct NullRenderWidget : public RenderWidget {
 GRenderWindow::GRenderWindow(MainWindow* parent,
                              std::shared_ptr<InputCommon::InputSubsystem> input_subsystem_)
     : QWidget(parent), input_subsystem{std::move(input_subsystem_)} {
-    setWindowTitle(QStringLiteral("Eden %1 | %2-%3")
-                       .arg(QString::fromUtf8(Common::g_build_name),
-                            QString::fromUtf8(Common::g_scm_branch),
-                            QString::fromUtf8(Common::g_scm_desc)));
+    setWindowTitle(QStringLiteral("Fortune's Eden"));
     setAttribute(Qt::WA_AcceptTouchEvents);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
