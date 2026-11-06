@@ -43,24 +43,37 @@
 #include "core/hle/service/service.h"
 
 namespace {
-// Threads libgav1 decodes each AV1 frame with. Fortune's Weave's 1440p cutscenes take up to
-// ~40 ms a frame on 4 threads in their busiest scenes, over the 33 ms a 30 FPS video has, and
-// the game's presentation falls to a few FPS whenever its video falls behind. Half the logical
-// processors (4 to 8); EDEN_AV1_THREADS=N (1-32) overrides it.
+// Threads libgav1 decodes AV1 with. Fortune's Weave's 1440p cutscenes took up to ~40 ms a frame
+// in their busiest scenes, over the 33 ms a 30 FPS video has, and the game's presentation falls
+// to a few FPS whenever its video falls behind. Their frames are one tile each, so more threads
+// only help with frame-parallel decoding (several frames at once; libgav1 uses it when there are
+// more than 3 threads per tile, about half as many frames as threads). All logical processors but
+// 4 (4 to 12); EDEN_AV1_THREADS=N (1-32) overrides it.
 int Av1DecodeThreads() {
     static const int threads = [] {
-        int count = static_cast<int>(std::thread::hardware_concurrency() / 2);
-        count = (std::clamp)(count, 4, 8);
+        int count = static_cast<int>(std::thread::hardware_concurrency()) - 4;
+        count = (std::clamp)(count, 4, 12);
         if (const char* const value = std::getenv("EDEN_AV1_THREADS")) {
             const int requested = std::atoi(value);
             if (requested >= 1 && requested <= 32) {
                 count = requested;
             }
         }
-        LOG_INFO(Service_AM, "Native AV1 decoding with {} threads", count);
         return count;
     }();
     return threads;
+}
+
+// EDEN_AV1_FRAME_PARALLEL=0 decodes one frame at a time, as before.
+bool Av1FrameParallel() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_AV1_FRAME_PARALLEL");
+        const bool on = value == nullptr || value[0] != '0';
+        LOG_INFO(Service_AM, "Native AV1 decoding with {} threads{}", Av1DecodeThreads(),
+                 on ? ", frame-parallel" : ", one frame at a time");
+        return on;
+    }();
+    return enabled;
 }
 } // Anonymous namespace
 
@@ -145,6 +158,7 @@ private:
         output_properties.clear();
         decoded_frames.clear();
         decoder.reset();
+        DropAv1InFlight();
         h264_context.reset();
         h264_decoder.reset();
         h264_timestamps.clear();
@@ -322,77 +336,147 @@ private:
         return DecodePendingH264();
     }
 
-    // Decodes one AV1 input on the decode worker (the only user of the libgav1 decoder while it
-    // runs; Stop and Flush wait for it to be idle before touching the decoder).
-    Result DecodeAv1(const PendingInput& input, std::optional<DecodedFrame>& out) {
-        if (input.eos) {
-            R_UNLESS(decoder->SignalEOS() == libgav1::kStatusOk, Kernel::ResultInvalidState);
-            DecodedFrame frame{};
-            frame.eos = true;
-            frame.submission_id = input.submission_id;
-            frame.timestamp = input.timestamp;
-            out = std::move(frame);
-            R_SUCCEED();
+    // Copies a frame libgav1 decoded (valid until the next DequeueFrame).
+    static DecodedFrame CopyAv1Frame(const libgav1::DecoderBuffer& output, u64 timestamp) {
+        DecodedFrame frame{};
+        frame.bitdepth = output.bitdepth;
+        frame.format = static_cast<u32>(output.image_format);
+        frame.matrix = static_cast<u32>(output.matrix_coefficients);
+        frame.full_range = output.color_range == kLibgav1ColorRangeFull;
+        frame.submission_id = output.user_private_data;
+        frame.timestamp = timestamp;
+        for (u32 plane = 0; plane < 3; ++plane) {
+            frame.widths[plane] = output.displayed_width[plane];
+            frame.heights[plane] = output.displayed_height[plane];
+            const size_t row_bytes = frame.widths[plane] * (frame.bitdepth > 8 ? 2U : 1U);
+            frame.planes[plane].resize(row_bytes * frame.heights[plane]);
+            for (u32 row = 0; row < frame.heights[plane]; ++row)
+                std::memcpy(frame.planes[plane].data() + row * row_bytes,
+                    output.plane[plane] + row * output.stride[plane], row_bytes);
         }
-        const auto decode_start = std::chrono::steady_clock::now();
-        const auto enqueue = decoder->EnqueueFrame(input.bytes.data(), input.bytes.size(), input.submission_id, nullptr);
-        const libgav1::DecoderBuffer* output{};
-        const auto dequeue = enqueue == libgav1::kStatusOk ? decoder->DequeueFrame(&output) : enqueue;
-        if (dequeue != libgav1::kStatusOk) {
-            LOG_ERROR(Service_AM, "Native AV1 packet rejected: enqueue={}, dequeue={}", static_cast<int>(enqueue), static_cast<int>(dequeue));
-            R_THROW(Kernel::ResultInvalidArgument);
-        }
-        if (output) {
-            DecodedFrame frame{};
-            frame.bitdepth = output->bitdepth;
-            frame.format = static_cast<u32>(output->image_format);
-            frame.matrix = static_cast<u32>(output->matrix_coefficients);
-            frame.full_range = output->color_range == kLibgav1ColorRangeFull;
-            frame.submission_id = output->user_private_data;
-            frame.timestamp = input.timestamp;
-            for (u32 plane = 0; plane < 3; ++plane) {
-                frame.widths[plane] = output->displayed_width[plane];
-                frame.heights[plane] = output->displayed_height[plane];
-                const size_t row_bytes = frame.widths[plane] * (frame.bitdepth > 8 ? 2U : 1U);
-                frame.planes[plane].resize(row_bytes * frame.heights[plane]);
-                for (u32 row = 0; row < frame.heights[plane]; ++row)
-                    std::memcpy(frame.planes[plane].data() + row * row_bytes,
-                        output->plane[plane] + row * output->stride[plane], row_bytes);
-            }
-            frame.decode_time = std::chrono::steady_clock::now() - decode_start;
-            LOG_DEBUG(Service_AM, "native AV1 decoded submission={}, dimensions={}x{}, depth={}, format={}, matrix={}, range={}",
-                      frame.submission_id, frame.widths[0], frame.heights[0], frame.bitdepth, frame.format, frame.matrix, frame.full_range);
-            out = std::move(frame);
-        }
-        R_SUCCEED();
+        LOG_DEBUG(Service_AM, "native AV1 decoded submission={}, dimensions={}x{}, depth={}, format={}, matrix={}, range={}",
+                  frame.submission_id, frame.widths[0], frame.heights[0], frame.bitdepth, frame.format, frame.matrix, frame.full_range);
+        return frame;
     }
 
-    // AV1 decode worker: decodes submitted inputs ahead (up to MaximumDecodedAhead frames) so the
-    // game's IPC calls only convert and write a frame that is already decoded, instead of also
-    // spending ~13 ms per 1440p frame in libgav1.
+    static void ReleaseAv1Input(void*, void*) {
+        // The worker keeps each input in av1_in_flight until its frame is dequeued, which is
+        // after libgav1 releases it (or after SignalEOS / the decoder's destruction drops it).
+    }
+
+    void ReleaseInFlightBytes(u64 bytes) {
+        pending_input_bytes = pending_input_bytes >= bytes ? pending_input_bytes - bytes : 0;
+    }
+
+    // AV1 decode worker, the only user of the libgav1 decoder while decode_busy (Stop and Flush
+    // wait for it to be idle before touching the decoder). It hands libgav1 every input it will
+    // take, so frame-parallel decoding has several frames to work on at once, then takes the
+    // decoded frames in order, up to MaximumDecodedAhead ahead of the images the game hands back,
+    // so the game's IPC calls only convert and write a frame that is already decoded.
+    // Fortune's Weave's 1440p cutscenes are one tile per frame: decoding one frame at a time
+    // used one thread for most of each frame (up to ~40 ms in the busiest scenes, over the 33 ms
+    // a 30 FPS video has, whatever the thread count).
     void DecodeWorker(std::stop_token stop) {
         Common::SetCurrentThreadName("NativeVideoDecode");
         std::unique_lock lock{decode_mutex};
+        const auto can_enqueue = [&] {
+            return !pending_inputs.empty() && !pending_inputs.front().eos && !av1_decoder_full;
+        };
+        const auto can_dequeue = [&] {
+            return !av1_in_flight.empty() && decoded_frames.size() < MaximumDecodedAhead;
+        };
+        const auto can_end_stream = [&] {
+            return !pending_inputs.empty() && pending_inputs.front().eos && av1_in_flight.empty() &&
+                   decoded_frames.size() < MaximumDecodedAhead;
+        };
         while (decode_cv.wait(lock, stop, [&] {
-            return !pending_inputs.empty() && !decode_error && decoded_frames.size() < MaximumDecodedAhead;
+            return !decode_error && (can_enqueue() || can_dequeue() || can_end_stream());
         })) {
             if (stop.stop_requested()) break;
+            if (can_enqueue()) {
+                PendingInput input = std::move(pending_inputs.front());
+                pending_inputs.pop_front();
+                decode_busy = true;
+                lock.unlock();
+                const auto enqueue = decoder->EnqueueFrame(input.bytes.data(), input.bytes.size(),
+                                                           static_cast<int64_t>(input.submission_id), nullptr);
+                lock.lock();
+                decode_busy = false;
+                if (enqueue == libgav1::kStatusTryAgain) {
+                    // libgav1's queue is full: take a frame out first
+                    av1_decoder_full = true;
+                    pending_inputs.push_front(std::move(input));
+                } else if (enqueue != libgav1::kStatusOk) {
+                    LOG_ERROR(Service_AM, "Native AV1 packet rejected: enqueue={}", static_cast<int>(enqueue));
+                    ReleaseInFlightBytes(input.bytes.size());
+                    decode_error = Kernel::ResultInvalidArgument;
+                } else {
+                    av1_in_flight.push_back(std::move(input));
+                }
+                decode_cv.notify_all();
+                continue;
+            }
+            if (can_dequeue()) {
+                const u64 timestamp = av1_in_flight.front().timestamp;
+                decode_busy = true;
+                lock.unlock();
+                // Waits for the oldest frame only; libgav1 keeps decoding the others meanwhile.
+                const auto wait_start = std::chrono::steady_clock::now();
+                const libgav1::DecoderBuffer* output{};
+                const auto dequeue = decoder->DequeueFrame(&output);
+                std::optional<DecodedFrame> frame;
+                if (dequeue == libgav1::kStatusOk && output) {
+                    frame = CopyAv1Frame(*output, timestamp);
+                    frame->decode_time = std::chrono::steady_clock::now() - wait_start;
+                }
+                lock.lock();
+                decode_busy = false;
+                av1_decoder_full = false;
+                if (dequeue != libgav1::kStatusOk) {
+                    LOG_ERROR(Service_AM, "Native AV1 packet rejected: dequeue={}", static_cast<int>(dequeue));
+                    // libgav1 dropped every frame it had after a failure
+                    for (const PendingInput& input : av1_in_flight) {
+                        ReleaseInFlightBytes(input.bytes.size());
+                    }
+                    av1_in_flight.clear();
+                    decode_error = Kernel::ResultInvalidArgument;
+                } else {
+                    ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
+                    av1_in_flight.pop_front();
+                    if (frame) {
+                        decoded_frames.push_back(std::move(*frame));
+                    }
+                }
+                decode_cv.notify_all();
+                continue;
+            }
+            // End of stream, once every frame before it has been taken out
             PendingInput input = std::move(pending_inputs.front());
             pending_inputs.pop_front();
-            pending_input_bytes -= input.bytes.size();
             decode_busy = true;
             lock.unlock();
-            std::optional<DecodedFrame> frame;
-            const Result result = DecodeAv1(input, frame);
+            const bool reset = decoder->SignalEOS() == libgav1::kStatusOk;
             lock.lock();
             decode_busy = false;
-            if (result.IsError()) {
-                decode_error = result;
-            } else if (frame) {
-                decoded_frames.push_back(std::move(*frame));
+            av1_decoder_full = false;
+            if (!reset) {
+                decode_error = Kernel::ResultInvalidState;
+            } else {
+                DecodedFrame frame{};
+                frame.eos = true;
+                frame.submission_id = input.submission_id;
+                frame.timestamp = input.timestamp;
+                decoded_frames.push_back(std::move(frame));
             }
             decode_cv.notify_all();
         }
+    }
+
+    // After SignalEOS (or destroying the decoder) under QuiesceAv1Decoding's lock: libgav1 holds
+    // none of the inputs it was given any more.
+    void DropAv1InFlight() {
+        av1_in_flight.clear();
+        av1_decoder_full = false;
     }
 
     // Stops AV1 decoding in flight: drops queued inputs and waits for the worker to finish the
@@ -427,7 +511,8 @@ private:
                 // call, since the game then waits on the image's fence and may make no other call.
                 std::unique_lock lock{decode_mutex};
                 decode_cv.wait(lock, [&] {
-                    return !decoded_frames.empty() || decode_error || (pending_inputs.empty() && !decode_busy);
+                    return !decoded_frames.empty() || decode_error ||
+                           (pending_inputs.empty() && av1_in_flight.empty() && !decode_busy);
                 });
                 if (decode_error) {
                     const Result error = *decode_error;
@@ -734,6 +819,7 @@ private:
                     const auto lock = QuiesceAv1Decoding();
                     decoded_frames.clear();
                     result = decoder->SignalEOS() == libgav1::kStatusOk ? ResultSuccess : Kernel::ResultInvalidState;
+                    DropAv1InFlight();
                 }
                 if (result.IsSuccess()) {
                     started = false;
@@ -807,6 +893,7 @@ private:
                     pending_inputs.clear();
                     pending_input_bytes = 0;
                     result = decoder->SignalEOS() == libgav1::kStatusOk ? ResultSuccess : Kernel::ResultInvalidState;
+                    DropAv1InFlight();
                     if (result.IsSuccess() && submission_event && transfer_memory) {
                         submission_event->Signal(kernel);
                     }
@@ -968,6 +1055,9 @@ private:
                                 auto backend = std::make_unique<libgav1::Decoder>();
                                 libgav1::DecoderSettings settings;
                                 settings.threads = Av1DecodeThreads();
+                                settings.frame_parallel = Av1FrameParallel();
+                                settings.blocking_dequeue = true;
+                                settings.release_input_buffer = &INativeVideoCodec::ReleaseAv1Input;
                                 if (backend->Init(&settings) == libgav1::kStatusOk) {
                                     transfer_memory = memory.GetPointerUnsafe();
                                     transfer_memory->Open(kernel);
@@ -1030,6 +1120,11 @@ private:
     std::condition_variable_any decode_cv;
     bool decode_busy{};
     std::optional<Result> decode_error;
+    // AV1 inputs libgav1 has, oldest first (it decodes several at once in frame-parallel mode);
+    // each is kept until its frame is taken out.
+    std::deque<PendingInput> av1_in_flight;
+    bool av1_decoder_full{}; // libgav1 said kStatusTryAgain: take a frame out before enqueuing
+
     std::jthread decode_worker; // Last: stopped and joined first (Reset also joins it).
 };
 
