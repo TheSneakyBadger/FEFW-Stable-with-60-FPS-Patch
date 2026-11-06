@@ -432,12 +432,21 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
             LOG_WARNING(Render_Vulkan, "sl.interposer.dll has no {}", name);
         }
     };
-    hook(dld.vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
-    hook(dld.vkDestroySwapchainKHR, "vkDestroySwapchainKHR");
-    hook(dld.vkGetSwapchainImagesKHR, "vkGetSwapchainImagesKHR");
-    hook(dld.vkAcquireNextImageKHR, "vkAcquireNextImageKHR");
-    hook(dld.vkQueuePresentKHR, "vkQueuePresentKHR");
-    hook(dld.vkDeviceWaitIdle, "vkDeviceWaitIdle");
+    // EDEN_DLSS_SWAPCHAIN_HOOKS=0 leaves the swapchain calls to the driver (crash diagnosis).
+    static const bool swapchain_hooks = [] {
+        const char* const value = std::getenv("EDEN_DLSS_SWAPCHAIN_HOOKS");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (swapchain_hooks) {
+        hook(dld.vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
+        hook(dld.vkDestroySwapchainKHR, "vkDestroySwapchainKHR");
+        hook(dld.vkGetSwapchainImagesKHR, "vkGetSwapchainImagesKHR");
+        hook(dld.vkAcquireNextImageKHR, "vkAcquireNextImageKHR");
+        hook(dld.vkQueuePresentKHR, "vkQueuePresentKHR");
+        hook(dld.vkDeviceWaitIdle, "vkDeviceWaitIdle");
+    } else {
+        LOG_INFO(Render_Vulkan, "NVIDIA Streamline: swapchain calls not hooked");
+    }
     state.attached = true;
     LOG_INFO(Render_Vulkan, "NVIDIA DLSS is available through Streamline");
     return true;
