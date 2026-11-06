@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <vector>
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
@@ -72,6 +75,172 @@ void NoteHandleTableBytes(GPUVAddr base, std::span<const u8> bytes) {
         ++(slot.hash == hash ? draw_stats.table_same : draw_stats.table_changed);
     }
     slot = {base, hash};
+}
+
+/// Fortune's Weave writes some texture-handle tables with compute shaders a few draws before the
+/// draws that index them, so reading them on the CPU waited for all GPU work submitted so far
+/// (a Finish, about once a frame, 0.2-1.3 ms). Those tables come out identical frame after frame
+/// (every download in Dagdion). Once a table has downloaded identically STREAK times in a row,
+/// draws use the bytes already in guest memory, and a copy of the GPU's version, recorded without
+/// waiting, is compared once the GPU has finished it. A difference stops this for the table until
+/// it is stable again; the draws in between (about a frame) used the previous handles.
+/// EDEN_SPECULATIVE_HANDLES=0 turns it off.
+class SpeculativeHandleTables {
+public:
+    static bool Enabled() {
+        static const bool enabled = [] {
+            const char* const value = std::getenv("EDEN_SPECULATIVE_HANDLES");
+            return value == nullptr || value[0] != '0';
+        }();
+        return enabled;
+    }
+
+    /// Instead of buffer_cache.DownloadMemory(addr, size) for a table at gpu_addr.
+    void Download(Scheduler& scheduler, BufferCache& buffer_cache, Tegra::MemoryManager& gpu_memory,
+                  GPUVAddr gpu_addr, DAddr addr, u64 size) {
+        if (!Enabled() || size > MAX_SIZE || !buffer_cache.IsRegionGpuModified(addr, size)) {
+            buffer_cache.DownloadMemory(addr, size); // Nothing to wait for, or not handled
+            return;
+        }
+        const u64 tick = scheduler.CurrentTick();
+        if (owner != &buffer_cache.runtime || tick < last_tick) {
+            // Another emulation session: the staging buffers belonged to the previous one
+            for (Table& table : tables) {
+                table = Table{};
+            }
+            owner = &buffer_cache.runtime;
+        }
+        last_tick = tick;
+        Table& table = Find(buffer_cache, addr, size);
+        Poll(scheduler, buffer_cache, table);
+        if (table.streak >= STREAK && table.pending.size() < MAX_PENDING) {
+            if (auto staging = buffer_cache.RecordDownloadSnapshot(addr, size)) {
+                Pending& pending = table.pending.emplace_back();
+                pending.staging = *staging;
+                pending.tick = scheduler.CurrentTick();
+                pending.expected.resize(size);
+                gpu_memory.ReadBlockUnsafe(gpu_addr, pending.expected.data(), size);
+                ++speculated;
+                MaybeReport();
+                return;
+            }
+        }
+        table.before.resize(size);
+        gpu_memory.ReadBlockUnsafe(gpu_addr, table.before.data(), size);
+        buffer_cache.DownloadMemory(addr, size);
+        table.after.resize(size);
+        gpu_memory.ReadBlockUnsafe(gpu_addr, table.after.data(), size);
+        table.streak = table.before == table.after ? (std::min)(table.streak + 1, STREAK) : 0;
+        ++waited;
+        MaybeReport();
+    }
+
+private:
+    static constexpr u32 STREAK = 8;
+    static constexpr size_t MAX_PENDING = 16;
+    static constexpr u64 MAX_SIZE = 256 * 1024;
+
+    struct Pending {
+        BufferCache::DownloadSnapshot staging{};
+        u64 tick{};
+        std::vector<u8> expected;
+    };
+    struct Table {
+        DAddr addr{};
+        u64 size{};
+        u32 streak{};
+        u64 last_use{};
+        std::vector<Pending> pending;
+        std::vector<u8> before;
+        std::vector<u8> after;
+    };
+
+    Table& Find(BufferCache& buffer_cache, DAddr addr, u64 size) {
+        ++use;
+        for (Table& table : tables) {
+            if (table.addr == addr && table.size == size) {
+                table.last_use = use;
+                return table;
+            }
+        }
+        Table& table = *std::ranges::min_element(tables, {}, &Table::last_use);
+        DropPending(buffer_cache, table);
+        table.addr = addr;
+        table.size = size;
+        table.streak = 0;
+        table.last_use = use;
+        return table;
+    }
+
+    /// Checks the copies the GPU has finished, oldest first.
+    void Poll(Scheduler& scheduler, BufferCache& buffer_cache, Table& table) {
+        size_t done = 0;
+        bool same = true;
+        for (; done < table.pending.size(); ++done) {
+            Pending& pending = table.pending[done];
+            if (!scheduler.IsFree(pending.tick)) {
+                break;
+            }
+            same = std::memcmp(pending.staging.mapped_span.data(), pending.expected.data(),
+                               pending.expected.size()) == 0;
+            buffer_cache.runtime.FreeDeferredStagingBuffer(pending.staging);
+            if (!same) {
+                ++done;
+                break;
+            }
+            ++verified;
+        }
+        table.pending.erase(table.pending.begin(), table.pending.begin() + done);
+        if (!same) {
+            ++mismatched;
+            table.streak = 0;
+            DropPending(buffer_cache, table);
+        }
+    }
+
+    static void DropPending(BufferCache& buffer_cache, Table& table) {
+        for (Pending& pending : table.pending) {
+            // Not reused before the current tick completes, after the copy into it
+            buffer_cache.runtime.FreeDeferredStagingBuffer(pending.staging);
+        }
+        table.pending.clear();
+    }
+
+    void MaybeReport() {
+        if (!VideoCommon::BackStats::Enabled()) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_report < std::chrono::seconds{4}) {
+            return;
+        }
+        const double seconds =
+            last_report.time_since_epoch().count() == 0
+                ? 4.0
+                : std::chrono::duration<double>(now - last_report).count();
+        LOG_INFO(Render_Vulkan,
+                 "Handle tables/s: used without waiting {:.1f}, waited {:.1f}, checked same {:.1f}, "
+                 "differed {:.2f}",
+                 speculated / seconds, waited / seconds, verified / seconds, mismatched / seconds);
+        speculated = waited = verified = mismatched = 0;
+        last_report = now;
+    }
+
+    std::array<Table, 8> tables{};
+    const void* owner{};
+    u64 last_tick{};
+    u64 use{};
+    u64 speculated{};
+    u64 waited{};
+    u64 verified{};
+    u64 mismatched{};
+    std::chrono::steady_clock::time_point last_report{};
+};
+
+/// One for the back thread (pipelines are configured there, under the buffer cache lock).
+SpeculativeHandleTables& HandleTables() {
+    static SpeculativeHandleTables tables;
+    return tables;
 }
 
 DescriptorLayoutBuilder MakeBuilder(const Device& device, std::span<const Shader::Info> infos) {
@@ -520,7 +689,8 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                                     throw Shader::RuntimeError("Unmapped texture-handle buffer segment");
                                 namespace BackStats = VideoCommon::BackStats;
                                 const u64 download_start = BackStats::Enabled() ? BackStats::Stamp() : 0;
-                                buffer_cache.DownloadMemory(*device_address, range_size);
+                                HandleTables().Download(scheduler, buffer_cache, *gpu_memory,
+                                                        range_address, *device_address, range_size);
                                 if (download_start != 0) {
                                     auto& draw_stats = BackStats::draw_thread;
                                     ++draw_stats.table_downloads;

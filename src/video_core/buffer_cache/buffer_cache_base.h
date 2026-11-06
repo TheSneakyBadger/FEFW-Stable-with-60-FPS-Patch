@@ -14,6 +14,8 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
+#include <utility>
 #include <span>
 #include <vector>
 
@@ -259,6 +261,17 @@ public:
     bool OnCPUWrite(DAddr device_addr, u64 size);
 
     void DownloadMemory(DAddr device_addr, u64 size);
+
+    using DownloadSnapshot =
+        decltype(std::declval<Runtime&>().DownloadStagingBuffer(size_t{}, true));
+
+    /// Records a copy of [device_addr, device_addr + size) into a new deferred download staging
+    /// buffer without waiting for the GPU, and without changing what is marked GPU-modified. The
+    /// copy is done once the scheduler tick current now has completed; the caller frees the
+    /// staging buffer with runtime.FreeDeferredStagingBuffer. Empty if the range is not inside a
+    /// single buffer (or the backend does not map download memory).
+    [[nodiscard]] std::optional<DownloadSnapshot> RecordDownloadSnapshot(DAddr device_addr,
+                                                                         u64 size);
 
     std::optional<VideoCore::RasterizerDownloadArea> GetFlushArea(DAddr device_addr, u64 size);
 

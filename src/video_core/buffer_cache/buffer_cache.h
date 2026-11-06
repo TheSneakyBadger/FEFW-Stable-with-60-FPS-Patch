@@ -207,6 +207,38 @@ void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
 }
 
 template <class P>
+auto BufferCache<P>::RecordDownloadSnapshot(DAddr device_addr, u64 size)
+    -> std::optional<DownloadSnapshot> {
+    if constexpr (!USE_MEMORY_MAPS) {
+        return std::nullopt;
+    } else {
+        BufferId found{};
+        u32 count = 0;
+        ForEachBufferInRange(device_addr, size, [&](BufferId buffer_id, Buffer&) {
+            found = buffer_id;
+            ++count;
+        });
+        if (count != 1 || size == 0) {
+            return std::nullopt;
+        }
+        Buffer& buffer = slot_buffers[found];
+        if (device_addr < buffer.CpuAddr() ||
+            device_addr + size > buffer.CpuAddr() + buffer.SizeBytes()) {
+            return std::nullopt;
+        }
+        DownloadSnapshot staging = runtime.DownloadStagingBuffer(size, true);
+        std::array copies{BufferCopy{
+            .src_offset = device_addr - buffer.CpuAddr(),
+            .dst_offset = staging.offset,
+            .size = size,
+        }};
+        buffer.MarkUsage(copies[0].src_offset, size);
+        runtime.CopyBuffer(staging.buffer, buffer, std::span<BufferCopy>(copies), true);
+        return staging;
+    }
+}
+
+template <class P>
 void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
     async_downloads.DeleteAll(device_addr, size);
     uncommitted_gpu_modified_ranges.Subtract(device_addr, size);
