@@ -610,6 +610,7 @@ void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
         }
         image.flags |= ImageFlagBits::CpuModified;
         ++bank_generation; // The next preparation uploads it (reused banks skip preparation)
+        NoteBankBump(BankBump::CpuWrite);
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
@@ -708,6 +709,7 @@ void TextureCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t siz
         if (False(image.flags & ImageFlagBits::CpuModified)) {
             image.flags |= ImageFlagBits::CpuModified;
             ++bank_generation;
+            NoteBankBump(BankBump::GpuUnmap);
             if (True(image.flags & ImageFlagBits::Tracked)) {
                 UntrackImage(image, id);
             }
@@ -1353,6 +1355,7 @@ void TextureCache<P>::InvalidateScale(Image& image) {
     }
     has_deleted_images = true;
     ++bank_generation; // Views erased: their ids may be reused
+    NoteBankBump(BankBump::Rescale);
     ++view_generation;
 }
 
@@ -2208,6 +2211,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
                "Trying to register an already registered image");
     image.flags |= ImageFlagBits::Registered;
     ++bank_generation; // New image: overlaps and aliases of existing images may have changed
+    NoteBankBump(BankBump::Register);
     u64 tentative_size = (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
     if ((IsPixelFormatASTC(image.info.format) &&
          True(image.flags & ImageFlagBits::AcceleratedUpload)) ||
@@ -2250,6 +2254,7 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
     image.flags &= ~ImageFlagBits::Registered;
     image.flags &= ~ImageFlagBits::BadOverlap;
     ++bank_generation;
+    NoteBankBump(BankBump::Unregister);
     lru_cache.Free(image.lru_index);
     const auto& clear_page_table =
         [image_id](u64 page, ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>& selected_page_table) {
@@ -2478,6 +2483,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     has_deleted_images = true;
     ++bank_generation; // Views erased: their ids may be reused
+    NoteBankBump(BankBump::Delete);
     ++view_generation;
 }
 
@@ -2951,6 +2957,7 @@ template <class P>
 void TextureCache<P>::CreateChannel(struct Tegra::Control::ChannelState& channel) {
     VideoCommon::ChannelSetupCaches<TextureCacheChannelInfo>::CreateChannel(channel);
     ++bank_generation; // Channel states may have moved
+    NoteBankBump(BankBump::Channel);
     ++view_generation;
     const auto it = channel_map.find(channel.bind_id);
     auto* this_state = &channel_storage[it->second];

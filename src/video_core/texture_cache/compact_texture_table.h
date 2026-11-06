@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <span>
@@ -339,6 +340,15 @@ size_t PatchCompactElements(const CompactTextureBlock& block, std::span<const Im
     return rewritten;
 }
 
+/// What bumped the texture cache's bank generation (which makes every reused view bank stale).
+/// Counted from any thread (CPU writes come from the guest's threads), only with the statistics on.
+enum class BankBump : u32 { CpuWrite, GpuUnmap, Register, Unregister, Rescale, Delete, Channel, Count };
+
+inline std::array<std::atomic<u64>, static_cast<size_t>(BankBump::Count)>& BankBumps() {
+    static std::array<std::atomic<u64>, static_cast<size_t>(BankBump::Count)> bumps{};
+    return bumps;
+}
+
 /// EDEN_TEXTURE_TABLE_STATS: logs every 4 s how many draws used compact tables and how much they
 /// folded (elements bound vs distinct pairs prepared).
 struct CompactTextureStats {
@@ -435,9 +445,25 @@ struct CompactTextureStats {
                  rate(range_hits, range_hits + range_misses), per_second(range_hits + range_misses),
                  per_second(host_conditional_draws), per_second(skipped_draws),
                  per_second(cached_write_regions), per_second(cached_write_batches));
+        auto& bumps = BankBumps();
+        const auto take = [&](BankBump kind) {
+            return bumps[static_cast<size_t>(kind)].exchange(0, std::memory_order_relaxed) / seconds;
+        };
+        LOG_INFO(Render_Vulkan,
+                 "Bank generation bumps/s: CPU writes {:.0f}, GPU unmaps {:.0f}, images registered "
+                 "{:.0f}, unregistered {:.0f}, rescaled {:.0f}, deleted {:.0f}, channels {:.0f}",
+                 take(BankBump::CpuWrite), take(BankBump::GpuUnmap), take(BankBump::Register),
+                 take(BankBump::Unregister), take(BankBump::Rescale), take(BankBump::Delete),
+                 take(BankBump::Channel));
         *this = {};
         window = now;
     }
 };
+
+inline void NoteBankBump(BankBump kind) {
+    if (CompactTextureStats::Enabled()) {
+        BankBumps()[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+    }
+}
 
 } // namespace VideoCommon
