@@ -237,6 +237,17 @@ cmake_language(DEFER CALL eden_render_isa_options)
         # GPL: ship the exact source alongside the binary.
         $srcZip = if ($Version -eq '1.12') { Join-Path $root 'eden-fefw-1.12-local.zip' } else { $null }
         if ($srcZip -and (Test-Path $srcZip)) { Copy-Item -LiteralPath $srcZip -Destination (Join-Path $outDir 'source.zip') }
+        # Optional AMD FSR 4: fsr4-vk's Vulkan provider (GPL-3.0, its source is in source.zip under
+        # externals\fsr4-vk) and its licences, from the fsr4 folder next to this script.
+        $fsr4Dll = Join-Path $root 'fsr4\amd_fidelityfx_upscaler_vk.dll'
+        if (Test-Path $fsr4Dll) {
+            Copy-Item -LiteralPath $fsr4Dll -Destination $outDir
+            $fsr4Licenses = Join-Path $outDir 'licenses\fsr4-vk'
+            New-Item -ItemType Directory -Force -Path $fsr4Licenses | Out-Null
+            Copy-Item -Path (Join-Path $root 'fsr4\licenses\*') -Destination $fsr4Licenses -Recurse
+        } else {
+            Write-Warning 'fsr4\amd_fidelityfx_upscaler_vk.dll not found: the package has no AMD FSR 4.'
+        }
         # The Fortune's Weave 60 fps cheat from this PC's profile, for others to copy into theirs.
         $fpsMod = Join-Path $env:APPDATA 'eden\load\04007EF01F8AE000\60fps'
         $hasFpsMod = Test-Path $fpsMod
