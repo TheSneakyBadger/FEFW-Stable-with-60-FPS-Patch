@@ -386,6 +386,9 @@ struct Values {
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};
+    // The game's own DLSS network (translated) in place of AMD FSR 3.1, the base replacement.
+    SwitchableSetting<bool> game_dlss_network{linkage, false, "game_dlss_network",
+                                              Category::Renderer};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",

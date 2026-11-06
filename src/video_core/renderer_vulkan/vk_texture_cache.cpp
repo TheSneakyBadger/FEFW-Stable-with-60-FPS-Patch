@@ -962,11 +962,13 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                                          StagingBufferPool& staging_buffer_pool_,
                                          BlitImageHelper& blit_image_helper_,
                                          RenderPassCache& render_pass_cache_,
-                                         DescriptorPool& descriptor_pool,
-                                         ComputePassDescriptorQueue& compute_pass_descriptor_queue)
+                                         DescriptorPool& descriptor_pool_,
+                                         ComputePassDescriptorQueue& compute_pass_descriptor_queue_)
     : device{device_}, scheduler{scheduler_}, memory_allocator{memory_allocator_},
       staging_buffer_pool{staging_buffer_pool_}, blit_image_helper{blit_image_helper_},
-      render_pass_cache{render_pass_cache_}, resolution{Settings::values.resolution_info} {
+      render_pass_cache{render_pass_cache_}, descriptor_pool{descriptor_pool_},
+      compute_pass_descriptor_queue{compute_pass_descriptor_queue_},
+      resolution{Settings::values.resolution_info} {
     if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu) {
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
@@ -1307,10 +1309,12 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
 
 bool TextureCacheRuntime::UsesNvidiaDlss() const {
 #ifdef EGLANTINE_STREAMLINE
-    return !dlss_unsupported && Streamline::IsDlssAvailable();
-#else
-    return false;
+    if (!dlss_unsupported && Streamline::IsDlssAvailable()) {
+        return true;
+    }
 #endif
+    // AMD FSR 3.1 is the base replacement.
+    return !Settings::values.game_dlss_network.GetValue() && !fsr3_unsupported;
 }
 
 void TextureCacheRuntime::DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkImageView view,
@@ -1350,14 +1354,99 @@ void TextureCacheRuntime::DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkIma
     });
 }
 
-// NVIDIA DLSS (through NVIDIA Streamline) in place of the game's own DLSS, from Eglantine
-// (Duck912). Returns false when DLSS can't run; it then stays off for the session and the game's
-// own network runs again.
+// The game's DLSS evaluation, replaced: AMD FSR 4 or NVIDIA DLSS when ticked, else (or when that
+// can't run) AMD FSR 3.1. Returns false when none can run; the game's own network then runs.
 bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageView& dst,
                                           ImageView& input_color, ImageView& motion_vectors,
                                           ImageView& depth, std::array<u32, 2> render_size,
                                           std::array<f32, 2> jitter,
                                           std::array<f32, 2> motion_scale) {
+    if (dst.Samples() != VK_SAMPLE_COUNT_1_BIT ||
+        ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
+        return false;
+    }
+    if (NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
+                          render_size, jitter, motion_scale)) {
+        return true;
+    }
+    return Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size, jitter,
+                       motion_scale);
+}
+
+// AMD FidelityFX Super Resolution 3.1 (externals/FidelityFX-SDK, MIT), the base replacement for
+// the game's own DLSS; the upscaler is Eglantine's (Duck912). Returns false when it can't run; it
+// then stays off for the session and the game's own network runs again.
+bool TextureCacheRuntime::Fsr3Upscale(Framebuffer* dst_framebuffer, ImageView& input_color,
+                                      ImageView& motion_vectors, ImageView& depth,
+                                      std::array<u32, 2> render_size, std::array<f32, 2> jitter,
+                                      std::array<f32, 2> motion_scale) {
+    if (Settings::values.game_dlss_network.GetValue() || fsr3_unsupported) {
+        return false;
+    }
+    if (!fsr3_upscaler) {
+        if (!Fsr3Upscaler::IsSupported(device)) {
+            LOG_WARNING(Render_Vulkan, "AMD FSR 3.1 needs formats or features this device lacks; "
+                                       "the game's own DLSS runs");
+            fsr3_unsupported = true;
+            return false;
+        }
+        try {
+            fsr3_upscaler = std::make_unique<Fsr3Upscaler>(device, scheduler, memory_allocator,
+                                                           staging_buffer_pool, descriptor_pool,
+                                                           compute_pass_descriptor_queue);
+        } catch (const vk::Exception& exception) {
+            LOG_ERROR(Render_Vulkan, "AMD FSR 3.1 failed to start ({}); the game's own DLSS runs",
+                      exception.what());
+            fsr3_unsupported = true;
+            return false;
+        }
+    }
+    const VkExtent2D extent = dst_framebuffer->RenderArea();
+    // A gap in the evaluations (a menu, a movie, a load) starts the history again.
+    const auto now = std::chrono::steady_clock::now();
+    const f32 frame_time_ms =
+        fsr3_last_evaluation
+            ? std::chrono::duration<f32, std::milli>(now - *fsr3_last_evaluation).count()
+            : 1000.0f / 30.0f;
+    const bool reset = !fsr3_last_evaluation || frame_time_ms > 250.0f;
+    fsr3_last_evaluation = now;
+    // FSR's own RCAS, set by the FSR Sharpness slider: FSR takes 0-1 for 2 to 0 stops, and the
+    // slider stores stops x 100, so this is the percentage the slider shows; 0% (stored 200) is
+    // off.
+    const int slider = Settings::values.fsr_sharpening_slider.GetValue();
+    const f32 stops = static_cast<f32>(slider) / 100.0f;
+    fsr3_upscaler->Upscale({
+        .color = input_color.Handle(Shader::TextureType::Color2D),
+        .depth = depth.DepthView(),
+        .motion_vectors = motion_vectors.Handle(Shader::TextureType::Color2D),
+        .render_size = {render_size[0], render_size[1]},
+        .upscale_size = extent,
+        .jitter = jitter,
+        .motion_vector_scale = {motion_scale[0] * static_cast<f32>(render_size[0]),
+                                motion_scale[1] * static_cast<f32>(render_size[1])},
+        .frame_time_ms = frame_time_ms,
+        .reset = reset,
+        .sharpen = slider < 200,
+        .sharpness = 1.0f - stops / 2.0f,
+    });
+    DrawUpscaledOutput(dst_framebuffer, fsr3_upscaler->OutputView(), fsr3_upscaler->OutputImage(),
+                       fsr3_upscaler->PointSampler());
+    static bool logged{};
+    if (!logged) {
+        logged = true;
+        LOG_INFO(Render_Vulkan, "Game DLSS replaced by AMD FSR 3.1: {}x{} -> {}x{}",
+                 render_size[0], render_size[1], extent.width, extent.height);
+    }
+    return true;
+}
+
+// NVIDIA DLSS (through NVIDIA Streamline) in place of the game's own DLSS, from Eglantine
+// (Duck912). Returns false when DLSS can't run; it then stays off for the session.
+bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageView& dst,
+                                            ImageView& input_color, ImageView& motion_vectors,
+                                            ImageView& depth, std::array<u32, 2> render_size,
+                                            std::array<f32, 2> jitter,
+                                            std::array<f32, 2> motion_scale) {
 #ifdef EGLANTINE_STREAMLINE
     if (dlss_unsupported || dst.Samples() != VK_SAMPLE_COUNT_1_BIT ||
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -1373,7 +1462,7 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
             dlss_upscaler =
                 std::make_unique<StreamlineDlssUpscaler>(device, scheduler, memory_allocator);
         } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan, "NVIDIA DLSS unavailable ({}); the game's own DLSS runs",
+            LOG_WARNING(Render_Vulkan, "NVIDIA DLSS unavailable ({}); AMD FSR 3.1 runs",
                         exception.what());
             dlss_unsupported = true;
             return false;
@@ -1417,7 +1506,7 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
         .reset = reset,
     });
     if (!upscaled) {
-        LOG_WARNING(Render_Vulkan, "NVIDIA DLSS failed; the game's own DLSS runs from now on");
+        LOG_WARNING(Render_Vulkan, "NVIDIA DLSS failed; AMD FSR 3.1 runs from now on");
         dlss_unsupported = true;
         return false;
     }

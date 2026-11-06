@@ -528,6 +528,11 @@ FN_MAX_LIMIT_LIST
         return features.features.shaderInt16;
     }
 
+    /// Returns true if storage images of the extended formats (e.g. R16F, RG16F, R8) are supported.
+    bool IsStorageImageExtendedFormatsSupported() const {
+        return features.features.shaderStorageImageExtendedFormats;
+    }
+
     // Returns true if depth bounds is supported.
     bool IsDepthBoundsSupported() const {
         return features.features.depthBounds;

@@ -312,12 +312,13 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
-    // NVIDIA DLSS in place of Fortune's Weave's own DLSS network (setting nvidia_dlss; from
-    // Eglantine, by Duck912). An evaluation runs from its first pass, which holds the colour,
-    // motion vectors, depth and jitter, to the pass that writes the upscaled image. Its programs
-    // are learnt from the evaluations that run in full; after that they are skipped while NVIDIA
-    // DLSS runs, and DLSS draws the output at the output pass. When DLSS can't run, the game's
-    // own network runs as before.
+    // AMD FSR 3.1 (the default) or NVIDIA DLSS in place of Fortune's Weave's own DLSS network
+    // (settings game_dlss_network and nvidia_dlss; FSR 3.1 and DLSS from Eglantine, by Duck912).
+    // An evaluation runs from its first pass, which holds the colour, motion vectors, depth and
+    // jitter, to the pass that writes the upscaled image. Its programs are learnt from the
+    // evaluations that run in full; after that they are skipped while the replacement upscaler
+    // runs, and it draws the output at the output pass. When it can't run, the game's own network
+    // runs as before.
     // EDEN_DLSS_INERT=1 leaves the game's DLSS alone even with NVIDIA DLSS on (crash diagnosis).
     static const bool dlss_inert = [] {
         const char* const value = std::getenv("EDEN_DLSS_INERT");

@@ -25,6 +25,7 @@
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #endif
+#include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 
 namespace Settings {
 struct ResolutionScalingInfo;
@@ -87,14 +88,17 @@ public:
                    Tegra::Engines::Fermi2D::Filter filter,
                    Tegra::Engines::Fermi2D::Operation operation);
 
-    /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of input_color
-    /// (render_size on the host) into dst. False when it can't run; the caller then blits.
+    /// A replacement for a game's DLSS evaluation (AMD FSR 4 or NVIDIA DLSS when ticked, else
+    /// AMD FSR 3.1): temporal upscale of input_color (render_size on the host) into dst. False
+    /// when none can run; the caller then blits.
     bool TemporalUpscale(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& input_color,
                          ImageView& motion_vectors, ImageView& depth,
                          std::array<u32, 2> render_size, std::array<f32, 2> jitter,
                          std::array<f32, 2> motion_scale);
 
-    /// True while TemporalUpscale would use NVIDIA DLSS (on, Streamline running, not failed).
+    /// True while TemporalUpscale replaces the game's DLSS: NVIDIA DLSS (ticked, Streamline
+    /// running, not failed), else AMD FSR 3.1 (unless the game's own DLSS is chosen, or FSR 3.1
+    /// failed). Kept under its old name, which the rasterizer and Kepler compute call.
     [[nodiscard]] bool UsesNvidiaDlss() const;
 
     void CopyImage(Image& dst, Image& src, std::span<const VideoCommon::ImageCopy> copies);
@@ -178,6 +182,18 @@ public:
     /// Draws an upscaler's RGBA16F output into the DLSS output and returns it to GENERAL.
     void DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkImageView view, VkImage image,
                             VkSampler sampler);
+    bool NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& input_color,
+                           ImageView& motion_vectors, ImageView& depth,
+                           std::array<u32, 2> render_size, std::array<f32, 2> jitter,
+                           std::array<f32, 2> motion_scale);
+    bool Fsr3Upscale(Framebuffer* dst_framebuffer, ImageView& input_color,
+                     ImageView& motion_vectors, ImageView& depth, std::array<u32, 2> render_size,
+                     std::array<f32, 2> jitter, std::array<f32, 2> motion_scale);
+    DescriptorPool& descriptor_pool;
+    ComputePassDescriptorQueue& compute_pass_descriptor_queue;
+    std::unique_ptr<Fsr3Upscaler> fsr3_upscaler;
+    bool fsr3_unsupported{};
+    std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;
 #ifdef EGLANTINE_STREAMLINE
     std::unique_ptr<StreamlineDlssUpscaler> dlss_upscaler;
     bool dlss_unsupported{};
