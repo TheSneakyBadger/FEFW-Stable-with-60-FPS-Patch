@@ -1273,6 +1273,12 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             break;
         }
         case 0x98e: { // RED.E.ADD/MAX.STRONG.GPU U32; uniform pointers support ADD.
+            // Type 73..75: U32 (0), or F32.FTZ.RN (3) with ADD only, which Maxwell RED encodes
+            // the same way (size 20..22 = 3); Fortune's Weave's bath scenes use the float form.
+            const u32 red_type = insn.Bits(73, 3);
+            if (red_type != 0 && (red_type != 3 || insn.Bits(87, 3) != 0))
+                return fail(index, "native global reduction mode");
+            insn.words[2] &= ~(7U << 9);
             u32 address = insn.Bits(24, 8);
             if ((insn.words[2] & ~0xffU) == 0x0c10e100 && address == 255 &&
                 insn.Bits(40, 24) == 0 && insn.Bits(64, 8) < 63 - 1 && !(insn.Bits(64, 8) & 1)) {
@@ -1286,7 +1292,8 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 return fail(index, "native global reduction mode");
             }
             emit(0xebf8000000000000ULL | predicate | insn.Bits(32, 8) |
-                (u64{address} << 8) | (u64{insn.Bits(87, 3)} << 23) | (u64{1} << 48));
+                (u64{address} << 8) | (u64{red_type} << 20) | (u64{insn.Bits(87, 3)} << 23) |
+                (u64{1} << 48));
             break;
         }
         case 0x2bd: // UFLO.U32, optionally returning the normalization shift.
