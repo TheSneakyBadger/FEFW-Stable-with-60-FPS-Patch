@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <optional>
 #include "common/fs/fs.h"
+#include "common/fs/fs_paths.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
@@ -23,6 +26,89 @@
 #include "common/assert.h"
 
 namespace FS = Common::FS;
+
+namespace {
+
+#ifdef _WIN32
+/// The portable "user" folder next to the exe, when this build runs portable.
+std::optional<std::filesystem::path> OwnPortableUserDir() {
+    auto user_dir = FS::GetExeDirectory() / "user";
+    if (!FS::IsDir(user_dir)) {
+        return std::nullopt;
+    }
+    return user_dir.lexically_normal();
+}
+
+/// Case-insensitive (ASCII) comparison of two paths, ignoring separators' style and a trailing
+/// one. A false "different" only makes this build use its own default folder.
+bool SamePath(const std::filesystem::path& a, const std::filesystem::path& b) {
+    auto text = [](const std::filesystem::path& path) {
+        const auto u8 = path.lexically_normal().generic_u8string();
+        std::string out(u8.begin(), u8.end());
+        while (!out.empty() && out.back() == '/') {
+            out.pop_back();
+        }
+        std::transform(out.begin(), out.end(), out.begin(), [](char c) {
+            return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+        });
+        return out;
+    };
+    return text(a) == text(b);
+}
+
+std::filesystem::path PathFromUTF8(const std::string& text) {
+    return std::filesystem::path{std::u8string(text.begin(), text.end())};
+}
+#endif
+
+/// Portable builds write their absolute folder paths into qt-config.ini, so a "user" folder
+/// copied into a new build (as its README says to do when updating) kept using the NAND, SD,
+/// mod and dump folders of the build it came from, and Open Save Data Location opened the old
+/// build's saves. A stored path that is another portable build's own folder of the same name
+/// (...\user\nand and so on) is ignored, and paths inside this build's own "user" folder are
+/// stored empty (the default), so the folder keeps working wherever it is copied. Paths
+/// anywhere else (a folder the player chose) are kept as before.
+std::string PortableDataPath(const std::string& stored, const char* leaf) {
+#ifdef _WIN32
+    if (stored.empty()) {
+        return stored;
+    }
+    const auto own = OwnPortableUserDir();
+    if (!own) {
+        return stored;
+    }
+    const std::filesystem::path path = PathFromUTF8(stored);
+    const auto normal = path.lexically_normal();
+    auto parent = normal.parent_path();
+    auto name = normal.filename();
+    if (name.empty()) { // Trailing separator
+        name = parent.filename();
+        parent = parent.parent_path();
+    }
+    const bool other_portable = SamePath(name, std::filesystem::path{leaf}) &&
+                                SamePath(parent.filename(), std::filesystem::path{"user"}) &&
+                                !SamePath(parent, *own);
+    if (other_portable) {
+        LOG_WARNING(Config, "Ignoring {} from another build's user folder: {} (using {})", leaf,
+                    stored, FS::PathToUTF8String(*own / leaf));
+        return {};
+    }
+#endif
+    return stored;
+}
+
+/// What to store for a folder: empty when it is this portable build's own default folder.
+std::string PortableStoredPath(const std::string& current, const char* leaf) {
+#ifdef _WIN32
+    if (const auto own = OwnPortableUserDir();
+        own && SamePath(PathFromUTF8(current), *own / leaf)) {
+        return {};
+    }
+#endif
+    return current;
+}
+
+} // Anonymous namespace
 
 Config::Config(const ConfigType config_type)
     : type(config_type), global{config_type == ConfigType::GlobalConfig} {}
@@ -274,17 +360,21 @@ void Config::ReadDataStorageValues() {
 
     using namespace Common::FS;
 
-    const auto setPath = [this](const EdenPath& path, const char* setting) {
-        SetEdenPath(path, ReadStringSetting(std::string(setting)));
+    const auto setPath = [this](const EdenPath& path, const char* setting, const char* leaf) {
+        const auto value = PortableDataPath(ReadStringSetting(std::string(setting)), leaf);
+        if (!value.empty()) { // Empty: the default folder
+            SetEdenPath(path, value);
+        }
     };
 
-    setPath(EdenPath::NANDDir, "nand_directory");
-    setPath(EdenPath::SDMCDir, "sdmc_directory");
-    setPath(EdenPath::LoadDir, "load_directory");
-    setPath(EdenPath::DumpDir, "dump_directory");
-    setPath(EdenPath::TASDir, "tas_directory");
+    setPath(EdenPath::NANDDir, "nand_directory", NAND_DIR);
+    setPath(EdenPath::SDMCDir, "sdmc_directory", SDMC_DIR);
+    setPath(EdenPath::LoadDir, "load_directory", LOAD_DIR);
+    setPath(EdenPath::DumpDir, "dump_directory", DUMP_DIR);
+    setPath(EdenPath::TASDir, "tas_directory", TAS_DIR);
 
-    const auto save_dir_setting = ReadStringSetting(std::string("save_directory"));
+    const auto save_dir_setting =
+        PortableDataPath(ReadStringSetting(std::string("save_directory")), NAND_DIR);
     if (save_dir_setting.empty()) {
         SetEdenPath(EdenPath::SaveDir, GetEdenPathString(EdenPath::NANDDir));
     } else {
@@ -576,16 +666,16 @@ void Config::SaveDataStorageValues() {
 
     using namespace Common::FS;
 
-    const auto writePath = [this](const char* setting, const EdenPath& path) {
-        WriteStringSetting(std::string(setting), FS::GetEdenPathString(path),
-                           std::make_optional(FS::GetEdenPathString(path)));
+    const auto writePath = [this](const char* setting, const EdenPath& path, const char* leaf) {
+        const auto value = PortableStoredPath(FS::GetEdenPathString(path), leaf);
+        WriteStringSetting(std::string(setting), value, std::make_optional(value));
     };
 
-    writePath("nand_directory", EdenPath::NANDDir);
-    writePath("sdmc_directory", EdenPath::SDMCDir);
-    writePath("load_directory", EdenPath::LoadDir);
-    writePath("dump_directory", EdenPath::DumpDir);
-    writePath("tas_directory", EdenPath::TASDir);
+    writePath("nand_directory", EdenPath::NANDDir, NAND_DIR);
+    writePath("sdmc_directory", EdenPath::SDMCDir, SDMC_DIR);
+    writePath("load_directory", EdenPath::LoadDir, LOAD_DIR);
+    writePath("dump_directory", EdenPath::DumpDir, DUMP_DIR);
+    writePath("tas_directory", EdenPath::TASDir, TAS_DIR);
 
     const auto save_path = FS::GetEdenPathString(EdenPath::SaveDir);
     const auto nand_path = FS::GetEdenPathString(EdenPath::NANDDir);
