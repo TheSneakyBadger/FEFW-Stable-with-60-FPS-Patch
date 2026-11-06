@@ -11,6 +11,7 @@
 #include "common/thread.h"
 #include <vector>
 #include <deque>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include "core/memory.h"
@@ -40,6 +41,28 @@
 #include "core/hle/service/am/service/native_video_decoder.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/service.h"
+
+namespace {
+// Threads libgav1 decodes each AV1 frame with. Fortune's Weave's 1440p cutscenes take up to
+// ~40 ms a frame on 4 threads in their busiest scenes, over the 33 ms a 30 FPS video has, and
+// the game's presentation falls to a few FPS whenever its video falls behind. Half the logical
+// processors (4 to 8); EDEN_AV1_THREADS=N (1-32) overrides it.
+int Av1DecodeThreads() {
+    static const int threads = [] {
+        int count = static_cast<int>(std::thread::hardware_concurrency() / 2);
+        count = (std::clamp)(count, 4, 8);
+        if (const char* const value = std::getenv("EDEN_AV1_THREADS")) {
+            const int requested = std::atoi(value);
+            if (requested >= 1 && requested <= 32) {
+                count = requested;
+            }
+        }
+        LOG_INFO(Service_AM, "Native AV1 decoding with {} threads", count);
+        return count;
+    }();
+    return threads;
+}
+} // Anonymous namespace
 
 namespace Service::AM {
 struct NativeVideoImagePool {
@@ -944,7 +967,7 @@ private:
                             } else {
                                 auto backend = std::make_unique<libgav1::Decoder>();
                                 libgav1::DecoderSettings settings;
-                                settings.threads = 4;
+                                settings.threads = Av1DecodeThreads();
                                 if (backend->Init(&settings) == libgav1::kStatusOk) {
                                     transfer_memory = memory.GetPointerUnsafe();
                                     transfer_memory->Open(kernel);
