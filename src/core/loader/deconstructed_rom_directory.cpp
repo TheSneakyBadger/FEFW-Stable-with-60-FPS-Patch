@@ -274,8 +274,10 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     is_loaded = true;
     if (standalone) {
         title_id = metadata.GetTitleID();
+        // Register the game's own program ID (as the NUP, NSP and XCI loaders do), so account
+        // saves go to save/.../<program id> instead of save/.../0000000000000000.
         system.GetFileSystemController().RegisterProcess(
-            process.GetProcessId(), {},
+            process.GetProcessId(), title_id,
             std::make_shared<FileSys::RomFSFactory>(*this, system.GetContentProvider(),
                                                     system.GetFileSystemController()));
     }

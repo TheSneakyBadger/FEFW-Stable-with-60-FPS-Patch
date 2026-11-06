@@ -55,6 +55,42 @@ std::string GetFutureSaveDataPath(SaveDataSpaceId space_id, SaveDataType type, u
 
 } // Anonymous namespace
 
+namespace {
+
+// Loose-file (exefs) dumps used to register no program ID, so their account and device saves went
+// to title 0000000000000000. They now use the game's real ID. The first time that ID has no save
+// but title 0 does, copy the old save across; the old folder is left for older builds.
+void MigrateTitleZeroSave(const VirtualDir& dir, ProgramId program_id, SaveDataSpaceId space,
+                          const SaveDataAttribute& meta) {
+    if (meta.type != SaveDataType::Account && meta.type != SaveDataType::Device) {
+        return;
+    }
+    const u64 title_id = meta.program_id != 0 ? meta.program_id : program_id;
+    if (title_id == 0 || title_id != program_id) {
+        return;
+    }
+    const auto new_path = SaveDataFactory::GetFullPath(program_id, dir, space, meta.type, title_id,
+                                                       meta.user_id, meta.system_save_data_id);
+    if (dir->GetDirectoryRelative(new_path) != nullptr) {
+        return;
+    }
+    const auto old_path = SaveDataFactory::GetFullPath(0, dir, space, meta.type, 0, meta.user_id,
+                                                       meta.system_save_data_id);
+    const auto old_dir = dir->GetDirectoryRelative(old_path);
+    if (old_dir == nullptr || (old_dir->GetFiles().empty() && old_dir->GetSubdirectories().empty())) {
+        return;
+    }
+    const auto new_dir = dir->CreateDirectoryRelative(new_path);
+    if (new_dir == nullptr || !VfsRawCopyD(old_dir, new_dir)) {
+        LOG_ERROR(Service_FS, "Could not copy the loose-file save {} to {}", old_path, new_path);
+        return;
+    }
+    LOG_INFO(Service_FS, "Copied the loose-file save {} to {} (the old copy is kept)", old_path,
+             new_path);
+}
+
+} // Anonymous namespace
+
 SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
                                  VirtualDir save_directory_)
     : system{system_}, program_id{program_id_}, dir{std::move(save_directory_)} {}
@@ -62,6 +98,7 @@ SaveDataFactory::SaveDataFactory(Core::System& system_, ProgramId program_id_,
 SaveDataFactory::~SaveDataFactory() = default;
 
 VirtualDir SaveDataFactory::Create(SaveDataSpaceId space, const SaveDataAttribute& meta) const {
+    MigrateTitleZeroSave(dir, program_id, space, meta);
     const auto save_directory = GetFullPath(program_id, dir, space, meta.type, meta.program_id,
                                             meta.user_id, meta.system_save_data_id);
 
@@ -69,7 +106,7 @@ VirtualDir SaveDataFactory::Create(SaveDataSpaceId space, const SaveDataAttribut
 }
 
 VirtualDir SaveDataFactory::Open(SaveDataSpaceId space, const SaveDataAttribute& meta) const {
-
+    MigrateTitleZeroSave(dir, program_id, space, meta);
     const auto save_directory = GetFullPath(program_id, dir, space, meta.type, meta.program_id,
                                             meta.user_id, meta.system_save_data_id);
 
