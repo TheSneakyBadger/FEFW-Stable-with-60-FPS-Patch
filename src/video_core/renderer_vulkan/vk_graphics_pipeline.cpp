@@ -857,6 +857,22 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         // Weave): the words are read in one block and the decoded handles reused while the words are
         // unchanged, as for buffer-backed arrays. Decoding matches read_handle word for word.
         static thread_local std::vector<u8> cbuf_words;
+        // True if guest memory at [addr, addr + size) holds expected (false if a page is not
+        // directly readable: the caller then reads it the usual way).
+        const auto same_words_in_place{[&](GPUVAddr addr, const u8* expected, u64 size) {
+            constexpr u64 page_mask = Core::DEVICE_PAGESIZE - 1;
+            while (size != 0) {
+                const u64 chunk = (std::min)(size, Core::DEVICE_PAGESIZE - (addr & page_mask));
+                const u8* const pointer = gpu_memory->GetPointer(addr);
+                if (pointer == nullptr || std::memcmp(pointer, expected, chunk) != 0) {
+                    return false;
+                }
+                addr += chunk;
+                expected += chunk;
+                size -= chunk;
+            }
+            return true;
+        }};
         const auto cbuf_handles{[&](const Shader::TextureDescriptor& desc) -> const BufferTextureHandles* {
             ASSERT(cbufs[desc.cbuf_index].enabled);
             const u64 span = (u64{desc.count - 1} << desc.size_shift) + sizeof(u32);
@@ -875,15 +891,28 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
                 (desc.has_secondary && gpu_memory->OverlapsSyncpointShim(secondary, span))) {
                 return nullptr;
             }
-            cbuf_words.resize(desc.has_secondary ? span * 2 : span);
+            const u64 total = desc.has_secondary ? span * 2 : span;
+            auto cached = std::ranges::find(buffer_texture_handles, &desc, &BufferTextureHandles::desc);
+            const bool cached_usable = cached != buffer_texture_handles.end() && cached->cacheable &&
+                                       cached->count == desc.count &&
+                                       cached->via_header_index == via_header_index &&
+                                       cached->bytes.size() == total;
+            // Unchanged words (most draws) are compared where they are, without copying them out
+            // first (up to tens of KB per draw).
+            if (cached_usable && same_words_in_place(primary, cached->bytes.data(), span) &&
+                (!desc.has_secondary ||
+                 same_words_in_place(secondary, cached->bytes.data() + span, span))) {
+                if (stats) {
+                    ++compact_stats.cbuf_reused;
+                }
+                return &*cached;
+            }
+            cbuf_words.resize(total);
             gpu_memory->ReadBlockUnsafe(primary, cbuf_words.data(), span);
             if (desc.has_secondary) {
                 gpu_memory->ReadBlockUnsafe(secondary, cbuf_words.data() + span, span);
             }
-            auto cached = std::ranges::find(buffer_texture_handles, &desc, &BufferTextureHandles::desc);
-            if (cached != buffer_texture_handles.end() && cached->cacheable &&
-                cached->count == desc.count && cached->via_header_index == via_header_index &&
-                cached->bytes == cbuf_words) {
+            if (cached_usable && cached->bytes == cbuf_words) {
                 if (stats) {
                     ++compact_stats.cbuf_reused;
                 }
