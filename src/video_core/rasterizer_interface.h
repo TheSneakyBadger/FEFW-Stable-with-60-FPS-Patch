@@ -198,8 +198,8 @@ public:
     /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of src into dst along
     /// motion_vectors, with the depth and this frame's jitter. False when it can't run.
     [[nodiscard]] virtual bool AccelerateTemporalUpscale(
-        const Tegra::Engines::Fermi2D::Surface& src, const Tegra::Engines::Fermi2D::Surface& dst,
-        const Tegra::Engines::Fermi2D::Surface& motion_vectors,
+        const Tegra::Texture::TICEntry& src, const Tegra::Texture::TICEntry& dst,
+        const Tegra::Texture::TICEntry& motion_vectors,
         const Tegra::Texture::TICEntry& depth, std::array<f32, 2> jitter,
         std::array<f32, 2> motion_scale) {
         return false;

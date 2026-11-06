@@ -318,7 +318,17 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     // are learnt from the evaluations that run in full; after that they are skipped while NVIDIA
     // DLSS runs, and DLSS draws the output at the output pass. When DLSS can't run, the game's
     // own network runs as before.
-    if (rasterizer->UsesNvidiaDlss() && RememberDlssInputs()) {
+    // EDEN_DLSS_INERT=1 leaves the game's DLSS alone even with NVIDIA DLSS on (crash diagnosis).
+    static const bool dlss_inert = [] {
+        const char* const value = std::getenv("EDEN_DLSS_INERT");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!dlss_inert && rasterizer->UsesNvidiaDlss() && RememberDlssInputs()) {
+        if (static bool logged{}; !logged) {
+            logged = true;
+            LOG_INFO(HW_GPU, "Game DLSS evaluation found (depth {})",
+                     dlss_depth ? "found" : "missing");
+        }
         dlss_chain.active = true;
         dlss_chain.dispatches = 0;
         dlss_chain.pending.clear();
@@ -463,9 +473,8 @@ bool KeplerCompute::FinishDlssEvaluation(bool network_skipped) {
     const auto source = surface(*input, format);
     const auto destination = surface(*output, format);
     if (dlss_depth && dlss_motion_vectors && rasterizer->UsesNvidiaDlss() &&
-        rasterizer->AccelerateTemporalUpscale(source, destination,
-                                              surface(*dlss_motion_vectors, RTFormat::R16G16_FLOAT),
-                                              *dlss_depth, dlss_jitter, {1.0f, 1.0f})) {
+        rasterizer->AccelerateTemporalUpscale(*input, *output, *dlss_motion_vectors, *dlss_depth,
+                                              dlss_jitter, {1.0f, 1.0f})) {
         return true;
     }
     if (!network_skipped) {

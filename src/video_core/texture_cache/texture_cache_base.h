@@ -229,11 +229,10 @@ public:
                    const Tegra::Engines::Fermi2D::Config& copy);
 
     /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of src into dst along
-    /// motion_vectors, with the depth (see the runtime's TemporalUpscale). False when the images
-    /// cannot take it.
-    bool TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,
-                         const Tegra::Engines::Fermi2D::Surface& src,
-                         const Tegra::Engines::Fermi2D::Surface& motion_vectors,
+    /// motion_vectors, with the depth (see the runtime's TemporalUpscale). Only images the cache
+    /// already has are used (as the game's own passes find them). False when they cannot take it.
+    bool TemporalUpscale(const Tegra::Texture::TICEntry& dst, const Tegra::Texture::TICEntry& src,
+                         const Tegra::Texture::TICEntry& motion_vectors,
                          const Tegra::Texture::TICEntry& depth, std::array<f32, 2> jitter,
                          std::array<f32, 2> motion_scale);
 

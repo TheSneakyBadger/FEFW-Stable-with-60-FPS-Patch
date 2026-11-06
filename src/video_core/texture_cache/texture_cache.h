@@ -820,51 +820,40 @@ bool TextureCache<P>::BlitImage(const Tegra::Engines::Fermi2D::Surface& dst,
 }
 
 // Ported from Eglantine (Duck912): finds the colour, motion vector, depth and output images of a
-// game's DLSS evaluation and hands them to the runtime's TemporalUpscale (NVIDIA DLSS).
+// game's DLSS evaluation and hands them to the runtime's TemporalUpscale (NVIDIA DLSS). Looked up
+// from the evaluation's own texture descriptors and never created here: a new image overlapping
+// existing ones (a multisampled depth buffer, say) would start copies the game never asked for.
 template <class P>
-bool TextureCache<P>::TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,
-                                      const Tegra::Engines::Fermi2D::Surface& src,
-                                      const Tegra::Engines::Fermi2D::Surface& motion_vectors,
+bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
+                                      const Tegra::Texture::TICEntry& src,
+                                      const Tegra::Texture::TICEntry& motion_vectors,
                                       const Tegra::Texture::TICEntry& depth,
                                       std::array<f32, 2> jitter, std::array<f32, 2> motion_scale) {
     if constexpr (FRAMEBUFFER_BLITS) {
         return false;
     } else {
-        const Tegra::Engines::Fermi2D::Config copy{
-            .operation = Tegra::Engines::Fermi2D::Operation::SrcCopy,
-            .filter = Tegra::Engines::Fermi2D::Filter::Bilinear,
-            .must_accelerate = true,
-            .dst_x0 = 0,
-            .dst_y0 = 0,
-            .dst_x1 = static_cast<s32>(dst.width),
-            .dst_y1 = static_cast<s32>(dst.height),
-            .src_x0 = 0,
-            .src_y0 = 0,
-            .src_x1 = static_cast<s32>(src.width),
-            .src_y1 = static_cast<s32>(src.height),
+        static u32 logged{};
+        const auto find = [&](const Tegra::Texture::TICEntry& tic) {
+            return FindImage(ImageInfo(tic), tic.Address(), RelaxedOptions{});
         };
-        const auto result = GetBlitImages(dst, src, copy);
-        if (!result) {
-            return false;
+        const ImageId src_id = find(src);
+        const ImageId dst_id = find(dst);
+        const ImageId motion_id = find(motion_vectors);
+        const ImageId depth_id = find(depth);
+        const auto describe = [&](ImageId id) -> std::string {
+            if (!id) {
+                return "missing";
+            }
+            const ImageInfo& info = slot_images[id].info;
+            return fmt::format("{}x{} format {} samples {}", info.size.width, info.size.height,
+                               static_cast<u32>(info.format), info.num_samples);
+        };
+        if (logged < 3) {
+            ++logged;
+            LOG_INFO(Render_Vulkan, "NVIDIA DLSS inputs: colour {}, motion {}, depth {}, output {}",
+                     describe(src_id), describe(motion_id), describe(depth_id), describe(dst_id));
         }
-        const ImageInfo motion_info(motion_vectors);
-        has_deleted_images = false;
-        const ImageId motion_id =
-            FindOrInsertImage(motion_info, motion_vectors.Address(), RelaxedOptions{});
-        ImageId depth_id{};
-        if (motion_id) {
-            depth_id = FindOrInsertImage(ImageInfo(depth), depth.Address(), RelaxedOptions{});
-        }
-        if (has_deleted_images || !motion_id || !depth_id) {
-            return false; // the colour and output ids may be stale; the caller blits instead
-        }
-        const ImageId dst_id = result->dst_id;
-        const ImageId src_id = result->src_id;
-        PrepareImage(src_id, false, false);
-        PrepareImage(motion_id, false, false);
-        PrepareImage(depth_id, false, false);
-        PrepareImage(dst_id, true, false);
-        if (slot_images[depth_id].info.format != PixelFormat::D32_FLOAT) {
+        if (!src_id || !dst_id || !motion_id || !depth_id) {
             return false;
         }
         for (const ImageId id : {src_id, motion_id, depth_id, dst_id}) {
@@ -872,6 +861,13 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& ds
                 return false;
             }
         }
+        if (slot_images[depth_id].info.format != PixelFormat::D32_FLOAT) {
+            return false;
+        }
+        PrepareImage(src_id, false, false);
+        PrepareImage(motion_id, false, false);
+        PrepareImage(depth_id, false, false);
+        PrepareImage(dst_id, true, false);
         // With resolution scaling, bring the images that can follow to the same scale, as BlitImage
         // does. DLSS reads colour, motion and depth texel for texel: all at the colour's scale.
         const auto rescaled = [&](ImageId id) {
@@ -898,33 +894,34 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& ds
             const f32 factor = Settings::values.resolution_info.up_factor;
             jitter = {jitter[0] * factor, jitter[1] * factor};
         }
-        const auto view = [&](ImageId id, const Tegra::Engines::Fermi2D::Surface& surface,
-                              PixelFormat format) -> std::optional<std::pair<FramebufferId, ImageViewId>> {
-            const std::optional base = slot_images[id].TryFindBase(surface.Address());
+        const auto range_of = [&](ImageId id,
+                                  const Tegra::Texture::TICEntry& tic) -> std::optional<SubresourceRange> {
+            const std::optional base = slot_images[id].TryFindBase(tic.Address());
             if (!base) {
                 return std::nullopt;
             }
-            const SubresourceRange range{.base = *base, .extent = {1, 1}};
-            return RenderTargetFromImage(id, ImageViewInfo(ImageViewType::e2D, format, range));
+            return SubresourceRange{.base = *base, .extent = {1, 1}};
         };
-        const auto src_view = view(src_id, src, result->src_format);
-        const auto motion_view = view(motion_id, motion_vectors, motion_info.format);
-        const auto dst_view = view(dst_id, dst, result->dst_format);
-        if (!src_view || !motion_view || !dst_view) {
+        const auto src_range = range_of(src_id, src);
+        const auto motion_range = range_of(motion_id, motion_vectors);
+        const auto depth_range = range_of(depth_id, depth);
+        const auto dst_range = range_of(dst_id, dst);
+        if (!src_range || !motion_range || !depth_range || !dst_range) {
             return false;
         }
-        const std::optional depth_base = slot_images[depth_id].TryFindBase(depth.Address());
-        if (!depth_base) {
-            return false;
-        }
-        const ImageViewId depth_view = FindOrEmplaceImageView(
-            depth_id, ImageViewInfo(ImageViewType::e2D, PixelFormat::D32_FLOAT,
-                                    SubresourceRange{.base = *depth_base, .extent = {1, 1}}));
+        const auto view = [&](ImageId id, const SubresourceRange& range) {
+            return FindOrEmplaceImageView(
+                id, ImageViewInfo(ImageViewType::e2D, slot_images[id].info.format, range));
+        };
+        const ImageViewId src_view = view(src_id, *src_range);
+        const ImageViewId motion_view = view(motion_id, *motion_range);
+        const ImageViewId depth_view = view(depth_id, *depth_range);
+        const auto [dst_framebuffer_id, dst_view] = RenderTargetFromImage(
+            dst_id, ImageViewInfo(ImageViewType::e2D, slot_images[dst_id].info.format, *dst_range));
         // After the views: creating them may reallocate the framebuffer slots.
-        Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_view->first];
-        return runtime.TemporalUpscale(dst_framebuffer, slot_image_views[dst_view->second],
-                                       slot_image_views[src_view->second],
-                                       slot_image_views[motion_view->second],
+        Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
+        return runtime.TemporalUpscale(dst_framebuffer, slot_image_views[dst_view],
+                                       slot_image_views[src_view], slot_image_views[motion_view],
                                        slot_image_views[depth_view], render_size, jitter,
                                        motion_scale);
     }
