@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <array>
 
@@ -150,6 +151,12 @@ public:
                                                             u32 pixel_stride);
 
 private:
+    /// Before a draw takes the cache locks: lets guest CPU writes waiting for them go first.
+    void YieldToCpuWrites();
+
+    /// Guest CPU threads inside OnCPUWrite (waiting for or holding the cache locks).
+    std::atomic<u32> cpu_writes_in_flight{};
+
     static constexpr const u64 NEEDS_D24[] = {
         0x01006A800016E000ULL, // SSBU
         0x0100E95004038000ULL, // XC2

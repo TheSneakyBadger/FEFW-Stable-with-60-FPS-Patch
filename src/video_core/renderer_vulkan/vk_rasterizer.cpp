@@ -11,6 +11,10 @@
 #include <map>
 #include <chrono>
 #include <atomic>
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+#include <thread>
 #include <algorithm>
 #include <set>
 #include <tuple>
@@ -294,6 +298,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
         submitted = pipeline_cache.TakeDeferredDraw();
         return;
     }
+    YieldToCpuWrites();
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
     const BackStats::DrawLockHold lock_hold;
     locked = true;
@@ -905,8 +910,71 @@ void RasterizerVulkan::OnCachedWrites(std::span<const std::pair<DAddr, u64>> wri
     }
 }
 
+namespace {
+/// EDEN_CPU_WRITE_PRIORITY=0 turns off YieldToCpuWrites.
+bool CpuWritePriority() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_CPU_WRITE_PRIORITY");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
+void SpinPause() {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
+#else
+    std::this_thread::yield();
+#endif
+}
+
+/// Counts a guest CPU write in flight until its cache work is done.
+class CpuWriteInFlight {
+public:
+    explicit CpuWriteInFlight(std::atomic<u32>& counter_) : counter{&counter_} {
+        counter->fetch_add(1, std::memory_order_acq_rel);
+    }
+    ~CpuWriteInFlight() {
+        Done();
+    }
+    void Done() {
+        if (counter != nullptr) {
+            counter->fetch_sub(1, std::memory_order_release);
+            counter = nullptr;
+        }
+    }
+
+private:
+    std::atomic<u32>* counter;
+};
+} // Anonymous namespace
+
+// The draw thread takes the cache locks for every draw (~40% of the time in busy Fortune's Weave
+// scenes) and takes them again well under a microsecond after releasing them: a guest CPU thread
+// woken by the release usually found them taken again, and waited ~17 us per write on average
+// (0.6-0.9 s per second across the cores in Dagdion). A draw now first lets the writes already
+// waiting go (they hold the locks for well under a microsecond), for at most ~20 us.
+void RasterizerVulkan::YieldToCpuWrites() {
+    if (cpu_writes_in_flight.load(std::memory_order_acquire) == 0 || !CpuWritePriority()) {
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (u32 spins = 1; cpu_writes_in_flight.load(std::memory_order_acquire) != 0; ++spins) {
+        if (spins % 64 == 0 &&
+            std::chrono::steady_clock::now() - start > std::chrono::microseconds{20}) {
+            return;
+        }
+        SpinPause();
+    }
+}
+
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
+    CpuWriteInFlight in_flight{cpu_writes_in_flight};
     {
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
         std::scoped_lock lock{buffer_cache.mutex};
@@ -921,6 +989,7 @@ bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
         lock_timer.Acquired();
         texture_cache.WriteMemory(addr, size);
     }
+    in_flight.Done();
     pipeline_cache.InvalidateRegion(addr, size);
     return false;
 }
