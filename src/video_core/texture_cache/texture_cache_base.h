@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <deque>
 #include <limits>
@@ -226,6 +227,15 @@ public:
     bool BlitImage(const Tegra::Engines::Fermi2D::Surface& dst,
                    const Tegra::Engines::Fermi2D::Surface& src,
                    const Tegra::Engines::Fermi2D::Config& copy);
+
+    /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of src into dst along
+    /// motion_vectors, with the depth (see the runtime's TemporalUpscale). False when the images
+    /// cannot take it.
+    bool TemporalUpscale(const Tegra::Engines::Fermi2D::Surface& dst,
+                         const Tegra::Engines::Fermi2D::Surface& src,
+                         const Tegra::Engines::Fermi2D::Surface& motion_vectors,
+                         const Tegra::Texture::TICEntry& depth, std::array<f32, 2> jitter,
+                         std::array<f32, 2> motion_scale);
 
     /// Try to find a cached image view in the given CPU address
     [[nodiscard]] std::pair<ImageView*, bool> TryFindFramebufferImageView(

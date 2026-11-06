@@ -147,6 +147,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, scaling_filter, tr("Window Adapting Filter:"), QString());
     INSERT(Settings, fsr_sharpening_slider, tr("FSR Sharpness:"),
            tr("Determines how sharpened the image will look using FSR's or SGSR's dynamic contrast."));
+    INSERT(Settings, nvidia_dlss, tr("Use NVIDIA DLSS in place of the game's DLSS"),
+           tr("Uses NVIDIA DLSS on GeForce RTX cards in place of a Switch 2 game's own DLSS "
+              "(Fire Emblem: Fortune's Weave).\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS "
+              "unless the NVIDIA app has downloaded it; this build does not ship NVIDIA's files. "
+              "Use the download button below.\nTakes effect when a game starts."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));

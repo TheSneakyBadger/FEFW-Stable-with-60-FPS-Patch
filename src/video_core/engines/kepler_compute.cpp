@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <bit>
 #include <bitset>
 #include <cstdlib>
 #include "common/assert.h"
@@ -12,6 +13,7 @@
 #include "shader_recompiler/exception.h"
 #include "core/core.h"
 #include "video_core/engines/kepler_compute.h"
+#include "video_core/engines/fermi_2d.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/back_thread_stats.h"
 #include "video_core/gpu_split.h"
@@ -310,6 +312,36 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
+    // NVIDIA DLSS in place of Fortune's Weave's own DLSS network (setting nvidia_dlss; from
+    // Eglantine, by Duck912). An evaluation runs from its first pass, which holds the colour,
+    // motion vectors, depth and jitter, to the pass that writes the upscaled image. Its programs
+    // are learnt from the evaluations that run in full; after that they are skipped while NVIDIA
+    // DLSS runs, and DLSS draws the output at the output pass. When DLSS can't run, the game's
+    // own network runs as before.
+    if (rasterizer->UsesNvidiaDlss() && RememberDlssInputs()) {
+        dlss_chain.active = true;
+        dlss_chain.dispatches = 0;
+        dlss_chain.pending.clear();
+    }
+    const bool output_pass = dlss_chain.active && IsDlssOutputPass();
+    // Fortune's Weave's evaluation is 13 dispatches. Without an output pass by then, the first pass
+    // was another program with a similar constant buffer: stop following it.
+    constexpr u32 max_dispatches = 64;
+    if (dlss_chain.active && !output_pass && ++dlss_chain.dispatches > max_dispatches) {
+        dlss_chain.active = false;
+        dlss_chain.pending.clear();
+    }
+    if (dlss_chain.active) {
+        const GPUVAddr program = regs.code_loc.Address();
+        if (dlss_depth && rasterizer->UsesNvidiaDlss() && dlss_chain.programs.contains(program)) {
+            if (output_pass) {
+                FinishDlssEvaluation(true);
+            }
+            return true;
+        }
+        dlss_chain.pending.insert(program);
+    }
+    bool dispatched = true;
     try {
         rasterizer->DispatchCompute();
     } catch (const Shader::Exception& error) {
@@ -319,9 +351,141 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
         if (count <= 32 || count % 1024 == 0) {
             LOG_CRITICAL(HW_GPU, "Native compute shader rejected: {} (compute rejections so far: {})", error.what(), count);
         }
+        dispatched = false;
+    }
+    if (output_pass) {
+        FinishDlssEvaluation(false);
+    }
+    return dispatched;
+}
+
+std::optional<Texture::TICEntry> KeplerCompute::DlssImage(u32 offset) {
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    const GPUVAddr cbuf_address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
+    const u32 tic_index = memory_manager.Read<u32>(cbuf_address + offset) & 0xfffff;
+    if (tic_index > regs.tic.limit) {
+        return std::nullopt;
+    }
+    return GetTICEntry(tic_index);
+}
+
+// Fortune's Weave's first DLSS pass has the input colour at cbuf0+0x278, its motion vectors
+// (R16G16 float, the input's size) at +0x290, its depth (Z32, the input's size) at +0x298 and this
+// frame's camera jitter (x, y; input pixels) at +0x1b0.
+bool KeplerCompute::RememberDlssInputs() {
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    if (cbuf.size.Value() < 0x29c) {
         return false;
     }
+    const auto color = DlssImage(0x278);
+    const auto motion = DlssImage(0x290);
+    if (!color || !motion || color->format != Texture::TextureFormat::B10G11R11 ||
+        motion->format != Texture::TextureFormat::R16G16 || motion->Address() == 0 ||
+        motion->Width() != color->Width() || motion->Height() != color->Height() ||
+        !motion->IsBlockLinear()) {
+        return false;
+    }
+    dlss_motion_vectors = *motion;
+    dlss_motion_color = color->Address();
+    const auto depth = DlssImage(0x298);
+    if (depth && depth->format == Texture::TextureFormat::Z32 && depth->Address() != 0 &&
+        depth->Width() == color->Width() && depth->Height() == color->Height() &&
+        depth->IsBlockLinear()) {
+        dlss_depth = *depth;
+    } else {
+        dlss_depth.reset();
+    }
+    const GPUVAddr cbuf_address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
+    dlss_jitter = {std::bit_cast<f32>(memory_manager.Read<u32>(cbuf_address + 0x1b0)),
+                   std::bit_cast<f32>(memory_manager.Read<u32>(cbuf_address + 0x1b4))};
     return true;
+}
+
+// Fortune's Weave's last DLSS pass reads the input colour (the first pass's) through cbuf0+0x328
+// and writes the upscaled image through +0x348.
+bool KeplerCompute::IsDlssOutputPass() {
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    if (cbuf.size.Value() < 0x34c) {
+        return false;
+    }
+    const auto input = DlssImage(0x328);
+    const auto output = DlssImage(0x348);
+    return input && output && input->Address() == dlss_motion_color && output->Address() != 0 &&
+           input->format == output->format && output->Width() > input->Width();
+}
+
+// Ends this frame's DLSS evaluation at its output pass: NVIDIA DLSS draws over the output, or,
+// when it can't run and the network was skipped this frame, a plain upscale of the input does.
+bool KeplerCompute::FinishDlssEvaluation(bool network_skipped) {
+    dlss_chain.active = false;
+    dlss_chain.programs.insert(dlss_chain.pending.begin(), dlss_chain.pending.end());
+    dlss_chain.pending.clear();
+    if (!network_skipped && (!dlss_depth || !dlss_motion_vectors || !rasterizer->UsesNvidiaDlss())) {
+        return false; // the network's own output stays
+    }
+    const auto input = DlssImage(0x328);
+    const auto output = DlssImage(0x348);
+    if (!input || !output || !input->IsBlockLinear() || !output->IsBlockLinear()) {
+        return false;
+    }
+    using RTFormat = Tegra::RenderTargetFormat;
+    RTFormat format{};
+    switch (input->format) {
+    case Texture::TextureFormat::A2B10G10R10:
+        format = RTFormat::A2B10G10R10_UNORM;
+        break;
+    case Texture::TextureFormat::A8B8G8R8:
+        format = RTFormat::A8B8G8R8_UNORM;
+        break;
+    case Texture::TextureFormat::B10G11R11:
+        format = RTFormat::B10G11R11_FLOAT;
+        break;
+    case Texture::TextureFormat::R16G16B16A16:
+        format = RTFormat::R16G16B16A16_FLOAT;
+        break;
+    default:
+        return false;
+    }
+    const auto surface = [](const Texture::TICEntry& tic, RTFormat surface_format) {
+        Fermi2D::Surface result{};
+        result.format = surface_format;
+        result.linear = Fermi2D::MemoryLayout::BlockLinear;
+        result.block_width.Assign(tic.block_width);
+        result.block_height.Assign(tic.block_height);
+        result.block_depth.Assign(tic.block_depth);
+        result.depth = 1;
+        result.width = tic.Width();
+        result.height = tic.Height();
+        result.addr_upper = static_cast<u32>(tic.Address() >> 32);
+        result.addr_lower = static_cast<u32>(tic.Address());
+        return result;
+    };
+    const auto source = surface(*input, format);
+    const auto destination = surface(*output, format);
+    if (dlss_depth && dlss_motion_vectors && rasterizer->UsesNvidiaDlss() &&
+        rasterizer->AccelerateTemporalUpscale(source, destination,
+                                              surface(*dlss_motion_vectors, RTFormat::R16G16_FLOAT),
+                                              *dlss_depth, dlss_jitter, {1.0f, 1.0f})) {
+        return true;
+    }
+    if (!network_skipped) {
+        return false;
+    }
+    // The network didn't run this frame: keep the output fed with a plain upscale.
+    const Fermi2D::Config config{
+        .operation = Fermi2D::Operation::SrcCopy,
+        .filter = Fermi2D::Filter::Bilinear,
+        .must_accelerate = true,
+        .dst_x0 = 0,
+        .dst_y0 = 0,
+        .dst_x1 = static_cast<s32>(output->Width()),
+        .dst_y1 = static_cast<s32>(output->Height()),
+        .src_x0 = 0,
+        .src_y0 = 0,
+        .src_x1 = static_cast<s32>(input->Width()),
+        .src_y1 = static_cast<s32>(input->Height()),
+    };
+    return rasterizer->AccelerateSurfaceCopy(source, destination, config);
 }
 
 void KeplerCompute::ProcessLaunch() {

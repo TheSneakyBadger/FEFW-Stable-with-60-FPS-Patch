@@ -6,6 +6,10 @@
 
 #pragma once
 
+#include <array>
+#include <chrono>
+#include <memory>
+#include <optional>
 #include <span>
 
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -17,6 +21,9 @@
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
+#ifdef EGLANTINE_STREAMLINE
+#include "video_core/renderer_vulkan/vk_streamline_dlss.h"
+#endif
 
 namespace Settings {
 struct ResolutionScalingInfo;
@@ -78,6 +85,16 @@ public:
                    const Region2D& dst_region, const Region2D& src_region,
                    Tegra::Engines::Fermi2D::Filter filter,
                    Tegra::Engines::Fermi2D::Operation operation);
+
+    /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of input_color
+    /// (render_size on the host) into dst. False when it can't run; the caller then blits.
+    bool TemporalUpscale(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& input_color,
+                         ImageView& motion_vectors, ImageView& depth,
+                         std::array<u32, 2> render_size, std::array<f32, 2> jitter,
+                         std::array<f32, 2> motion_scale);
+
+    /// True while TemporalUpscale would use NVIDIA DLSS (on, Streamline running, not failed).
+    [[nodiscard]] bool UsesNvidiaDlss() const;
 
     void CopyImage(Image& dst, Image& src, std::span<const VideoCommon::ImageCopy> copies);
 
@@ -156,6 +173,15 @@ public:
     StagingBufferPool& staging_buffer_pool;
     BlitImageHelper& blit_image_helper;
     RenderPassCache& render_pass_cache;
+
+    /// Draws an upscaler's RGBA16F output into the DLSS output and returns it to GENERAL.
+    void DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkImageView view, VkImage image,
+                            VkSampler sampler);
+#ifdef EGLANTINE_STREAMLINE
+    std::unique_ptr<StreamlineDlssUpscaler> dlss_upscaler;
+    bool dlss_unsupported{};
+    std::optional<std::chrono::steady_clock::time_point> dlss_last_evaluation;
+#endif
     std::optional<ASTCDecoderPass> astc_decoder_pass;
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;

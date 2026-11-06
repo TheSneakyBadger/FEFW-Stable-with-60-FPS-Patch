@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 #include "common/bit_field.h"
 #include "common/common_funcs.h"
@@ -253,6 +254,23 @@ public:
 
 private:
     bool DispatchNativeCompute(const NativeQmdScheduler::Descriptor& descriptor);
+
+    /// NVIDIA DLSS in place of Fortune's Weave's own DLSS network (setting nvidia_dlss; from
+    /// Eglantine, by Duck912). See DispatchNativeCompute.
+    bool RememberDlssInputs();
+    bool IsDlssOutputPass();
+    bool FinishDlssEvaluation(bool network_skipped);
+    std::optional<Texture::TICEntry> DlssImage(u32 offset);
+    struct DlssChain {
+        bool active{};
+        u32 dispatches{};
+        std::unordered_set<GPUVAddr> pending;  ///< Programs of the evaluation in progress
+        std::unordered_set<GPUVAddr> programs; ///< Programs of earlier evaluations
+    } dlss_chain;
+    std::optional<Texture::TICEntry> dlss_motion_vectors;
+    std::optional<Texture::TICEntry> dlss_depth;
+    GPUVAddr dlss_motion_color{};
+    std::array<f32, 2> dlss_jitter{};
     bool ProcessNativeMethod(Core::System& system, u32 method, u32 argument, bool is_last_call);
     NativeQmdScheduler native_qmd;
     TuringMacroInterpreter native_interpreter;

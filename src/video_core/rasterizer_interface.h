@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <span>
@@ -15,6 +16,7 @@
 #include "common/settings.h"
 #include "video_core/cache_types.h"
 #include "video_core/engines/fermi_2d.h"
+#include "video_core/textures/texture.h"
 #include "video_core/gpu.h"
 #include "video_core/query_cache/types.h"
 #include "video_core/rasterizer_download_area.h"
@@ -190,6 +192,21 @@ public:
     [[nodiscard]] virtual bool AccelerateSurfaceCopy(
         const Tegra::Engines::Fermi2D::Surface& src, const Tegra::Engines::Fermi2D::Surface& dst,
         const Tegra::Engines::Fermi2D::Config& copy_config) {
+        return false;
+    }
+
+    /// NVIDIA DLSS in place of a game's DLSS evaluation: temporal upscale of src into dst along
+    /// motion_vectors, with the depth and this frame's jitter. False when it can't run.
+    [[nodiscard]] virtual bool AccelerateTemporalUpscale(
+        const Tegra::Engines::Fermi2D::Surface& src, const Tegra::Engines::Fermi2D::Surface& dst,
+        const Tegra::Engines::Fermi2D::Surface& motion_vectors,
+        const Tegra::Texture::TICEntry& depth, std::array<f32, 2> jitter,
+        std::array<f32, 2> motion_scale) {
+        return false;
+    }
+
+    /// Whether NVIDIA DLSS (the "Use NVIDIA DLSS" setting) would draw a game's DLSS evaluation.
+    [[nodiscard]] virtual bool UsesNvidiaDlss() const {
         return false;
     }
 
