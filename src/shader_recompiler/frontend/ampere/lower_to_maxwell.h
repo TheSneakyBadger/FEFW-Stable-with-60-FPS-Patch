@@ -1367,6 +1367,23 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{offset >> 2} << 30) | (u64{operation} << 52));
             break;
         }
+        case 0x38d: { // ATOMS.CAS.32: if shared [address + offset] equals compare, store the new
+            // value; returns the old value. SM80 encoding: dest 16..23, address 24..31, compare
+            // 32..39, signed byte offset 40..63, new value 64..71, type 73..75 (0: 32-bit),
+            // 78..79 free, 87..88 = 3 for CAS. Lowered to ATOMS_cas in the encoding its Maxwell
+            // translator reads (atomic_operations_shared_memory.cpp): dest 0..7, address 8..15,
+            // compare 20..27, signed word offset 28..41, new value 42..49, mark 0x2d in 50..55.
+            const u32 raw_offset = insn.Bits(40, 24);
+            const s32 offset = static_cast<s32>(raw_offset << 8) >> 8;
+            if ((insn.words[2] & ~0x0000ceffU) != 0x01800000 || insn.Bits(73, 3) || (offset & 3) ||
+                offset / 4 < -(1 << 13) || offset / 4 >= (1 << 13))
+                return fail(index, "native shared compare-and-swap mode");
+            emit(0xee00000000000000ULL | predicate | dest | (u64{insn.Bits(24, 8)} << 8) |
+                (u64{insn.Bits(32, 8)} << 20) |
+                ((static_cast<u64>(static_cast<s64>(offset / 4)) & 0x3fffULL) << 28) |
+                (u64{insn.Bits(64, 8)} << 42) | (u64{0x2d} << 50));
+            break;
+        }
         case 0x3a8: { // [merge-atomg-reg] ATOMG.E.ADD.STRONG.GPU U32 through a register address pair, returning the old value.
             // SM70 encoding: address 24..31 with the .E bit at 72, data 32..39, immediate offset 40..63,
             // type 73..75, ordering 76..79, no predicate output (81..83 = PT), operation 87..90 and no

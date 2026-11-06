@@ -380,6 +380,8 @@ void EmitSharedAtomicExchange32(EmitContext& ctx, IR::Inst& inst, ScalarU32 poin
                                 ScalarU32 value);
 void EmitSharedAtomicExchange64(EmitContext& ctx, IR::Inst& inst, ScalarU32 pointer_offset,
                                 Register value);
+void EmitSharedAtomicCompareExchange32(EmitContext& ctx, IR::Inst& inst, ScalarU32 pointer_offset,
+                                       ScalarU32 compare, ScalarU32 value);
 void EmitSharedAtomicExchange32x2(EmitContext& ctx, IR::Inst& inst, ScalarU32 pointer_offset,
                                   Register value);
 void EmitStorageAtomicIAdd32(EmitContext& ctx, IR::Inst& inst, const IR::Value& binding,

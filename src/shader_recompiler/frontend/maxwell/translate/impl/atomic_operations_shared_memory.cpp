@@ -106,4 +106,29 @@ void TranslatorVisitor::ATOMS(u64 insn) {
     StoreResult(*this, atoms.dest_reg, result, atoms.size);
 }
 
+// Only the shared compare-and-swap that the Ampere lowering emits for ATOMS.CAS.32 (opcode 0x38d,
+// lower_to_maxwell.h), in that lowering's own encoding: dest 0..7, address 8..15, compare
+// 20..27, signed word offset 28..41, new value 42..49, and LOWERED_CAS_MARK in 50..55. The real
+// Maxwell ATOMS.CAS encoding is still not implemented.
+void TranslatorVisitor::ATOMS_cas(u64 insn) {
+    constexpr u64 LOWERED_CAS_MARK = 0x2d;
+    union {
+        u64 raw;
+        BitField<0, 8, IR::Reg> dest_reg;
+        BitField<8, 8, IR::Reg> addr_reg;
+        BitField<20, 8, IR::Reg> compare_reg;
+        BitField<28, 14, s64> word_offset;
+        BitField<42, 8, IR::Reg> value_reg;
+        BitField<50, 6, u64> mark;
+    } const cas{insn};
+    if (cas.mark != LOWERED_CAS_MARK) {
+        throw NotImplementedException("Instruction ATOMS (cas) is not implemented");
+    }
+    const s32 byte_offset{static_cast<s32>(cas.word_offset.Value() * 4)};
+    const IR::U32 offset{cas.addr_reg == IR::Reg::RZ
+                             ? ir.Imm32(static_cast<u32>(byte_offset))
+                             : ir.IAdd(X(cas.addr_reg), ir.Imm32(byte_offset))};
+    X(cas.dest_reg, ir.SharedAtomicCompareExchange(offset, X(cas.compare_reg), X(cas.value_reg)));
+}
+
 } // namespace Shader::Maxwell

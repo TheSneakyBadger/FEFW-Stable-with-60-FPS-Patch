@@ -19,10 +19,6 @@ void TranslatorVisitor::ATOM_cas(u64) {
     ThrowNotImplemented(Opcode::ATOM_cas);
 }
 
-void TranslatorVisitor::ATOMS_cas(u64) {
-    ThrowNotImplemented(Opcode::ATOMS_cas);
-}
-
 void TranslatorVisitor::B2R(u64) {
     ThrowNotImplemented(Opcode::B2R);
 }
