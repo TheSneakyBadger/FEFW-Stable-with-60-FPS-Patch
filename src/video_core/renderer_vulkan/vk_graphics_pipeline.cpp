@@ -82,8 +82,11 @@ void NoteHandleTableBytes(GPUVAddr base, std::span<const u8> bytes) {
 /// (a Finish, about once a frame, 0.2-1.3 ms). Those tables come out identical frame after frame
 /// (every download in Dagsion). Once a table has downloaded identically STREAK times in a row,
 /// draws use the bytes already in guest memory, and a copy of the GPU's version, recorded without
-/// waiting, is compared once the GPU has finished it. A difference stops this for the table until
-/// it is stable again; the draws in between (about a frame) used the previous handles.
+/// waiting, is compared once the GPU has finished it. The table is also downloaded for real at
+/// least every REFRESH, so nothing can stay out of date for longer than that even if a change
+/// were missed. A table that is ever found to differ is waited for from then on (for the rest of
+/// the session), so a table that changes can show the previous handles at most once: until the
+/// GPU's copy is checked (about a frame), or REFRESH at worst. Each change is logged.
 /// EDEN_SPECULATIVE_HANDLES=0 turns it off.
 class SpeculativeHandleTables {
 public:
@@ -108,12 +111,28 @@ public:
             for (Table& table : tables) {
                 table = Table{};
             }
+            volatile_count = 0;
+            volatile_next = 0;
             owner = &buffer_cache.runtime;
         }
         last_tick = tick;
+        if (IsVolatile(addr, size)) {
+            buffer_cache.DownloadMemory(addr, size); // Has changed before: always wait for it
+            ++waited;
+            MaybeReport();
+            return;
+        }
         Table& table = Find(buffer_cache, addr, size);
         Poll(scheduler, buffer_cache, table);
-        if (table.streak >= STREAK && table.pending.size() < MAX_PENDING) {
+        if (IsVolatile(addr, size)) {
+            buffer_cache.DownloadMemory(addr, size); // The check just found a difference
+            ++waited;
+            MaybeReport();
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (table.streak >= STREAK && table.pending.size() < MAX_PENDING &&
+            now - table.last_real < REFRESH) {
             if (auto staging = buffer_cache.RecordDownloadSnapshot(addr, size)) {
                 Pending& pending = table.pending.emplace_back();
                 pending.staging = *staging;
@@ -130,13 +149,23 @@ public:
         buffer_cache.DownloadMemory(addr, size);
         table.after.resize(size);
         gpu_memory.ReadBlockUnsafe(gpu_addr, table.after.data(), size);
-        table.streak = table.before == table.after ? (std::min)(table.streak + 1, STREAK) : 0;
+        table.last_real = now;
+        if (table.before == table.after) {
+            table.streak = (std::min)(table.streak + 1, STREAK);
+        } else {
+            if (table.streak >= STREAK) {
+                // Changed while the shortcut was in use for it (the refresh found it)
+                MarkVolatile(buffer_cache, table, "a periodic download");
+            }
+            table.streak = 0;
+        }
         ++waited;
         MaybeReport();
     }
 
 private:
-    static constexpr u32 STREAK = 8;
+    static constexpr u32 STREAK = 32;
+    static constexpr std::chrono::milliseconds REFRESH{250};
     static constexpr size_t MAX_PENDING = 16;
     static constexpr u64 MAX_SIZE = 256 * 1024;
 
@@ -150,6 +179,7 @@ private:
         u64 size{};
         u32 streak{};
         u64 last_use{};
+        std::chrono::steady_clock::time_point last_real{};
         std::vector<Pending> pending;
         std::vector<u8> before;
         std::vector<u8> after;
@@ -192,9 +222,37 @@ private:
         }
         table.pending.erase(table.pending.begin(), table.pending.begin() + done);
         if (!same) {
-            ++mismatched;
             table.streak = 0;
-            DropPending(buffer_cache, table);
+            MarkVolatile(buffer_cache, table, "the GPU's copy");
+        }
+    }
+
+    bool IsVolatile(DAddr addr, u64 size) const {
+        for (u32 index = 0; index < volatile_count; ++index) {
+            if (volatile_tables[index].addr == addr && volatile_tables[index].size == size) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// From now on the table is always waited for.
+    void MarkVolatile(BufferCache& buffer_cache, Table& table, const char* found_by) {
+        ++mismatched;
+        DropPending(buffer_cache, table);
+        if (IsVolatile(table.addr, table.size)) {
+            return;
+        }
+        VolatileTable& slot = volatile_tables[volatile_next];
+        slot = {table.addr, table.size};
+        volatile_next = (volatile_next + 1) % volatile_tables.size();
+        volatile_count = (std::min)(volatile_count + 1, static_cast<u32>(volatile_tables.size()));
+        if (logged_changes < 32) {
+            ++logged_changes;
+            LOG_WARNING(Render_Vulkan,
+                        "Texture-handle table at {:#x} ({} bytes) changed (found by {}); waiting "
+                        "for it from now on",
+                        table.addr, table.size, found_by);
         }
     }
 
@@ -226,7 +284,16 @@ private:
         last_report = now;
     }
 
+    struct VolatileTable {
+        DAddr addr{};
+        u64 size{};
+    };
+
     std::array<Table, 8> tables{};
+    std::array<VolatileTable, 128> volatile_tables{};
+    u32 volatile_count{};
+    u32 volatile_next{};
+    u32 logged_changes{};
     const void* owner{};
     u64 last_tick{};
     u64 use{};
