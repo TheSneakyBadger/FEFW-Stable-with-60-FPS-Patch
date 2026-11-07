@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "common/fefw_version.h"
 #include "common/literals.h"
 
 #include "common/memory_detect.h"
@@ -241,6 +242,7 @@ void Init(QWidget* root) {
     const auto processor_count = std::thread::hardware_concurrency();
 
     // info logging
+    LOG_INFO(Frontend, "Fortune's Eden {}", Common::FefwVersion);
     LOG_INFO(Frontend, "Eden Version: {}", yuzu_build_version);
     LogRuntimes();
 #ifdef ARCHITECTURE_x86_64

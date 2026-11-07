@@ -12,6 +12,7 @@
 #endif
 
 #include <QtCore/qglobal.h>
+#include "common/fefw_version.h"
 #include "common/settings_enums.h"
 
 #include "qt_common/config/uisettings.h"
@@ -118,7 +119,7 @@ struct NullRenderWidget : public RenderWidget {
 GRenderWindow::GRenderWindow(MainWindow* parent,
                              std::shared_ptr<InputCommon::InputSubsystem> input_subsystem_)
     : QWidget(parent), input_subsystem{std::move(input_subsystem_)} {
-    setWindowTitle(QStringLiteral("Fortune's Eden"));
+    setWindowTitle(QString::fromUtf8(Common::FefwTitle));
     setAttribute(Qt::WA_AcceptTouchEvents);
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

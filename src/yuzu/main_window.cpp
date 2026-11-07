@@ -9,6 +9,7 @@
 #endif
 
 #include <boost/algorithm/string/split.hpp>
+#include "common/fefw_version.h"
 #include "common/fs/path_util.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -4092,8 +4093,8 @@ void MainWindow::OnApplicationChanged(u64 program_id) {
 
 void MainWindow::UpdateWindowTitle(std::string_view title_name, std::string_view title_version,
                                    std::string_view gpu_vendor) {
-    // FEFW Stable build: the window is titled "Fortune's Eden" (plus the game while one runs).
-    const std::string window_title = "Fortune's Eden";
+    // FEFW Stable build: the window is titled "Fortune's Eden v1.5" (plus the game while one runs).
+    const std::string window_title = Common::FefwTitle;
 
     if (title_name.empty()) {
         setWindowTitle(QString::fromStdString(window_title));

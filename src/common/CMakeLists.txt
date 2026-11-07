@@ -82,6 +82,7 @@ add_library(
     multi_level_page_table.cpp
     multi_level_page_table.h
     overflow.h
+    fefw_version.h
     page_filter.h
     page_table.cpp
     page_table.h
