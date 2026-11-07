@@ -142,6 +142,19 @@ void TextureCache<P>::RunGarbageCollector() {
         if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download)) {
             return false;
         }
+        // An image the GPU drew into that can't be written back (BadOverlap, or not downloadable)
+        // would come back from guest memory without what the GPU drew, which guest memory never
+        // had. Fortune's Weave draws its sky colour table (256x256 R11G11B10) once and keeps
+        // reading it: collected while the map covered the screen, the sky came back black
+        // (in memory critical mode too). Small ones are kept in every mode, without counting
+        // against the pass so they don't hold up the images behind them; large ones are still
+        // collected.
+        static constexpr u32 KEEP_GPU_IMAGE_BYTES = 4_MiB;
+        if (True(image.flags & ImageFlagBits::GpuModified) && !must_download &&
+            image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES) {
+            ++num_iterations;
+            return false;
+        }
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
