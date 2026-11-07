@@ -446,13 +446,17 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
             return;
         }
     }
+    // One line per call, not per unmapped page: an access across a hole listed every 4 KiB page.
+    bool reported{};
     WalkBlock(
         address, size,
         [&](size_t copy_amount, DAddr current_vaddr) {
-            LOG_ERROR(
-                HW_Memory,
-                "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                current_vaddr, address, size);
+            if (!reported) {
+                reported = true;
+                LOG_ERROR(HW_Memory,
+                          "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
+                          current_vaddr, address, size);
+            }
             std::memset(dest_pointer, 0, copy_amount);
         },
         [&](size_t copy_amount, const u8* const src_ptr) {
@@ -465,13 +469,17 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
 
 template <typename Traits>
 void DeviceMemoryManager<Traits>::WriteBlock(DAddr address, const void* src_pointer, size_t size) {
+    // One line per call, not per unmapped page: an access across a hole listed every 4 KiB page.
+    bool reported{};
     WalkBlock(
         address, size,
         [&](size_t copy_amount, DAddr current_vaddr) {
-            LOG_ERROR(
-                HW_Memory,
-                "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                current_vaddr, address, size);
+            if (!reported) {
+                reported = true;
+                LOG_ERROR(HW_Memory,
+                          "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
+                          current_vaddr, address, size);
+            }
         },
         [&](size_t copy_amount, u8* const dst_ptr) {
             std::memcpy(dst_ptr, src_pointer, copy_amount);
@@ -505,13 +513,17 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
             return;
         }
     }
+    // One line per call, not per unmapped page: an access across a hole listed every 4 KiB page.
+    bool reported{};
     WalkBlock(
         address, size,
         [&](size_t copy_amount, DAddr current_vaddr) {
-            LOG_ERROR(
-                HW_Memory,
-                "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                current_vaddr, address, size);
+            if (!reported) {
+                reported = true;
+                LOG_ERROR(HW_Memory,
+                          "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
+                          current_vaddr, address, size);
+            }
             std::memset(dest_pointer, 0, copy_amount);
         },
         [&](size_t copy_amount, const u8* const src_ptr) {
@@ -525,13 +537,17 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
 template <typename Traits>
 void DeviceMemoryManager<Traits>::WriteBlockUnsafe(DAddr address, const void* src_pointer,
                                                    size_t size) {
+    // One line per call, not per unmapped page: an access across a hole listed every 4 KiB page.
+    bool reported{};
     WalkBlock(
         address, size,
         [&](size_t copy_amount, DAddr current_vaddr) {
-            LOG_ERROR(
-                HW_Memory,
-                "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                current_vaddr, address, size);
+            if (!reported) {
+                reported = true;
+                LOG_ERROR(HW_Memory,
+                          "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
+                          current_vaddr, address, size);
+            }
         },
         [&](size_t copy_amount, u8* const dst_ptr) {
             std::memcpy(dst_ptr, src_pointer, copy_amount);

@@ -978,8 +978,20 @@ private:
             });
             system.CoreTiming().ScheduleLoopingEvent(std::chrono::milliseconds{1}, std::chrono::milliseconds{1}, m_release_poll);
         }
-        LOG_INFO(Service_AM, "Native image queued for display: image={}, slot={}, fence={}/{}, dimensions={}x{}, outstanding={}",
-                 image->id, slot, fence_id, packet[24], native->width, native->height, OutstandingPresents(state));
+        // Every frame (60 a second): at Info only the first few and when the size changes, so a long
+        // session's log stays small enough to send. All of them at Debug.
+        static u32 queued_logged{};
+        static u64 last_dimensions{};
+        const u64 dimensions = (u64{static_cast<u32>(native->width)} << 32) | static_cast<u32>(native->height);
+        if (queued_logged < 3 || dimensions != last_dimensions) {
+            ++queued_logged;
+            last_dimensions = dimensions;
+            LOG_INFO(Service_AM, "Native image queued for display: image={}, slot={}, fence={}/{}, dimensions={}x{}, outstanding={}",
+                     image->id, slot, fence_id, packet[24], native->width, native->height, OutstandingPresents(state));
+        } else {
+            LOG_DEBUG(Service_AM, "Native image queued for display: image={}, slot={}, fence={}/{}, dimensions={}x{}, outstanding={}",
+                      image->id, slot, fence_id, packet[24], native->width, native->height, OutstandingPresents(state));
+        }
         R_SUCCEED();
     }
     void PresentClientBuffer(HLERequestContext& ctx) {
