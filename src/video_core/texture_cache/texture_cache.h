@@ -149,7 +149,7 @@ void TextureCache<P>::RunGarbageCollector() {
         // (in memory critical mode too). Small ones are kept in every mode, without counting
         // against the pass so they don't hold up the images behind them; large ones are still
         // collected.
-        static constexpr u32 KEEP_GPU_IMAGE_BYTES = 4_MiB;
+        static constexpr u64 KEEP_GPU_IMAGE_BYTES = 4_MiB;
         if (True(image.flags & ImageFlagBits::GpuModified) && !must_download &&
             image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES) {
             ++num_iterations;
