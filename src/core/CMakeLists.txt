@@ -77,6 +77,7 @@ add_library(core STATIC
     file_sys/fssrv/fssrv_sf_path.h
     file_sys/fssystem/fs_i_storage.h
     file_sys/fssystem/fs_types.h
+    file_sys/fefw_ultrawide.h
     file_sys/fssystem/fssystem_aes_ctr_counter_extended_storage.cpp
     file_sys/fssystem/fssystem_aes_ctr_counter_extended_storage.h
     file_sys/fssystem/fssystem_aes_ctr_storage.cpp

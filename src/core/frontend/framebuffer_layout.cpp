@@ -26,7 +26,11 @@ static Common::Rectangle<u32> MaxRectangle(Common::Rectangle<u32> window_area, f
 FramebufferLayout DefaultFrameLayout(u32 width, u32 height) noexcept {
     ASSERT(width > 0 && height > 0);
     auto const window_aspect_ratio = float(height) / float(width);
-    auto const emulation_aspect_ratio = EmulationAspectRatio(Settings::values.aspect_ratio.GetValue(), window_aspect_ratio);
+    // The ultrawide patch draws for a 43:18 screen, so its picture fills the window.
+    auto const emulation_aspect_ratio = EmulationAspectRatio(
+        Settings::values.fefw_ultrawide.GetValue() ? Settings::AspectRatio::Stretch
+                                                   : Settings::values.aspect_ratio.GetValue(),
+        window_aspect_ratio);
     Common::Rectangle<u32> const screen_window_area{0, 0, width, height};
     auto screen = MaxRectangle(screen_window_area, emulation_aspect_ratio);
     if (window_aspect_ratio < emulation_aspect_ratio) {

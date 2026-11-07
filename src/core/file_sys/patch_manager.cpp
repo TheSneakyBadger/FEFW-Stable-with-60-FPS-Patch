@@ -21,6 +21,7 @@
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
+#include "core/file_sys/fefw_ultrawide.h"
 #include "core/file_sys/ips_layer.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
@@ -443,6 +444,19 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
     const auto patches = CollectPatches(patch_dirs, build_id);
 
     auto out = nso;
+    // The built-in ultrawide patch (setting fefw_ultrawide), before any mod folder's patches. It
+    // writes fixed bytes, so the same patch also present as a mod folder changes nothing more.
+    if (Settings::values.fefw_ultrawide.GetValue() && build_id == FefwUltrawide::MainBuildId) {
+        LOG_INFO(Loader, "    - Applying the built-in ultrawide patch (Kompas9, v1.1)");
+        const auto patch = std::make_shared<VectorVfsFile>(
+            std::vector<u8>(FefwUltrawide::Ips.begin(), FefwUltrawide::Ips.end()), "ultrawide.ips");
+        const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), patch);
+        if (patched != nullptr) {
+            out = patched->ReadAllBytes();
+        } else {
+            LOG_ERROR(Loader, "    - The built-in ultrawide patch could not be applied");
+        }
+    }
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
             LOG_INFO(Loader, "    - Applying IPS patch from mod \"{}\"",
@@ -473,6 +487,10 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
     const auto build_id = build_id_raw.substr(0, build_id_raw.find_last_not_of('0') + 1);
 
     LOG_INFO(Loader, "Querying NSO patch existence for build_id={}, name={}", build_id, name);
+
+    if (Settings::values.fefw_ultrawide.GetValue() && build_id == FefwUltrawide::MainBuildId) {
+        return true;
+    }
 
     const auto load_dir = GetModificationLoadRoot();
     if (load_dir == nullptr) {
