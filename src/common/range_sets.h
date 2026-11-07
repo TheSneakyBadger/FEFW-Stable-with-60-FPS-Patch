@@ -26,8 +26,13 @@ public:
     void Clear();
     bool Empty() const;
 
-    /// Whether any range overlaps [base_address, base_address + size): one lookup.
+    /// Whether any range overlaps [base_address, base_address + size): one lookup, or none when the
+    /// page filter proves the pages empty.
     bool Intersects(AddressType base_address, size_t size) const;
+
+    /// Keeps a bit per page (page_filter.h) so Intersects can answer "no" for pages that hold no
+    /// range without a lookup. Answers stay exact. For sets queried far more often than changed.
+    void EnablePageFilter(u32 address_bits, u32 page_bits);
 
     template <typename Func>
     void ForEach(Func&& func) const;

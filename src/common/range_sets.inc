@@ -15,6 +15,7 @@
 #include <boost/pool/pool_alloc.hpp>
 #include <boost/pool/poolfwd.hpp>
 
+#include "common/page_filter.h"
 #include "common/range_sets.h"
 
 namespace Common {
@@ -40,12 +41,34 @@ struct RangeSet<AddressType>::RangeSetImpl {
         AddressType end_address = base_address + static_cast<AddressType>(size);
         IntervalType interval{base_address, end_address};
         m_ranges_set.add(interval);
+        if (m_filter) {
+            m_filter->MarkRange(static_cast<u64>(base_address), static_cast<u64>(size));
+        }
     }
 
     void Subtract(AddressType base_address, size_t size) {
         AddressType end_address = base_address + static_cast<AddressType>(size);
         IntervalType interval{base_address, end_address};
         m_ranges_set.subtract(interval);
+        // The filter keeps the pages marked; Intersects unmarks a page once it finds it empty.
+    }
+
+    /// After the whole set was replaced: marks every range it now holds.
+    void MarkAll() {
+        if (!m_filter) {
+            return;
+        }
+        m_filter->Reset();
+        for (const auto& interval : m_ranges_set) {
+            m_filter->MarkRange(static_cast<u64>(interval.lower()),
+                                static_cast<u64>(interval.upper() - interval.lower()) + 1);
+        }
+    }
+
+    bool Lookup(AddressType base_address, AddressType end_address) const {
+        // The first range not entirely below the query; it overlaps when it starts before its end.
+        const auto it = m_ranges_set.lower_bound(IntervalType{base_address, end_address});
+        return it != m_ranges_set.end() && it->lower() < end_address;
     }
 
     template <typename Func>
@@ -89,6 +112,7 @@ struct RangeSet<AddressType>::RangeSetImpl {
     }
 
     IntervalSet m_ranges_set;
+    std::unique_ptr<PageFilter> m_filter;
 };
 
 template <typename AddressType>
@@ -196,11 +220,14 @@ template <typename AddressType>
 RangeSet<AddressType>::RangeSet(RangeSet&& other) {
     m_impl = std::make_unique<RangeSet<AddressType>::RangeSetImpl>();
     m_impl->m_ranges_set = std::move(other.m_impl->m_ranges_set);
+    // The page filter stays with its set: other's, if any, is left marked (conservative).
 }
 
 template <typename AddressType>
 RangeSet<AddressType>& RangeSet<AddressType>::operator=(RangeSet&& other) {
     m_impl->m_ranges_set = std::move(other.m_impl->m_ranges_set);
+    m_impl->MarkAll();
+    return *this;
 }
 
 template <typename AddressType>
@@ -216,6 +243,15 @@ void RangeSet<AddressType>::Subtract(AddressType base_address, size_t size) {
 template <typename AddressType>
 void RangeSet<AddressType>::Clear() {
     m_impl->m_ranges_set.clear();
+    if (m_impl->m_filter) {
+        m_impl->m_filter->Reset();
+    }
+}
+
+template <typename AddressType>
+void RangeSet<AddressType>::EnablePageFilter(u32 address_bits, u32 page_bits) {
+    m_impl->m_filter = std::make_unique<PageFilter>(address_bits, page_bits);
+    m_impl->MarkAll();
 }
 
 template <typename AddressType>
@@ -225,14 +261,29 @@ bool RangeSet<AddressType>::Empty() const {
 
 template <typename AddressType>
 bool RangeSet<AddressType>::Intersects(AddressType base_address, size_t size) const {
-    const auto& set = m_impl->m_ranges_set;
-    if (set.empty() || size == 0) {
+    if (m_impl->m_ranges_set.empty() || size == 0) {
+        return false;
+    }
+    PageFilter* const filter = m_impl->m_filter.get();
+    if (filter && filter->ProvesEmpty(static_cast<u64>(base_address), static_cast<u64>(size))) {
         return false;
     }
     const AddressType end_address = base_address + static_cast<AddressType>(size);
-    // The first range not entirely below the query; it overlaps when it starts before its end.
-    const auto it = set.lower_bound(typename RangeSetImpl::IntervalType{base_address, end_address});
-    return it != set.end() && it->lower() < end_address;
+    if (m_impl->Lookup(base_address, end_address)) {
+        return true;
+    }
+    // A marked page whose ranges are all gone: unmark it once a lookup of the whole page agrees, so
+    // later queries there skip the lookup again.
+    if (filter && filter->IsSinglePage(static_cast<u64>(base_address), static_cast<u64>(size)) &&
+        filter->IsPageMarked(static_cast<u64>(base_address))) {
+        const u64 page_size = u64{1} << filter->PageBits();
+        const u64 page_start = static_cast<u64>(base_address) & ~(page_size - 1);
+        if (!m_impl->Lookup(static_cast<AddressType>(page_start),
+                            static_cast<AddressType>(page_start + page_size))) {
+            filter->ClearPage(page_start);
+        }
+    }
+    return false;
 }
 
 template <typename AddressType>
