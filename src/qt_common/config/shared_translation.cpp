@@ -92,9 +92,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Change the accuracy of the emulated CPU (for debugging only)."));
     INSERT(Settings, cpu_backend, tr("Backend:"), QString());
 
-    INSERT(Settings, cpu_clock, tr("CPU Clocks"),
-           tr("Raises the clock the emulated CPU reports, which removes some FPS limiters.\n"
-              "Weaker CPUs may see reduced performance, and certain games may behave improperly."));
+    // CPU Clocks is hidden: it ran Fortune's Weave's clock fast (see CoreTiming::GetClockTicks).
+    INSERT(Settings, cpu_clock, QString(), QString());
 
     INSERT(Settings, use_custom_cpu_ticks, QString(), QString());
     INSERT(Settings, cpu_ticks, tr("Custom CPU Ticks"),

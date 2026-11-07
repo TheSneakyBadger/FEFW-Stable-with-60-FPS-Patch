@@ -23,21 +23,6 @@ namespace Core::Timing {
 
 constexpr s64 MAX_SLICE_LENGTH = 10000;
 
-constexpr u32 CPU_CLOCK_BASE_MHZ = 1020;
-constexpr u32 CPU_CLOCK_BOOST_MHZ = 1734;
-constexpr u32 CPU_CLOCK_OVERCLOCK_MHZ = 2040;
-
-constexpr u32 CpuClockTargetMhz(Settings::CpuClock clock) {
-    switch (clock) {
-    case Settings::CpuClock::Boost:
-        return CPU_CLOCK_BOOST_MHZ;
-    case Settings::CpuClock::Overclock:
-        return CPU_CLOCK_OVERCLOCK_MHZ;
-    default:
-        return CPU_CLOCK_BASE_MHZ;
-    }
-}
-
 std::shared_ptr<EventType> CreateEvent(std::string name, TimedCallback&& callback) {
     return std::make_shared<EventType>(std::move(callback), std::move(name));
 }
@@ -224,11 +209,11 @@ void CoreTiming::ResetTicks() {
 }
 
 u64 CoreTiming::GetClockTicks() const {
-    u64 fres = is_multicore ? Common::g_wall_clock.GetCNTPCT() : Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
-    if (const u32 target = CpuClockTargetMhz(Settings::values.cpu_clock.GetValue());
-        target != CPU_CLOCK_BASE_MHZ) {
-        fres = fres * target / CPU_CLOCK_BASE_MHZ;
-    }
+    // The guest counter always runs at the real rate. CPU Clocks (Boost 1734 MHz, Overclock
+    // 2040 MHz) used to scale it, which runs Fortune's Weave's clock 1.7-2x fast: its movies
+    // play ahead of their voices, which drop out, and dialogue animations finish early. The
+    // setting is ignored (and hidden), so a saved Boost or Overclock does nothing.
+    const u64 fres = is_multicore ? Common::g_wall_clock.GetCNTPCT() : Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
     if (::Settings::values.sync_core_speed.GetValue()) {
         auto const ticks = f64(fres);
         auto const speed_limit = f64(Settings::SpeedLimit()) * 0.01;
