@@ -801,15 +801,15 @@ struct Memory::Impl {
         }
     };
 
-    /// EDEN_CPU_WRITE_PAGES=N (1-64, default 16): how many of a core's last held pages are held
-    /// again without asking the GPU caches (1: only the last one, as before). Fortune's Weave
-    /// writes back and forth across a few pages at a time: with 1, busy scenes (Dagsion) asked the
-    /// caches up to ~230000 times a second, waiting for the draw thread's lock; 16 skips ~85% of
-    /// those (doubled frames at 60 FPS in Dagsion: 33% -> 20%).
+    /// EDEN_CPU_WRITE_PAGES=N (1-64, default 1): how many of a core's last held pages are held
+    /// again without asking the GPU caches (1: only the last one). Fortune's Weave writes back and
+    /// forth across a few pages at a time, so 16 skips ~85% of the cache queries in busy scenes,
+    /// but held writes then reach the GPU caches a command list late and frame pacing turns
+    /// uneven (rejected in round 11, docs/back-thread-split-plan.md 3.19). Experiment only.
     static u32 CpuWritePages() {
         static const u32 pages = [] {
             const char* const value = std::getenv("EDEN_CPU_WRITE_PAGES");
-            const long parsed = value != nullptr ? std::strtol(value, nullptr, 10) : 16;
+            const long parsed = value != nullptr ? std::strtol(value, nullptr, 10) : 1;
             const u32 result = parsed < 1 ? 1U : parsed > 64 ? 64U : static_cast<u32>(parsed);
             if (result != 1) {
                 LOG_INFO(HW_Memory, "EDEN_CPU_WRITE_PAGES={}: held guest writes remember {} pages per core",
