@@ -98,8 +98,7 @@ public:
                          std::array<f32, 2> motion_scale);
 
     /// True while TemporalUpscale would replace the game's DLSS: AMD FSR 4 or NVIDIA DLSS (on in
-    /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (unless the game's own
-    /// DLSS is chosen, or FSR 3.1 failed).
+    /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (ticked, not failed).
     [[nodiscard]] bool UsesReplacementUpscaler() const;
 
     void CopyImage(Image& dst, Image& src, std::span<const VideoCommon::ImageCopy> copies);

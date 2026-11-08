@@ -313,8 +313,8 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
-    // AMD FSR 3.1 (the default), NVIDIA DLSS or AMD FSR 4 in place of Fortune's Weave's own DLSS
-    // network (settings game_dlss_network, nvidia_dlss and amd_fsr4; FSR 3.1 and DLSS from
+    // NVIDIA DLSS, AMD FSR 4 or AMD FSR 3.1 in place of Fortune's Weave's own DLSS network
+    // (settings nvidia_dlss, amd_fsr4 and amd_fsr3, all off by default; FSR 3.1 and DLSS from
     // Eglantine, by Duck912; FSR 4 through fsr4-vk). An evaluation runs from its first pass, which
     // holds the colour, motion vectors, depth and jitter, to the pass that writes the upscaled image. Its programs are learnt from the
     // evaluations that run in full; after that they are skipped while the replacement upscaler

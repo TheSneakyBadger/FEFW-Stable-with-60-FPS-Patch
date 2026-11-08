@@ -163,17 +163,17 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "(Fire Emblem: Fortune's Weave).\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS "
               "unless the NVIDIA app has downloaded it; this build does not ship NVIDIA's files. "
               "Use the download button below.\nTakes effect when a game starts."));
-    INSERT(Settings, game_dlss_network, tr("Use the game's own DLSS instead of AMD FSR 3.1"),
-           tr("By default AMD FSR 3.1 (runs on any GPU) replaces a Switch 2 game's own DLSS "
-              "(Fire Emblem: Fortune's Weave). Tick this to run the game's own DLSS network "
-              "instead.\nNVIDIA DLSS or AMD FSR 4, when ticked, are used before either.\nTakes "
-              "effect when a game starts."));
+    INSERT(Settings, amd_fsr3, tr("Use AMD FSR 3.1 in place of the game's DLSS"),
+           tr("Uses AMD FSR 3.1 (runs on any GPU) in place of a Switch 2 game's own DLSS "
+              "(Fire Emblem: Fortune's Weave). The game's own DLSS usually looks better.\nNVIDIA "
+              "DLSS or AMD FSR 4, when ticked, are used first, "
+              "and this is used if they can't run.\nTakes effect when a game starts."));
     INSERT(Settings, amd_fsr4, tr("Use AMD FSR 4 in place of the game's DLSS"),
            tr("Uses AMD FSR 4 (through fsr4-vk, a community Vulkan port, not made or endorsed by "
               "AMD) in place of a Switch 2 game's own DLSS (Fire Emblem: Fortune's Weave).\nMade "
               "for AMD Radeon RX 7000/9000 cards; needs amd_fidelityfx_upscaler_vk.dll next to "
-              "the emulator. If it can't run, AMD FSR 3.1 is used.\nTakes effect when a "
-              "game starts."));
+              "the emulator. If it can't run, AMD FSR 3.1 is used when ticked, else the game's "
+              "own DLSS.\nTakes effect when a game starts."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));

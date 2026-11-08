@@ -1318,8 +1318,8 @@ bool TextureCacheRuntime::UsesReplacementUpscaler() const {
         return true;
     }
 #endif
-    // AMD FSR 3.1 is the base replacement.
-    return !Settings::values.game_dlss_network.GetValue() && !fsr3_unsupported;
+    // AMD FSR 3.1 when ticked; otherwise the game's own network runs.
+    return Settings::values.amd_fsr3.GetValue() && !fsr3_unsupported;
 }
 
 void TextureCacheRuntime::DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkImageView view,
@@ -1360,7 +1360,8 @@ void TextureCacheRuntime::DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkIma
 }
 
 // The game's DLSS evaluation, replaced: AMD FSR 4 or NVIDIA DLSS when ticked, else (or when that
-// can't run) AMD FSR 3.1. Returns false when none can run; the game's own network then runs.
+// can't run) AMD FSR 3.1 when ticked. Returns false when none runs; the game's own network then
+// runs (the default).
 bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageView& dst,
                                           ImageView& input_color, ImageView& motion_vectors,
                                           ImageView& depth, std::array<u32, 2> render_size,
@@ -1370,7 +1371,7 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
         return false;
     }
-    // AMD FSR 4 when ticked, else NVIDIA DLSS when ticked; AMD FSR 3.1 when neither runs.
+    // AMD FSR 4 when ticked, else NVIDIA DLSS when ticked; AMD FSR 3.1 (when ticked) if neither runs.
     if (Settings::values.amd_fsr4.GetValue()) {
         if (Fsr4Upscale(dst_framebuffer, dst, input_color, motion_vectors, depth, render_size,
                         jitter, motion_scale)) {
@@ -1391,7 +1392,7 @@ bool TextureCacheRuntime::Fsr3Upscale(Framebuffer* dst_framebuffer, ImageView& i
                                       ImageView& motion_vectors, ImageView& depth,
                                       std::array<u32, 2> render_size, std::array<f32, 2> jitter,
                                       std::array<f32, 2> motion_scale) {
-    if (Settings::values.game_dlss_network.GetValue() || fsr3_unsupported) {
+    if (!Settings::values.amd_fsr3.GetValue() || fsr3_unsupported) {
         return false;
     }
     if (!fsr3_upscaler) {
@@ -1473,7 +1474,7 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
             dlss_upscaler =
                 std::make_unique<StreamlineDlssUpscaler>(device, scheduler, memory_allocator);
         } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan, "NVIDIA DLSS unavailable ({}); AMD FSR 3.1 runs",
+            LOG_WARNING(Render_Vulkan, "NVIDIA DLSS unavailable ({}); falling back",
                         exception.what());
             dlss_unsupported = true;
             return false;
@@ -1517,7 +1518,7 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
         .reset = reset,
     });
     if (!upscaled) {
-        LOG_WARNING(Render_Vulkan, "NVIDIA DLSS failed; AMD FSR 3.1 runs from now on");
+        LOG_WARNING(Render_Vulkan, "NVIDIA DLSS failed; falling back from now on");
         dlss_unsupported = true;
         return false;
     }
@@ -1537,7 +1538,7 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
 
 // AMD FSR 4 (through fsr4-vk, https://github.com/Astyyyyy/fsr4-vk) in place of the game's own
 // DLSS. Returns false when FSR 4 can't run; it then stays off for the session and AMD FSR 3.1
-// runs instead.
+// (when ticked) or the game's own network runs instead.
 bool TextureCacheRuntime::Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& dst,
                                       ImageView& input_color, ImageView& motion_vectors,
                                       ImageView& depth, std::array<u32, 2> render_size,
@@ -1549,14 +1550,14 @@ bool TextureCacheRuntime::Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& d
     }
     if (!fsr4_upscaler) {
         if (!Fsr4Upscaler::IsAvailable()) {
-            LOG_WARNING(Render_Vulkan, "AMD FSR 4 is unavailable; AMD FSR 3.1 runs");
+            LOG_WARNING(Render_Vulkan, "AMD FSR 4 is unavailable; falling back");
             fsr4_unsupported = true;
             return false;
         }
         try {
             fsr4_upscaler = std::make_unique<Fsr4Upscaler>(device, scheduler, memory_allocator);
         } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan, "AMD FSR 4 unavailable ({}); AMD FSR 3.1 runs",
+            LOG_WARNING(Render_Vulkan, "AMD FSR 4 unavailable ({}); falling back",
                         exception.what());
             fsr4_unsupported = true;
             return false;
@@ -1600,7 +1601,7 @@ bool TextureCacheRuntime::Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& d
         .reset = reset,
     });
     if (!upscaled) {
-        LOG_WARNING(Render_Vulkan, "AMD FSR 4 failed; AMD FSR 3.1 runs from now on");
+        LOG_WARNING(Render_Vulkan, "AMD FSR 4 failed; falling back from now on");
         fsr4_unsupported = true;
         return false;
     }
