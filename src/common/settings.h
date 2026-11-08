@@ -1004,7 +1004,7 @@ void TranslateResolutionInfo(ResolutionSetup setup, ResolutionScalingInfo& info)
 void UpdateRescalingInfo();
 
 /// Decides what ASTC textures become for this boot of the renderer: astc_recompression, or with
-/// Auto, BC3 at 1.5x resolution and above, with the ultrawide patch, or under 8 GB of video memory
+/// Auto, BC3 at 1.5x resolution and above, with the ultrawide patch above 1x, or under 8 GB of video memory
 /// (device_local_bytes, 0 when unknown), and uncompressed otherwise. Logs the choice.
 void ResolveAstcRecompression(u64 device_local_bytes);
 

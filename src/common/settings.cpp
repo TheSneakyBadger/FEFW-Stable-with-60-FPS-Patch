@@ -379,14 +379,19 @@ void ResolveAstcRecompression(u64 device_local_bytes) {
     if (setting == AstcRecompression::Auto) {
         // Uncompressed textures are 4x the size of BC3. At 1x they fit the ~7 GB the emulator uses
         // on 8 GB and larger cards, and the GPU decodes them; higher resolutions, the ultrawide
-        // patch and smaller cards need BC3 to fit (BC3 is decoded on the CPU).
+        // patch above 1x and smaller cards need BC3 to fit (BC3 is decoded on the CPU).
         static constexpr u64 SmallCardBytes = 7ULL << 30; // 8 GB cards report a little under 8 GiB
         const bool high_resolution =
             values.resolution_setup.GetValue() >= ResolutionSetup::Res3_2X;
+        // The ultrawide patch draws a third more pixels: at 1x that still fits uncompressed, above
+        // 1x (1.25x) it doesn't.
         const bool ultrawide = values.fefw_ultrawide.GetValue();
+        const bool ultrawide_scaled =
+            ultrawide && values.resolution_setup.GetValue() > ResolutionSetup::Res1X;
         const bool small_card = device_local_bytes != 0 && device_local_bytes < SmallCardBytes;
-        effective = high_resolution || ultrawide || small_card ? AstcRecompression::Bc3
-                                                               : AstcRecompression::Uncompressed;
+        effective = high_resolution || ultrawide_scaled || small_card
+                        ? AstcRecompression::Bc3
+                        : AstcRecompression::Uncompressed;
         LOG_INFO(Common, "ASTC textures: {} (Auto; resolution {}1.5x, ultrawide {}, {} MiB of video "
                          "memory)",
                  effective == AstcRecompression::Bc3 ? "BC3" : "uncompressed",
