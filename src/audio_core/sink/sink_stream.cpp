@@ -29,9 +29,9 @@ void SinkStream::AppendBuffer(SinkBuffer& buffer, std::span<s16> samples) {
     constexpr s32 min = (std::numeric_limits<s16>::min)();
     constexpr s32 max = (std::numeric_limits<s16>::max)();
 
-    auto yuzu_volume = Settings::Volume();
-    if (yuzu_volume > 1.0f)
-        yuzu_volume = 0.6f + 20.0f * std::log10(yuzu_volume);
+    // Linear gain (0..2 for 0..200%): the old log curve above 100% dropped to 0.69x at 101% and
+    // rose to 6.6x at 200%, which hard-clipped loud mixes.
+    auto const yuzu_volume = Settings::Volume();
     auto const volume = system_volume * device_volume * yuzu_volume;
 
     if (system_channels > device_channels) {
