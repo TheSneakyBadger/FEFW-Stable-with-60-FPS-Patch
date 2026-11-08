@@ -160,18 +160,13 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
 // while a battle loaded its textures). 2D images and arrays only; the rest keep the CPU path.
 // EDEN_GPU_BCN_TRANSCODE=0 turns it off. From Eglantine 0d5534a288.
 [[nodiscard]] bool WillUseGpuBcnTranscode(const Device& device, const ImageInfo& info) {
-    static const bool enabled = [] {
-        const char* value = std::getenv("EDEN_GPU_BCN_TRANSCODE");
-        return value == nullptr || value[0] != '0';
-    }();
-    if (!enabled || !IsPixelFormatASTC(info.format) || device.IsOptimalAstcSupported() ||
-        info.type != ImageType::e2D || info.size.depth != 1) {
+    if (!Settings::GpuBcnTranscodeAllowed() || !IsPixelFormatASTC(info.format) ||
+        device.IsOptimalAstcSupported() || info.type != ImageType::e2D || info.size.depth != 1) {
         return false;
     }
     const auto recompression = Settings::EffectiveAstcRecompression();
-    return Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu &&
-           (recompression == Settings::AstcRecompression::Bc1 ||
-            recompression == Settings::AstcRecompression::Bc3);
+    return recompression == Settings::AstcRecompression::Bc1 ||
+           recompression == Settings::AstcRecompression::Bc3;
 }
 
 [[nodiscard]] bool WillUseAcceleratedAstcDecode(const Device& device, const ImageInfo& info) {

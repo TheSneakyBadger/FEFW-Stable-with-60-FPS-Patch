@@ -7,6 +7,7 @@
 #include <version>
 #if __cpp_lib_chrono >= 201907L
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <stdexcept>
 #endif
@@ -373,10 +374,25 @@ namespace {
 std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::Auto};
 }
 
-void ResolveAstcRecompression(u64 memory_limit_bytes) {
+bool GpuBcnTranscodeAllowed() {
+    static const bool allowed = [] {
+        const char* value = std::getenv("EDEN_GPU_BCN_TRANSCODE");
+        return value == nullptr || value[0] != '0';
+    }();
+    return allowed && values.accelerate_astc.GetValue() == AstcDecodeMode::Gpu;
+}
+
+void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
-    if (setting == AstcRecompression::Auto) {
+    if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
+        // The GPU decodes ASTC and re-compresses it to BC3 itself: a quarter of the memory of
+        // uncompressed, without the CPU stalls that BC3 used to cost.
+        effective = AstcRecompression::Bc3;
+        LOG_INFO(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto; {} MiB of video "
+                         "memory may be used)",
+                 memory_limit_bytes >> 20);
+    } else if (setting == AstcRecompression::Auto) {
         // Uncompressed textures are decoded on the GPU but take 4x the memory of BC3 (decoded on
         // the CPU, which stalls draws while a battle loads its textures). Fortune's Weave at 1x
         // with the ultrawide patch had 13.5 GB in use within a minute uncompressed: they only fit

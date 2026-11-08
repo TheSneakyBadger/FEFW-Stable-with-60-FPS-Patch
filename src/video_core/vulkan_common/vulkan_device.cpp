@@ -1720,9 +1720,12 @@ void Device::CollectPhysicalMemoryInfo() {
                      ? "Aggressive"
                      : "Conservative");
     }
-    // Chooses what ASTC textures become for this boot (astc_recompression: Auto), from the video
-    // memory the emulator may use, before the texture cache makes any.
-    Settings::ResolveAstcRecompression(device_access_memory);
+    // Chooses what ASTC textures become for this boot (astc_recompression: Auto), before the
+    // texture cache makes any: BC3 when the texture cache re-compresses ASTC on the GPU
+    // (WillUseGpuBcnTranscode), otherwise from the video memory the emulator may use.
+    Settings::ResolveAstcRecompression(device_access_memory,
+                                       !is_optimal_astc_supported &&
+                                           Settings::GpuBcnTranscodeAllowed());
 }
 
 void Device::CollectToolingInfo() {
