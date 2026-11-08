@@ -436,6 +436,12 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
 
     while (swapchain.AcquireNextImage()) {
         RecreateSwapchain(frame);
+        if (swapchain.IsOutDated()) {
+            // No swapchain can be made while the window has no size. Acquiring again would fail at
+            // once and spin this thread until the window is restored: drop this frame instead.
+            DiscardFrame(frame);
+            return;
+        }
     }
 
     const vk::CommandBuffer cmdbuf{frame->cmdbuf};
