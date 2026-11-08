@@ -624,8 +624,12 @@ private:
                     }
                 }
                 const u64 offset = u64{image->index} * pool.layout.image_stride;
+                // Invalidate before the write (untracks the pages so the copy is a plain memcpy) and
+                // again after it: the GPU thread may re-upload the image while the copy is running,
+                // and the second invalidation makes it upload the finished frame.
                 system.GPU().InvalidateRegion(pool.device_address + offset, nv12.size());
                 R_UNLESS(process->GetMemory().WriteBlock(pool.address + offset, nv12.data(), nv12.size()), Kernel::ResultInvalidAddress);
+                system.GPU().InvalidateRegion(pool.device_address + offset, nv12.size());
             } else if (!frame.eos) {
                 auto stage_start = std::chrono::steady_clock::now();
                 const auto lap = [&](std::chrono::steady_clock::duration& total) {
@@ -705,8 +709,11 @@ private:
                 }
                 lap(timing.convert);
                 const u64 offset = u64{image->index} * pool.layout.image_stride;
+                // As above: invalidate before the write for a fast copy, and after it so a GPU upload
+                // made during the copy does not keep a half-written frame.
                 system.GPU().InvalidateRegion(pool.device_address + offset, tiled.size());
                 R_UNLESS(process->GetMemory().WriteBlock(pool.address + offset, tiled.data(), tiled.size()), Kernel::ResultInvalidAddress);
+                system.GPU().InvalidateRegion(pool.device_address + offset, tiled.size());
                 lap(timing.write);
             }
             if (!frame.eos && ++timing.frames == 60) {
