@@ -131,7 +131,11 @@ void AudioRenderer::CreateSinkStreams() {
 
 void AudioRenderer::Main(std::stop_token stop_token) {
     Common::SetCurrentThreadName("DSP_AudioRenderer_Main");
-    Common::SetCurrentThreadPriority(Common::ThreadPriority::High);
+    // As high as the emulated CPU cores and the GPU threads (Critical). At High, on a CPU with
+    // 4 fast cores those six busy threads left the mixer only leftover time in battles, so it
+    // missed its 5 ms deadlines and the sound stuttered. It mixes for a few ms per 5 ms and waits
+    // the rest, so it takes little from them.
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
 
     // TODO: Create buffer map/unmap thread + mailbox
     // TODO: Create gMix devices, initialize them here

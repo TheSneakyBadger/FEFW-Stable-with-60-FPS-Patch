@@ -28,7 +28,8 @@ void SystemManager::InitializeUnsafe() {
         audio_renderer.Start();
         thread = std::jthread([this](std::stop_token stop_token) {
             Common::SetCurrentThreadName("AudioRenderSystemManager");
-            Common::SetCurrentThreadPriority(Common::ThreadPriority::High);
+            // Critical like the DSP renderer thread it feeds (see AudioRenderer::Main).
+            Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
             while (active && !stop_token.stop_requested()) {
                 {
                     std::scoped_lock l{mutex1};
