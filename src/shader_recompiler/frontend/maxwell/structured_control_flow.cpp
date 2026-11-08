@@ -298,14 +298,33 @@ Node SiblingFromNephew(Node uncle, Node nephew) noexcept {
     return Tree::s_iterator_to(*it);
 }
 
+/// Returns true when left_sibling comes before right_sibling in their parent's children.
+/// Walks forward from both siblings in lockstep, so the cost is the distance between them or the
+/// shorter tail, instead of always the whole tail after right_sibling (quadratic in the number of
+/// top-level statements, since every forward goto asks this about its label).
 bool AreOrdered(Node left_sibling, Node right_sibling) noexcept {
+    if (left_sibling == right_sibling) {
+        return false;
+    }
     const Node end{right_sibling->up->children.end()};
-    for (auto it = right_sibling; it != end; ++it) {
-        if (it == left_sibling) {
+    Node from_left{left_sibling};
+    Node from_right{right_sibling};
+    while (true) {
+        ++from_left;
+        if (from_left == right_sibling) {
+            return true;
+        }
+        if (from_left == end) {
             return false;
         }
+        ++from_right;
+        if (from_right == left_sibling) {
+            return false;
+        }
+        if (from_right == end) {
+            return true;
+        }
     }
-    return true;
 }
 
 bool NeedsLift(Node goto_stmt, Node label_stmt) noexcept {
