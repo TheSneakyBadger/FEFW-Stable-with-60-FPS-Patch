@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <locale>
 #include "common/hex_util.h"
 #include "common/swap.h"
@@ -14,6 +15,7 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_process_page_table.h"
 #include "core/hle/kernel/svc_types.h"
+#include "core/hle/result.h"
 #include "core/hle/service/hid/hid_server.h"
 #include "core/hle/service/sm/sm.h"
 #include "core/memory.h"
@@ -75,6 +77,34 @@ void StandardVmCallbacks::MemoryReadUnsafe(VAddr address, void* data, u64 size) 
     process->GetMemory().ReadBlock(address, data, size);
 }
 
+namespace {
+
+// Whether any of [address, address + size) is (or was mapped as) executable. A cheat that writes
+// data (most do, every tick) then no longer halts every core to flush its JIT blocks.
+bool IsExecutable(Kernel::KProcess* process, VAddr address, u64 size) {
+    const auto& page_table = process->GetPageTable();
+    const VAddr end = address + (std::max<u64>)(size, 1);
+    for (VAddr current = address; current < end;) {
+        Kernel::KMemoryInfo info{};
+        Kernel::Svc::PageInfo page{};
+        if (R_FAILED(page_table.QueryInfo(&info, &page, current))) {
+            return true; // Unknown: invalidate to be safe
+        }
+        if (True(info.m_permission & Kernel::KMemoryPermission::UserExecute) ||
+            True(info.m_original_permission & Kernel::KMemoryPermission::UserExecute)) {
+            return true;
+        }
+        const VAddr next = info.m_address + info.m_size;
+        if (next <= current) {
+            return true;
+        }
+        current = next;
+    }
+    return false;
+}
+
+} // Anonymous namespace
+
 void StandardVmCallbacks::MemoryWriteUnsafe(VAddr address, const void* data, u64 size) {
     auto* const process = this->GetProcess();
 
@@ -84,7 +114,7 @@ void StandardVmCallbacks::MemoryWriteUnsafe(VAddr address, const void* data, u64
         return;
     }
 
-    if (process->GetMemory().WriteBlock(address, data, size)) {
+    if (process->GetMemory().WriteBlock(address, data, size) && IsExecutable(process, address, size)) {
         Core::InvalidateInstructionCacheRange(process, address, size);
     }
 }
