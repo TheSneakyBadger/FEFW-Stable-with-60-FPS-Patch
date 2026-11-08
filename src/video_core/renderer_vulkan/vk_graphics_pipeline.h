@@ -222,7 +222,10 @@ private:
     vk::Pipeline pipeline;
 
     DescriptorBufferLayout descriptor_buffer_layout;
-    std::vector<DescriptorUpdateEntry> last_descriptor_payload;
+    /// The last payload this pipeline wrote, read in place from the descriptor queue's ring.
+    /// Valid while the queue's generation equals last_descriptor_payload_generation.
+    const DescriptorUpdateEntry* last_descriptor_payload{};
+    u64 last_descriptor_payload_generation{};
     VkDeviceSize last_descriptor_buffer_offset{};
     u32 last_descriptor_buffer_chunk{};
     u64 last_descriptor_buffer_generation{};

@@ -1277,6 +1277,22 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     namespace BackStats = VideoCommon::BackStats;
     const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
     const u64 payload_bytes = u64{num_descriptor_entries} * sizeof(DescriptorUpdateEntry);
+    // The previous payload of this pipeline is compared where it lies in the ring instead of
+    // being copied each draw. The ring's generation changes before those entries can be rewritten.
+    const u64 payload_generation{guest_descriptor_queue.Generation()};
+    const bool has_last_payload{num_descriptor_entries == 0 ||
+                                (last_descriptor_payload != nullptr &&
+                                 last_descriptor_payload_generation == payload_generation)};
+    const auto same_as_last_payload{[&](const DescriptorUpdateEntry* entries) {
+        return has_last_payload &&
+               (num_descriptor_entries == 0 ||
+                std::memcmp(last_descriptor_payload, entries,
+                            num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0);
+    }};
+    const auto keep_payload{[&](const DescriptorUpdateEntry* entries) {
+        last_descriptor_payload = entries;
+        last_descriptor_payload_generation = payload_generation;
+    }};
     auto& draw_stats = BackStats::draw_thread;
     if (BackStats::Enabled()) {
         const BackStats::DescriptorPath path =
@@ -1293,16 +1309,15 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         const auto* const entries = static_cast<const DescriptorUpdateEntry*>(descriptor_data);
         const bool same_generation =
             last_descriptor_buffer_generation == descriptor_buffer_ring.CurrentGeneration() &&
-            last_descriptor_payload.size() == num_descriptor_entries;
-        const bool reuse_allocation =
-            same_generation &&
-            std::memcmp(last_descriptor_payload.data(), entries,
-                        num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0;
+            has_last_payload;
+        const bool reuse_allocation = same_generation && same_as_last_payload(entries);
         if (BackStats::Enabled() && same_generation) {
             draw_stats.compared_bytes += payload_bytes;
         }
         BackStats::Mark(BackStats::DescCompare);
         if (reuse_allocation) {
+            // Same entries: point at the newest copy, which stays in the ring the longest.
+            keep_payload(entries);
             descriptor_buffer_offset = last_descriptor_buffer_offset;
             descriptor_buffer_chunk = last_descriptor_buffer_chunk;
             descriptor_buffer_ring.TouchFrame(scheduler);
@@ -1324,7 +1339,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             last_descriptor_buffer_offset = alloc.offset;
             last_descriptor_buffer_chunk = alloc.chunk;
             last_descriptor_buffer_generation = alloc.generation;
-            last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
+            keep_payload(entries);
             BackStats::Mark(BackStats::DescAssign);
             if (BackStats::Enabled()) {
                 ++draw_stats.buffer_allocated;
@@ -1360,21 +1375,14 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     if (descriptor_set_layout && !uses_push_descriptor && !uses_descriptor_buffer) {
         const auto* const entries = static_cast<const DescriptorUpdateEntry*>(descriptor_data);
         // The comparison runs only when the pipeline stays bound and the sizes match.
-        const bool compares = !bind_pipeline && last_descriptor_payload.size() == num_descriptor_entries;
-        if (BackStats::Enabled() && bind_pipeline &&
-            last_descriptor_payload.size() == num_descriptor_entries &&
-            std::memcmp(last_descriptor_payload.data(), entries,
-                        num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0) {
+        const bool compares = !bind_pipeline && has_last_payload;
+        if (BackStats::Enabled() && bind_pipeline && same_as_last_payload(entries)) {
             // Statistics: a set this pipeline last wrote would have served (same entries).
             ++draw_stats.set_rebound_same;
         }
-        update_descriptors =
-            bind_pipeline || last_descriptor_payload.size() != num_descriptor_entries ||
-            std::memcmp(last_descriptor_payload.data(), entries,
-                        num_descriptor_entries * sizeof(DescriptorUpdateEntry)) != 0;
-        if (update_descriptors) {
-            last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
-        }
+        update_descriptors = bind_pipeline || !same_as_last_payload(entries);
+        // Same entries when not updated: point at the newest copy, which stays in the ring longest.
+        keep_payload(entries);
         if (BackStats::Enabled()) {
             if (compares) {
                 draw_stats.compared_bytes += payload_bytes;

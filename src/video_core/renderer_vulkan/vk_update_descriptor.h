@@ -9,6 +9,7 @@
 #include <cstring>
 #include <variant>
 #include <vector>
+#include "common/common_types.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace Vulkan {
@@ -60,6 +61,12 @@ public:
 
     const DescriptorUpdateEntry* UpdateData() const noexcept {
         return upload_start;
+    }
+
+    /// Changes whenever entries written earlier may have been overwritten or moved (ring wrap,
+    /// overflow reset, growth). A pointer into the payload stays readable while this is unchanged.
+    [[nodiscard]] u64 Generation() const noexcept {
+        return generation;
     }
 
     /// Where the next entry goes (the entries added since a call to this start there).
@@ -134,6 +141,7 @@ private:
     const bool supports_descriptor_buffer;
     bool use_descriptor_buffer{false};
     size_t frame_index{0};
+    u64 generation{0};
     DescriptorUpdateEntry* payload_cursor = nullptr;
     DescriptorUpdateEntry* payload_start = nullptr;
     const DescriptorUpdateEntry* upload_start = nullptr;
