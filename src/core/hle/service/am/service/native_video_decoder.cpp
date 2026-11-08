@@ -39,7 +39,9 @@
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/am/service/graphics_session.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/hle/service/ipc_helpers.h"
+#include "core/hle/service/server_manager.h"
 #include "core/hle/service/service.h"
 
 namespace {
@@ -117,6 +119,10 @@ struct NativeVideoState {
     std::mutex mutex;
     std::vector<std::shared_ptr<NativeVideoImagePool>> pools;
     std::vector<std::shared_ptr<NativeVideoMapping>> mappings;
+    // Serves the codec sessions (started on the first CreateDecoder; owned by the kernel, which
+    // stops it with the other servers). Decoding, conversion and the frame write block for several
+    // ms per frame, and on the AM thread they held up VI2 presents and syncpoint calls.
+    ServerManager* codec_server{};
 };
 
 namespace {
@@ -1246,7 +1252,16 @@ private:
         Kernel::KClientSession* client{};
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0x11 && packet[1] == 0) {
-            result = CreateGraphicsSession(system, ctx,
+            if (!state->codec_server) {
+                // Context sessions are only served on the AM thread, so this runs on one thread.
+                auto* const server = new ServerManager(system);
+                system.Kernel()
+                    .RunOnHostCoreProcess("NativeVideoCodec",
+                                          [server] { ServerManager::RunServer(std::unique_ptr<ServerManager>(server)); })
+                    .detach();
+                state->codec_server = server;
+            }
+            result = CreateGraphicsSession(system, *state->codec_server,
                 std::make_shared<INativeVideoCodec>(system, state, kind), &client);
         }
         LOG_DEBUG(Service_AM, "native video decoder create result={:#x}", result.raw);
