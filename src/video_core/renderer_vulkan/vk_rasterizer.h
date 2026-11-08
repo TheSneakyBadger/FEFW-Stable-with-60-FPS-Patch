@@ -140,7 +140,7 @@ public:
                                    const Tegra::Texture::TICEntry& depth,
                                    std::array<f32, 2> jitter,
                                    std::array<f32, 2> motion_scale) override;
-    bool UsesNvidiaDlss() const override;
+    bool UsesReplacementUpscaler() const override;
     Tegra::Engines::AccelerateDMAInterface& AccessAccelerateDMA() override;
     void AccelerateInlineToMemory(GPUVAddr address, size_t copy_size,
                                   std::span<const u8> memory) override;

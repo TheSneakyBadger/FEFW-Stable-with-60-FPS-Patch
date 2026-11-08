@@ -26,6 +26,7 @@
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #endif
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
+#include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
 
 namespace Settings {
 struct ResolutionScalingInfo;
@@ -96,10 +97,10 @@ public:
                          std::array<u32, 2> render_size, std::array<f32, 2> jitter,
                          std::array<f32, 2> motion_scale);
 
-    /// True while TemporalUpscale replaces the game's DLSS: NVIDIA DLSS (ticked, Streamline
-    /// running, not failed), else AMD FSR 3.1 (unless the game's own DLSS is chosen, or FSR 3.1
-    /// failed). Kept under its old name, which the rasterizer and Kepler compute call.
-    [[nodiscard]] bool UsesNvidiaDlss() const;
+    /// True while TemporalUpscale would replace the game's DLSS: AMD FSR 4 or NVIDIA DLSS (on in
+    /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (unless the game's own
+    /// DLSS is chosen, or FSR 3.1 failed).
+    [[nodiscard]] bool UsesReplacementUpscaler() const;
 
     void CopyImage(Image& dst, Image& src, std::span<const VideoCommon::ImageCopy> copies);
 
@@ -194,6 +195,12 @@ public:
     std::unique_ptr<Fsr3Upscaler> fsr3_upscaler;
     bool fsr3_unsupported{};
     std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;
+    bool Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& input_color,
+                     ImageView& motion_vectors, ImageView& depth, std::array<u32, 2> render_size,
+                     std::array<f32, 2> jitter, std::array<f32, 2> motion_scale);
+    std::unique_ptr<Fsr4Upscaler> fsr4_upscaler;
+    bool fsr4_unsupported{};
+    std::optional<std::chrono::steady_clock::time_point> fsr4_last_evaluation;
 #ifdef EGLANTINE_STREAMLINE
     std::unique_ptr<StreamlineDlssUpscaler> dlss_upscaler;
     bool dlss_unsupported{};

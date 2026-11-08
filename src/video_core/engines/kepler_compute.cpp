@@ -312,10 +312,10 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
-    // AMD FSR 3.1 (the default) or NVIDIA DLSS in place of Fortune's Weave's own DLSS network
-    // (settings game_dlss_network and nvidia_dlss; FSR 3.1 and DLSS from Eglantine, by Duck912).
-    // An evaluation runs from its first pass, which holds the colour, motion vectors, depth and
-    // jitter, to the pass that writes the upscaled image. Its programs are learnt from the
+    // AMD FSR 3.1 (the default), NVIDIA DLSS or AMD FSR 4 in place of Fortune's Weave's own DLSS
+    // network (settings game_dlss_network, nvidia_dlss and amd_fsr4; FSR 3.1 and DLSS from
+    // Eglantine, by Duck912; FSR 4 through fsr4-vk). An evaluation runs from its first pass, which
+    // holds the colour, motion vectors, depth and jitter, to the pass that writes the upscaled image. Its programs are learnt from the
     // evaluations that run in full; after that they are skipped while the replacement upscaler
     // runs, and it draws the output at the output pass. When it can't run, the game's own network
     // runs as before.
@@ -324,7 +324,7 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
         const char* const value = std::getenv("EDEN_DLSS_INERT");
         return value != nullptr && value[0] == '1';
     }();
-    if (!dlss_inert && rasterizer->UsesNvidiaDlss() && RememberDlssInputs()) {
+    if (!dlss_inert && rasterizer->UsesReplacementUpscaler() && RememberDlssInputs()) {
         if (static bool logged{}; !logged) {
             logged = true;
             LOG_INFO(HW_GPU, "Game DLSS evaluation found (depth {})",
@@ -344,7 +344,7 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (dlss_chain.active) {
         const GPUVAddr program = regs.code_loc.Address();
-        if (dlss_depth && rasterizer->UsesNvidiaDlss() && dlss_chain.programs.contains(program)) {
+        if (dlss_depth && rasterizer->UsesReplacementUpscaler() && dlss_chain.programs.contains(program)) {
             if (output_pass) {
                 FinishDlssEvaluation(true);
             }
@@ -431,7 +431,7 @@ bool KeplerCompute::FinishDlssEvaluation(bool network_skipped) {
     dlss_chain.active = false;
     dlss_chain.programs.insert(dlss_chain.pending.begin(), dlss_chain.pending.end());
     dlss_chain.pending.clear();
-    if (!network_skipped && (!dlss_depth || !dlss_motion_vectors || !rasterizer->UsesNvidiaDlss())) {
+    if (!network_skipped && (!dlss_depth || !dlss_motion_vectors || !rasterizer->UsesReplacementUpscaler())) {
         return false; // the network's own output stays
     }
     const auto input = DlssImage(0x328);
@@ -473,7 +473,7 @@ bool KeplerCompute::FinishDlssEvaluation(bool network_skipped) {
     };
     const auto source = surface(*input, format);
     const auto destination = surface(*output, format);
-    if (dlss_depth && dlss_motion_vectors && rasterizer->UsesNvidiaDlss() &&
+    if (dlss_depth && dlss_motion_vectors && rasterizer->UsesReplacementUpscaler() &&
         rasterizer->AccelerateTemporalUpscale(*input, *output, *dlss_motion_vectors, *dlss_depth,
                                               dlss_jitter, {1.0f, 1.0f})) {
         return true;

@@ -205,6 +205,8 @@ add_library(video_core STATIC
     renderer_vulkan/vk_swapchain.h
     renderer_vulkan/vk_fsr3_upscaler.cpp
     renderer_vulkan/vk_fsr3_upscaler.h
+    renderer_vulkan/vk_fsr4_upscaler.cpp
+    renderer_vulkan/vk_fsr4_upscaler.h
     renderer_vulkan/vk_texture_cache.cpp
     renderer_vulkan/vk_texture_cache.h
     renderer_vulkan/vk_texture_cache_base.cpp
@@ -532,6 +534,17 @@ if (ENABLE_NVIDIA_DLSS)
     target_link_libraries(video_core PRIVATE version wintrust crypt32)
     target_compile_definitions(video_core PUBLIC EGLANTINE_STREAMLINE)
     message(STATUS "NVIDIA DLSS through Streamline: ${STREAMLINE_INCLUDE_DIR}")
+endif()
+
+# AMD FSR 4 in place of a game's own DLSS evaluation (setting amd_fsr4). The upscaler is the
+# fsr4-vk provider (externals/fsr4-vk), loaded at run time from amd_fidelityfx_upscaler_vk.dll
+# (.so on Linux): nothing of it is linked, only its FidelityFX API headers (MIT) are compiled in.
+set(FSR4_VK_API_DIR "${PROJECT_SOURCE_DIR}/externals/fsr4-vk/third_party/fidelityfx-api")
+target_include_directories(video_core PRIVATE
+    "${FSR4_VK_API_DIR}/upscalers/include"
+    "${FSR4_VK_API_DIR}/api/include")
+if (NOT WIN32)
+    target_link_libraries(video_core PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 create_target_directory_groups(video_core)

@@ -1149,8 +1149,8 @@ bool RasterizerVulkan::AccelerateTemporalUpscale(
     return texture_cache.TemporalUpscale(dst, src, motion_vectors, depth, jitter, motion_scale);
 }
 
-bool RasterizerVulkan::UsesNvidiaDlss() const {
-    return texture_cache_runtime.UsesNvidiaDlss();
+bool RasterizerVulkan::UsesReplacementUpscaler() const {
+    return texture_cache_runtime.UsesReplacementUpscaler();
 }
 
 Tegra::Engines::AccelerateDMAInterface& RasterizerVulkan::AccessAccelerateDMA() {

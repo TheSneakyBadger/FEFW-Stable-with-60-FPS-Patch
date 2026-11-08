@@ -728,6 +728,15 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         descriptor_indexing.runtimeDescriptorArray = false;
     }
 
+    // Only AMD FSR 4 (fsr4-vk's FP8/INT8 pipelines) uses cooperative matrices and 8-bit floats:
+    // leave them off the device unless it's on.
+    if (!Settings::values.amd_fsr4.GetValue()) {
+        RemoveExtensionFeature(extensions.cooperative_matrix, features.cooperative_matrix,
+                               VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+        RemoveExtensionFeature(extensions.shader_float8, features.shader_float8,
+                               VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
+    }
+
     // VK_EXT_descriptor_buffer requires VK_KHR_buffer_device_address
     if (extensions.descriptor_buffer && !features.buffer_device_address.bufferDeviceAddress) {
         LOG_WARNING(Render_Vulkan, "Descriptor buffer needs buffer device address, disabling.");

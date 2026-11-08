@@ -1307,9 +1307,14 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
     });
 }
 
-bool TextureCacheRuntime::UsesNvidiaDlss() const {
+bool TextureCacheRuntime::UsesReplacementUpscaler() const {
+    if (Settings::values.amd_fsr4.GetValue()) {
+        if (!fsr4_unsupported && Fsr4Upscaler::IsAvailable()) {
+            return true;
+        }
+    }
 #ifdef EGLANTINE_STREAMLINE
-    if (!dlss_unsupported && Streamline::IsDlssAvailable()) {
+    else if (!dlss_unsupported && Streamline::IsDlssAvailable()) {
         return true;
     }
 #endif
@@ -1365,7 +1370,13 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
         return false;
     }
-    if (NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
+    // AMD FSR 4 when ticked, else NVIDIA DLSS when ticked; AMD FSR 3.1 when neither runs.
+    if (Settings::values.amd_fsr4.GetValue()) {
+        if (Fsr4Upscale(dst_framebuffer, dst, input_color, motion_vectors, depth, render_size,
+                        jitter, motion_scale)) {
+            return true;
+        }
+    } else if (NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
                           render_size, jitter, motion_scale)) {
         return true;
     }
@@ -1522,6 +1533,86 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
 #else
     return false;
 #endif
+}
+
+// AMD FSR 4 (through fsr4-vk, https://github.com/Astyyyyy/fsr4-vk) in place of the game's own
+// DLSS. Returns false when FSR 4 can't run; it then stays off for the session and AMD FSR 3.1
+// runs instead.
+bool TextureCacheRuntime::Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& dst,
+                                      ImageView& input_color, ImageView& motion_vectors,
+                                      ImageView& depth, std::array<u32, 2> render_size,
+                                      std::array<f32, 2> jitter,
+                                      std::array<f32, 2> motion_scale) {
+    if (fsr4_unsupported || dst.Samples() != VK_SAMPLE_COUNT_1_BIT ||
+        ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
+        return false;
+    }
+    if (!fsr4_upscaler) {
+        if (!Fsr4Upscaler::IsAvailable()) {
+            LOG_WARNING(Render_Vulkan, "AMD FSR 4 is unavailable; AMD FSR 3.1 runs");
+            fsr4_unsupported = true;
+            return false;
+        }
+        try {
+            fsr4_upscaler = std::make_unique<Fsr4Upscaler>(device, scheduler, memory_allocator);
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "AMD FSR 4 unavailable ({}); AMD FSR 3.1 runs",
+                        exception.what());
+            fsr4_unsupported = true;
+            return false;
+        }
+    }
+    // A gap in the evaluations (a menu, a movie, a load) starts the history again.
+    const auto now = std::chrono::steady_clock::now();
+    const bool reset =
+        !fsr4_last_evaluation ||
+        std::chrono::duration<f32, std::milli>(now - *fsr4_last_evaluation).count() > 250.0f;
+    fsr4_last_evaluation = now;
+    const auto image = [&](ImageView& view, VkImageView handle, VkImageAspectFlags aspect) {
+        return Fsr4Upscaler::Image{
+            .view = handle,
+            .image = view.ImageHandle(),
+            .format = MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, view.format)
+                          .format,
+            .range{
+                .aspectMask = aspect,
+                .baseMipLevel = static_cast<u32>(view.range.base.level),
+                .levelCount = 1,
+                .baseArrayLayer = static_cast<u32>(view.range.base.layer),
+                .layerCount = 1,
+            },
+            .barrier_aspect = ImageAspectMask(view.format),
+        };
+    };
+    const VkExtent2D extent = dst_framebuffer->RenderArea();
+    const bool upscaled = fsr4_upscaler->Upscale({
+        .color = image(input_color, input_color.Handle(Shader::TextureType::Color2D),
+                       VK_IMAGE_ASPECT_COLOR_BIT),
+        .depth = image(depth, depth.DepthView(), VK_IMAGE_ASPECT_DEPTH_BIT),
+        .motion_vectors = image(motion_vectors,
+                                motion_vectors.Handle(Shader::TextureType::Color2D),
+                                VK_IMAGE_ASPECT_COLOR_BIT),
+        .render_size = {render_size[0], render_size[1]},
+        .upscale_size = extent,
+        .jitter = jitter,
+        .motion_vector_scale = {motion_scale[0] * static_cast<f32>(render_size[0]),
+                                motion_scale[1] * static_cast<f32>(render_size[1])},
+        .reset = reset,
+    });
+    if (!upscaled) {
+        LOG_WARNING(Render_Vulkan, "AMD FSR 4 failed; AMD FSR 3.1 runs from now on");
+        fsr4_unsupported = true;
+        return false;
+    }
+    DrawUpscaledOutput(dst_framebuffer, fsr4_upscaler->OutputView(), fsr4_upscaler->OutputImage(),
+                       fsr4_upscaler->PointSampler());
+    static bool logged{};
+    if (!logged) {
+        logged = true;
+        LOG_INFO(Render_Vulkan, "Game DLSS replaced by AMD FSR 4: {}x{} -> {}x{}",
+                 render_size[0], render_size[1], extent.width, extent.height);
+    }
+    return true;
 }
 
 void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,

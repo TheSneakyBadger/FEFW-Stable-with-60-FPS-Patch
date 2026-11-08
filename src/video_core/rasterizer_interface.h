@@ -205,8 +205,8 @@ public:
         return false;
     }
 
-    /// Whether NVIDIA DLSS (the "Use NVIDIA DLSS" setting) would draw a game's DLSS evaluation.
-    [[nodiscard]] virtual bool UsesNvidiaDlss() const {
+    /// Whether NVIDIA DLSS or AMD FSR 4 (their settings) would draw a game's DLSS evaluation.
+    [[nodiscard]] virtual bool UsesReplacementUpscaler() const {
         return false;
     }
 

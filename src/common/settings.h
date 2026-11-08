@@ -389,6 +389,8 @@ struct Values {
     // The game's own DLSS network (translated) in place of AMD FSR 3.1, the base replacement.
     SwitchableSetting<bool> game_dlss_network{linkage, false, "game_dlss_network",
                                               Category::Renderer};
+    // AMD FSR 4 (through the fsr4-vk provider) in place of a game's own DLSS.
+    SwitchableSetting<bool> amd_fsr4{linkage, false, "amd_fsr4", Category::Renderer};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",

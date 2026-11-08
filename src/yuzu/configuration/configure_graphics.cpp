@@ -220,6 +220,9 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     std::map<u32, QWidget*> hold_graphics;
     std::vector<QWidget*> hold_api;
 
+    // NVIDIA DLSS and AMD FSR 4 each replace the game's own DLSS: only one can be on.
+    QCheckBox* nvidia_dlss_box = nullptr;
+    QCheckBox* amd_fsr4_box = nullptr;
     for (const auto setting : Settings::values.linkage.by_category[Settings::Category::Renderer]) {
 #ifndef HAS_RESHADE
         if (setting->Id() == Settings::values.post_shader_enabled.Id()) {
@@ -337,12 +340,16 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             group_layout->setContentsMargins(0, 0, 0, 0);
             group_layout->setSpacing(2);
             group_layout->addWidget(widget);
+            nvidia_dlss_box = widget->checkbox;
             NvidiaDlssPanel* panel = new NvidiaDlssPanel(group);
             group_layout->addWidget(panel);
             panel->setVisible(widget->checkbox->isChecked());
             connect(widget->checkbox, &QCheckBox::toggled, panel, &QWidget::setVisible);
             hold_graphics.emplace(setting->Id(), group);
 #endif
+        } else if (setting->Id() == Settings::values.amd_fsr4.Id()) {
+            amd_fsr4_box = widget->checkbox;
+            hold_graphics.emplace(setting->Id(), widget);
         } else {
             hold_graphics.emplace(setting->Id(), widget);
         }
@@ -350,6 +357,18 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
 
     for (const auto& [id, widget] : hold_graphics) {
         graphics_layout.addWidget(widget);
+    }
+    if (nvidia_dlss_box && amd_fsr4_box) {
+        connect(nvidia_dlss_box, &QCheckBox::toggled, this, [amd_fsr4_box](bool checked) {
+            if (checked) {
+                amd_fsr4_box->setChecked(false);
+            }
+        });
+        connect(amd_fsr4_box, &QCheckBox::toggled, this, [nvidia_dlss_box](bool checked) {
+            if (checked) {
+                nvidia_dlss_box->setChecked(false);
+            }
+        });
     }
 
     for (auto widget : hold_api) {
