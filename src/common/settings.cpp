@@ -373,30 +373,30 @@ namespace {
 std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::Auto};
 }
 
-void ResolveAstcRecompression(u64 device_local_bytes) {
+void ResolveAstcRecompression(u64 memory_limit_bytes) {
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
     if (setting == AstcRecompression::Auto) {
-        // Uncompressed textures are 4x the size of BC3. At 1x they fit the ~7 GB the emulator uses
-        // on 8 GB and larger cards, and the GPU decodes them; higher resolutions, the ultrawide
-        // patch above 1x and smaller cards need BC3 to fit (BC3 is decoded on the CPU).
-        static constexpr u64 SmallCardBytes = 7ULL << 30; // 8 GB cards report a little under 8 GiB
+        // Uncompressed textures are decoded on the GPU but take 4x the memory of BC3 (decoded on
+        // the CPU, which stalls draws while a battle loads its textures). Fortune's Weave at 1x
+        // with the ultrawide patch had 13.5 GB in use within a minute uncompressed: they only fit
+        // where the emulator may use about 15 GB (20 GB cards and up), and not at 1.5x and above
+        // or with the ultrawide patch above 1x.
+        static constexpr u64 UncompressedMinBytes = (29ULL << 30) / 2; // 14.5 GiB
         const bool high_resolution =
             values.resolution_setup.GetValue() >= ResolutionSetup::Res3_2X;
-        // The ultrawide patch draws a third more pixels: at 1x that still fits uncompressed, above
-        // 1x (1.25x) it doesn't.
         const bool ultrawide = values.fefw_ultrawide.GetValue();
         const bool ultrawide_scaled =
             ultrawide && values.resolution_setup.GetValue() > ResolutionSetup::Res1X;
-        const bool small_card = device_local_bytes != 0 && device_local_bytes < SmallCardBytes;
-        effective = high_resolution || ultrawide_scaled || small_card
+        const bool enough_memory = memory_limit_bytes >= UncompressedMinBytes; // 0: unknown
+        effective = high_resolution || ultrawide_scaled || !enough_memory
                         ? AstcRecompression::Bc3
                         : AstcRecompression::Uncompressed;
         LOG_INFO(Common, "ASTC textures: {} (Auto; resolution {}1.5x, ultrawide {}, {} MiB of video "
-                         "memory)",
+                         "memory may be used, uncompressed needs {} MiB)",
                  effective == AstcRecompression::Bc3 ? "BC3" : "uncompressed",
                  high_resolution ? "at or above " : "below ", ultrawide ? "on" : "off",
-                 device_local_bytes >> 20);
+                 memory_limit_bytes >> 20, UncompressedMinBytes >> 20);
     } else {
         LOG_INFO(Common, "ASTC textures: {} (set by the user)",
                  CanonicalizeEnum(setting));

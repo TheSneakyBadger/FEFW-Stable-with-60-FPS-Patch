@@ -398,7 +398,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
     translations->insert(
         {Settings::EnumMetadata<Settings::AstcRecompression>::Index(),
          {
-             PAIR(AstcRecompression, Auto, tr("Auto (BC3 at 1.5x and above, ultrawide above 1x or under 8 GB VRAM)")),
+             PAIR(AstcRecompression, Auto, tr("Auto (Uncompressed on 20 GB+ cards below 1.5x, otherwise BC3)")),
              PAIR(AstcRecompression, Uncompressed, tr("Uncompressed (Best quality)")),
              PAIR(AstcRecompression, Bc1, tr("BC1 (Low quality)")),
              PAIR(AstcRecompression, Bc3, tr("BC3 (Medium quality)")),

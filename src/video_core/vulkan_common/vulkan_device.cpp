@@ -1712,9 +1712,9 @@ void Device::CollectPhysicalMemoryInfo() {
                      ? "Aggressive"
                      : "Conservative");
     }
-    // Chooses what ASTC textures become for this boot (astc_recompression: Auto), from the card's
-    // own memory, before the texture cache makes any.
-    Settings::ResolveAstcRecompression(is_integrated ? 0 : local_memory);
+    // Chooses what ASTC textures become for this boot (astc_recompression: Auto), from the video
+    // memory the emulator may use, before the texture cache makes any.
+    Settings::ResolveAstcRecompression(device_access_memory);
 }
 
 void Device::CollectToolingInfo() {

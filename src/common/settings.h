@@ -1004,9 +1004,10 @@ void TranslateResolutionInfo(ResolutionSetup setup, ResolutionScalingInfo& info)
 void UpdateRescalingInfo();
 
 /// Decides what ASTC textures become for this boot of the renderer: astc_recompression, or with
-/// Auto, BC3 at 1.5x resolution and above, with the ultrawide patch above 1x, or under 8 GB of video memory
-/// (device_local_bytes, 0 when unknown), and uncompressed otherwise. Logs the choice.
-void ResolveAstcRecompression(u64 device_local_bytes);
+/// Auto, uncompressed where the emulator may use about 15 GB of video memory (memory_limit_bytes,
+/// 0 when unknown, which picks BC3) below 1.5x resolution (and at 1x with the ultrawide patch), BC3 otherwise.
+/// Logs the choice.
+void ResolveAstcRecompression(u64 memory_limit_bytes);
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.
