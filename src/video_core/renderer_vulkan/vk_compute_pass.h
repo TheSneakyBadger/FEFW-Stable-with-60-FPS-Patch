@@ -147,6 +147,9 @@ public:
 
 private:
     Scheduler& scheduler;
+    u64 flush_tick = 0; ///< Scheduler tick the unflushed decodes were counted in.
+    u32 unflushed_decodes = 0;
+    size_t unflushed_bytes = 0;
     StagingBufferPool& staging_buffer_pool;
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
     MemoryAllocator& memory_allocator;
