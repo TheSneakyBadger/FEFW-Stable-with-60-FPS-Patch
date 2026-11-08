@@ -189,6 +189,42 @@ bool IsGlobalMemoryWrite(const IR::Inst& inst) {
     }
 }
 
+/// Returns true when the SPIR-V backend can emit the instruction on a raw global address, which the
+/// runtime-bounds mode needs. Only loads, stores and the 32-bit integer atomics have a global body;
+/// the 64-bit, 32x2 and floating-point atomics throw NotImplementedException when emitted.
+bool HasRuntimeBoundsGlobalEmission(const IR::Inst& inst) {
+    switch (inst.GetOpcode()) {
+    case IR::Opcode::LoadGlobalS8:
+    case IR::Opcode::LoadGlobalU8:
+    case IR::Opcode::LoadGlobalS16:
+    case IR::Opcode::LoadGlobalU16:
+    case IR::Opcode::LoadGlobal32:
+    case IR::Opcode::LoadGlobal64:
+    case IR::Opcode::LoadGlobal128:
+    case IR::Opcode::WriteGlobalS8:
+    case IR::Opcode::WriteGlobalU8:
+    case IR::Opcode::WriteGlobalS16:
+    case IR::Opcode::WriteGlobalU16:
+    case IR::Opcode::WriteGlobal32:
+    case IR::Opcode::WriteGlobal64:
+    case IR::Opcode::WriteGlobal128:
+    case IR::Opcode::GlobalAtomicIAdd32:
+    case IR::Opcode::GlobalAtomicSMin32:
+    case IR::Opcode::GlobalAtomicUMin32:
+    case IR::Opcode::GlobalAtomicSMax32:
+    case IR::Opcode::GlobalAtomicUMax32:
+    case IR::Opcode::GlobalAtomicInc32:
+    case IR::Opcode::GlobalAtomicDec32:
+    case IR::Opcode::GlobalAtomicAnd32:
+    case IR::Opcode::GlobalAtomicOr32:
+    case IR::Opcode::GlobalAtomicXor32:
+    case IR::Opcode::GlobalAtomicExchange32:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /// Converts a global memory opcode to its storage buffer equivalent
 IR::Opcode GlobalToStorage(IR::Opcode opcode) {
     switch (opcode) {
@@ -493,10 +529,13 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
     });
     const small_vector<StorageBufferAddr, 4>& candidates = first_track.candidates;
     std::optional<StorageBufferAddr> storage_buffer{first_track.storage_buffer};
-    if (native && candidates.size() > 1) {
+    if (native && candidates.size() > 1 && HasRuntimeBoundsGlobalEmission(inst)) {
         // The address may come from any of several pointers, so a single storage buffer cannot be
         // chosen statically. Bind them all and keep the access global: the backend then picks the
         // buffer whose bound range contains the address at run time.
+        // Accesses the backend cannot emit globally (RED.F32 and the other float or 64-bit
+        // atomics) skip this and are bound to the first candidate below, as before the
+        // runtime-bounds mode; keeping them global would fail the whole pipeline.
         for (const StorageBufferAddr& candidate : candidates) {
             info.set.insert(candidate);
             if (IsGlobalMemoryWrite(inst)) {
