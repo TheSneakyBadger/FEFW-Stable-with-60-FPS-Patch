@@ -677,7 +677,19 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, size_t gu
     // Only later GPU work reads the decoded image, ordered by the barrier above, and the staging
     // buffer and descriptor sets are recycled by tick, so the CPU does not have to wait. Waiting
     // here stalled emulation once per streamed ASTC texture.
-    scheduler.Flush();
+    // Submitting after every texture cost a queue submit (and a full state rebind) each, dozens
+    // a frame while a scene streams in. Submit every 8 textures or 16 MiB instead, which still
+    // lets the ASTC re-compression memory cap recycle its decode images by tick.
+    if (flush_tick != scheduler.CurrentTick()) {
+        flush_tick = scheduler.CurrentTick();
+        unflushed_decodes = 0;
+        unflushed_bytes = 0;
+    }
+    ++unflushed_decodes;
+    unflushed_bytes += guest_size_bytes;
+    if (unflushed_decodes >= 8 || unflushed_bytes >= (size_t{16} << 20)) {
+        scheduler.Flush();
+    }
 }
 
 BcEncoderPass::BcEncoderPass(const Device& device_, Scheduler& scheduler_,
