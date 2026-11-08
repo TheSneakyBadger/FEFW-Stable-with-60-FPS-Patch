@@ -4,6 +4,7 @@
 #include "core/loader/nup.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include "common/logging.h"
@@ -96,6 +97,59 @@ std::unique_ptr<FileSys::NACP> BuildNacp(const NupContainer::PackageInfo& base,
     return nacp;
 }
 
+/// The version a package's own control data names: a control.nacp (or any .nacp) at its root or in
+/// a control folder there.
+std::string VersionFromPackageNacp(const FileSys::VirtualDir& package_dir) {
+    if (package_dir == nullptr) {
+        return {};
+    }
+    for (const auto& dir : {package_dir, package_dir->GetSubdirectory("control")}) {
+        if (dir == nullptr) {
+            continue;
+        }
+        FileSys::VirtualFile nacp_file = dir->GetFile("control.nacp");
+        if (nacp_file == nullptr) {
+            for (const auto& file : dir->GetFiles()) {
+                if (file->GetExtension() == "nacp") {
+                    nacp_file = file;
+                    break;
+                }
+            }
+        }
+        if (nacp_file != nullptr) {
+            return FileSys::NACP{nacp_file}.GetVersionString();
+        }
+    }
+    return {};
+}
+
+/// Fortune's Weave builds whose version is known, for containers that carry no version at all
+/// (no display version, no title version, no control data): the build ID of main.
+std::string VersionFromKnownBuild(const FileSys::VirtualDir& exefs) {
+    const auto main = exefs != nullptr ? exefs->GetFile("main") : nullptr;
+    if (main == nullptr) {
+        return {};
+    }
+    std::array<u8, 0x20> build_id{};
+    if (main->ReadBytes(build_id.data(), build_id.size(), 0x40) != build_id.size()) {
+        return {};
+    }
+    struct KnownBuild {
+        std::array<u8, 8> prefix;
+        const char* version;
+    };
+    static constexpr std::array<KnownBuild, 1> known{{
+        // Version 1.1.0 (the build Kompas9's 60 FPS and ultrawide patches are made for).
+        {{0xDB, 0x93, 0xB0, 0x12, 0x5F, 0x48, 0x50, 0x60}, "1.1.0"},
+    }};
+    for (const auto& build : known) {
+        if (std::memcmp(build_id.data(), build.prefix.data(), build.prefix.size()) == 0) {
+            return build.version;
+        }
+    }
+    return {};
+}
+
 std::string DecodeVersion(u32 version) {
     if (version == 0) {
         return {};
@@ -153,6 +207,21 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
     } else {
         display_version = program.display_version.empty() ? DecodeVersion(program.version)
                                                           : program.display_version;
+    }
+    if (display_version.empty()) {
+        // The container names no version (e.g. made without its metadata): the package's own
+        // control data, else a known build of the program. Otherwise the game's menu shows 1.0.0.
+        const std::size_t version_index = update_index ? *update_index : *program_index;
+        display_version = VersionFromPackageNacp(nup->GetPackageDir(version_index));
+        const char* source = "its control data";
+        if (display_version.empty()) {
+            display_version = VersionFromKnownBuild(exefs);
+            source = "the program's build ID";
+        }
+        if (!display_version.empty()) {
+            LOG_INFO(Loader, "NUP container names no version; version {} from {}", display_version,
+                     source);
+        }
     }
     nacp_file = BuildNacp(program, display_version);
     if (!program.icon.empty()) {
