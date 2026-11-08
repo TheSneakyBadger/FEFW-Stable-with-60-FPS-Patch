@@ -569,9 +569,13 @@ private:
     u64 modification_tick = 0;
     u64 frame_tick = 0;
 
+    // Declared before the worker so they outlive it: members are destroyed in reverse order, and
+    // the worker's thread is joined (finishing the decode it is on) only when the worker is
+    // destroyed. The other way round, stopping the emulation while a texture was decoding
+    // (accelerate_astc=CpuAsynchronous) let that decode write into a freed context and crashed.
+    std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
-    std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;
