@@ -172,6 +172,7 @@ private:
         }
         started = false;
         flushed = false;
+        ResetMovieClock();
         if (submission_event) submission_event->Clear(kernel);
     }
 
@@ -490,6 +491,75 @@ private:
         return lock;
     }
 
+    // Movie pacing (ported from Eglantine 1f52ac7e2e). A game that shows one decoded frame per
+    // frame it draws, and never skips one, falls further behind the movie's sound with every frame
+    // while it runs below the movie's frame rate. The movie clock follows the frames the game
+    // fetches (GetOutputProperties): decoded frames that a later decoded frame has already
+    // overtaken on that clock are dropped before they are converted and written, so the next
+    // image holds the frame the sound is at. Frames are only dropped, never held back, never the
+    // end-of-stream frame, and not at all while the game keeps up. A gap of over 1 s between
+    // fetches (a pause) or a lag of over 3 s (a jump) restarts the clock instead, as do Flush,
+    // Stop, Configure and Finalize. Streams whose timestamps don't rise are left alone.
+    // EDEN_VIDEO_PACE=0 turns it off.
+    static constexpr s64 MoviePauseGapUs = 1'000'000;
+    static constexpr s64 MovieMaxCatchUpUs = 3'000'000;
+
+    static bool MoviePacingEnabled() {
+        static const bool enabled = [] {
+            const char* value = std::getenv("EDEN_VIDEO_PACE");
+            return value == nullptr || value[0] != '0';
+        }();
+        return enabled;
+    }
+
+    static s64 HostTimeUs() {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    void ResetMovieClock() {
+        movie_clock_offset.reset();
+    }
+
+    // Starts or corrects the movie clock from a frame the game just fetched. The clock never runs
+    // behind a frame the game already has.
+    void AnchorMovieClock(u64 pts_us) {
+        const s64 now = HostTimeUs();
+        const s64 offset = now - static_cast<s64>(pts_us);
+        if (!movie_clock_offset || now - movie_last_fetch > MoviePauseGapUs ||
+            pts_us < movie_last_fetched_pts || offset < *movie_clock_offset ||
+            offset - *movie_clock_offset > MovieMaxCatchUpUs) {
+            movie_clock_offset = offset;
+        }
+        movie_last_fetch = now;
+        movie_last_fetched_pts = pts_us;
+    }
+
+    // Drops decoded frames the movie clock has already passed the next one of (decode_mutex held).
+    void DropOvertakenFrames() {
+        if (!MoviePacingEnabled() || !movie_clock_offset || decoded_frames.size() < 2) {
+            return;
+        }
+        const s64 now = HostTimeUs();
+        if (now - movie_last_fetch > MoviePauseGapUs) {
+            return; // Paused: the next fetch restarts the clock.
+        }
+        const s64 due = now - *movie_clock_offset;
+        while (decoded_frames.size() >= 2) {
+            const DecodedFrame& front = decoded_frames[0];
+            const DecodedFrame& next = decoded_frames[1];
+            if (front.eos || next.eos || next.timestamp <= front.timestamp ||
+                static_cast<s64>(next.timestamp) > due) {
+                break;
+            }
+            timing.decode += front.decode_time;
+            decoded_frames.pop_front();
+            ++timing.dropped;
+            ++movie_frames_dropped;
+        }
+    }
+
     Result PumpOutput() {
         while (true) {
             auto image = registered_images.end();
@@ -521,6 +591,7 @@ private:
                     return error;
                 }
                 if (decoded_frames.empty()) break;
+                DropOvertakenFrames();
                 frame = std::move(decoded_frames.front());
                 decoded_frames.pop_front();
                 lock.unlock();
@@ -643,10 +714,11 @@ private:
                 const auto now = std::chrono::steady_clock::now();
                 LOG_INFO(Service_AM,
                          "Native video {}x{}: {:.1f} ms/frame wall, decode {:.1f}, convert+swizzle {:.1f}, "
-                         "write {:.1f} (averages over 60 frames)",
+                         "write {:.1f} (averages over 60 frames), {} late frames dropped ({} in all)",
                          frame.widths[0], frame.heights[0],
                          ms(now - timing.window_start).count() / 60, ms(timing.decode).count() / 60,
-                         ms(timing.convert).count() / 60, ms(timing.write).count() / 60);
+                         ms(timing.convert).count() / 60, ms(timing.write).count() / 60,
+                         timing.dropped, movie_frames_dropped);
                 timing = {};
                 timing.window_start = now;
             }
@@ -688,6 +760,9 @@ private:
             if (result.raw == 0x1c286f && !output_properties.empty()) {
                 properties = output_properties.front();
                 output_properties.pop_front();
+                if (!properties[8]) {
+                    AnchorMovieClock((u64{properties[6]} | (u64{properties[7]} << 32)) / 1000);
+                }
                 result = ResultSuccess;
             }
         }
@@ -828,6 +903,7 @@ private:
                     pending_input_bytes = 0;
                     decoded_frames.clear();
                     output_properties.clear();
+                    ResetMovieClock();
                     if (submission_event) submission_event->Clear(kernel);
                 }
             }
@@ -902,6 +978,7 @@ private:
         }
         if (result.IsSuccess()) {
             flushed = true;
+            ResetMovieClock();
         }
         if (result.IsError()) {
             LOG_WARNING(Service_AM, "native video flush failed: {:#x}, codec={}, pending_inputs={}",
@@ -972,6 +1049,7 @@ private:
                         result = submission_event ? ResultSuccess : Kernel::ResultOutOfResource;
                         if (submission_event) {
                             configuration = *request;
+                            ResetMovieClock();
                             submission_event->Signal(kernel);
                         }
                     }
@@ -1088,7 +1166,12 @@ private:
         std::chrono::steady_clock::time_point window_start{std::chrono::steady_clock::now()};
         std::chrono::steady_clock::duration decode{}, convert{}, write{};
         u32 frames{};
+        u32 dropped{};
     } timing;
+    std::optional<s64> movie_clock_offset; // Host time minus pts (us) of the frames the game fetches
+    s64 movie_last_fetch{};                // Host time (us) of the game's last fetch
+    u64 movie_last_fetched_pts{};
+    u64 movie_frames_dropped{};
     std::vector<u8> rgba_buffer; // Reused between frames, see PumpOutput.
     std::vector<u8> tiled_buffer;
     std::array<u32, 3> rgba_buffer_shape{};
