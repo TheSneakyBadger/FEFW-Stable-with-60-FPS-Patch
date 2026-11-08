@@ -145,10 +145,10 @@ static u32 DecodeAdpcm(Core::Memory::Memory& memory, std::span<s16> out_buffer, 
     auto const get_step = [](u32 index) {
         // Emulates the following table
         // 0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1,
-        constexpr u64 steps_table = 0x1234567876543210ull;
-        constexpr u64 steps_sign = 0b1111111100000000ull;
-        auto const r = s32((steps_table >> (index * 4)) & 0xf);
-        return ((steps_sign >> index) & 1) == 0 ? -r : r;
+        // (a 4-bit two's complement nibble). The old table lookup negated every code, which
+        // inverted the decoded wave: inaudible on its own, but it clicked wherever the decoder
+        // resumed from a saved context (loops, new wave buffers) holding the true sign.
+        return (s32(index & 0xF) ^ 8) - 8;
     };
     auto const decode_sample = [&](const s32 code) -> s16 {
         const auto xn = code * (1 << scale);
