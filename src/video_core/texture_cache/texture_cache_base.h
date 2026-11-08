@@ -558,6 +558,9 @@ private:
     static constexpr size_t TICKS_TO_DESTROY = 8;
 #endif
     DelayedDestructionRing<Image, TICKS_TO_DESTROY> sentenced_images;
+    /// Estimated bytes of the images in each slot of sentenced_images (same rotation).
+    std::array<u64, TICKS_TO_DESTROY> sentenced_bytes{};
+    size_t sentenced_bytes_index = 0;
     DelayedDestructionRing<ImageView, TICKS_TO_DESTROY> sentenced_image_view;
     DelayedDestructionRing<Framebuffer, TICKS_TO_DESTROY> sentenced_framebuffers;
 

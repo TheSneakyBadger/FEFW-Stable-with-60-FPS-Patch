@@ -235,7 +235,15 @@ template <class P>
 void TextureCache<P>::TickFrame() {
     // If we can obtain the memory info, use it instead of the estimate.
     if (runtime.CanReportMemoryUsage()) {
-        total_used_memory = runtime.GetDeviceMemoryUsage();
+        // The driver still counts images waiting in sentenced_images. Without taking them off,
+        // every cleanup pass looked like it had freed nothing, and the collector ran again each
+        // frame until they were destroyed (on 8 GB cards it evicted several times what it needed).
+        u64 pending_free = 0;
+        for (const u64 bytes : sentenced_bytes) {
+            pending_free += bytes;
+        }
+        const u64 device_usage = runtime.GetDeviceMemoryUsage();
+        total_used_memory = device_usage > pending_free ? device_usage - pending_free : 0;
     }
     if (total_used_memory > minimum_memory) {
         RunGarbageCollector();
@@ -248,6 +256,8 @@ void TextureCache<P>::TickFrame() {
                  total_used_memory >> 20, peak_used_memory >> 20);
     }
     sentenced_images.Tick();
+    sentenced_bytes_index = (sentenced_bytes_index + 1) % TICKS_TO_DESTROY;
+    sentenced_bytes[sentenced_bytes_index] = 0;
     sentenced_framebuffers.Tick();
     sentenced_image_view.Tick();
     TickAsyncDecode();
@@ -2578,8 +2588,9 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
             async_decode->cancelled = true;
         }
     }
+    u64 freed_bytes = 0;
     if (image.HasScaled()) {
-        total_used_memory -= GetScaledImageSizeBytes(image);
+        freed_bytes += GetScaledImageSizeBytes(image);
     }
     u64 tentative_size = (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
     if ((IsPixelFormatASTC(image.info.format) &&
@@ -2587,7 +2598,12 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         True(image.flags & ImageFlagBits::Converted)) {
         tentative_size = TranscodedAstcSize(tentative_size, image.info.format);
     }
-    total_used_memory -= Common::AlignUp(tentative_size, 1024);
+    freed_bytes += Common::AlignUp(tentative_size, 1024);
+    total_used_memory -= (std::min)(freed_bytes, total_used_memory);
+    if (!immediate_delete) {
+        // Freed only when sentenced_images lets go of it, TICKS_TO_DESTROY frames from now.
+        sentenced_bytes[sentenced_bytes_index] += freed_bytes;
+    }
     const GPUVAddr gpu_addr = image.gpu_addr;
     const auto alloc_it = image_allocs_table.find(gpu_addr);
     if (alloc_it == image_allocs_table.end()) {
