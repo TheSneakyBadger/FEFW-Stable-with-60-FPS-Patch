@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <bit>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 
@@ -23,6 +24,11 @@
 #include "video_core/host1x/host1x.h"
 
 namespace Service::Nvidia::Devices {
+
+namespace {
+// How long a wait on a slot whose last waits were all cancelled may block for the GPU to catch up.
+constexpr std::chrono::milliseconds FailingWaitTimeout{50};
+} // namespace
 
 nvhost_ctrl::nvhost_ctrl(Core::System& system_, EventInterface& events_interface_,
                          NvCore::Container& core_)
@@ -158,13 +164,16 @@ NvResult nvhost_ctrl::IocCtrlEventWait(IocCtrlEventWaitParams& params, bool is_a
 
     const auto check_failing = [&]() {
         if (events[slot].fails > 2) {
-            {
-                auto lk = system.StallApplication();
-                host1x_syncpoint_manager.WaitHost(fence_id, target_value);
-                system.UnstallApplication();
+            // The guest cancelled its last waits on this slot because the GPU was behind. Give the
+            // GPU a bounded time to reach the fence, blocking only this caller: pausing every guest
+            // core (as before) hitched the whole game and could deadlock on GPU work that waits for
+            // the CPU. The count restarts either way, so a fence that stays out of reach does not
+            // block every following wait.
+            events[slot].fails = 0;
+            if (host1x_syncpoint_manager.WaitHostFor(fence_id, target_value, FailingWaitTimeout)) {
+                params.value.raw = target_value;
+                return true;
             }
-            params.value.raw = target_value;
-            return true;
         }
         return false;
     };
