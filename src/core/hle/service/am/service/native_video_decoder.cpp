@@ -904,6 +904,17 @@ private:
                     DropAv1InFlight();
                 }
                 if (result.IsSuccess()) {
+                    // As in Flush: outputs written but not fetched give their image back to the
+                    // decoder, at the end of the fence sequence. The game never learns of these
+                    // outputs, so it never releases their images, and a decoder started again after
+                    // Stop would otherwise run out of images and freeze.
+                    for (const auto& properties : output_properties) {
+                        const auto image = std::ranges::find(registered_images, properties[0], &RegisteredImage::id);
+                        if (image != registered_images.end() && !image->available) {
+                            image->completion_value = ++next_completion_value;
+                            image->available = true;
+                        }
+                    }
                     started = false;
                     flushed = false;
                     pending_inputs.clear();
