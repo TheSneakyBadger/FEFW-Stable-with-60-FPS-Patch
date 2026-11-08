@@ -6,8 +6,11 @@
 
 #pragma once
 
+#include <optional>
+
 #include <string>
 #include "common/common_types.h"
+#include "core/file_sys/control_metadata.h"
 #include "core/file_sys/program_metadata.h"
 #include "core/loader/loader.h"
 
@@ -49,6 +52,7 @@ public:
     ResultStatus ReadIcon(std::vector<u8>& out_buffer) override;
     ResultStatus ReadProgramId(u64& out_program_id) override;
     ResultStatus ReadTitle(std::string& title) override;
+    ResultStatus ReadControlData(FileSys::NACP& control) override;
     bool IsRomFSUpdatable() const override;
 
     ResultStatus ReadNSOModules(Modules& out_modules) override;
@@ -60,6 +64,12 @@ private:
 
     std::vector<u8> icon_data;
     std::string name;
+    /// The dump's control data (control.nacp next to it, or in its loose update).
+    std::optional<FileSys::NACP> control;
+    /// A loose update next to the dump (<title>/updates/<number>/ or
+    /// <folder>/updates/<number>/ beside <folder>/base/): its exefs runs and its romfs is laid
+    /// over the base's.
+    FileSys::VirtualDir update_dir;
     u64 title_id{};
     bool override_update;
     bool standalone{true};

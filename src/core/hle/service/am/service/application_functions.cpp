@@ -9,6 +9,7 @@
 #include "common/hex_util.h"
 #include "common/settings.h"
 #include "common/uuid.h"
+#include "core/core.h"
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
@@ -25,6 +26,7 @@
 #include "core/hle/service/filesystem/save_data_controller.h"
 #include "core/hle/service/glue/glue_manager.h"
 #include "core/hle/service/ns/application_manager_interface.h"
+#include "core/loader/loader.h"
 #include "core/hle/service/ns/service_getter_interface.h"
 #include "core/hle/service/sm/sm.h"
 
@@ -220,14 +222,28 @@ Result IApplicationFunctions::GetDisplayVersion(Out<DisplayVersion> out_display_
     LOG_DEBUG(Service_AM, "called");
 
     const auto res = GetApplicationMetadata(system, m_applet->program_id);
+    std::string version;
     if (res.first != nullptr) {
-        const auto& version = res.first->GetVersionString();
-        std::memcpy(out_display_version->string.data(), version.data(),
-                    (std::min)(version.size(), out_display_version->string.size()));
+        version = res.first->GetVersionString();
     } else {
-        static constexpr char default_version[]{"1.0.0"};
-        std::memcpy(out_display_version->string.data(), default_version, sizeof(default_version));
+        // Not installed (a NUP or a loose dump): the running loader's control data, which carries
+        // the update's version (a NUP's newest update, a loose dump's updates/<number>/).
+        FileSys::NACP nacp;
+        u64 loaded_program_id{};
+        auto& loader = system.GetAppLoader();
+        if (loader.ReadProgramId(loaded_program_id) == Loader::ResultStatus::Success &&
+            FileSys::GetBaseTitleID(loaded_program_id) ==
+                FileSys::GetBaseTitleID(m_applet->program_id) &&
+            loader.ReadControlData(nacp) == Loader::ResultStatus::Success) {
+            version = nacp.GetVersionString();
+            LOG_INFO(Service_AM, "Display version {} from the loaded game's control data", version);
+        }
     }
+    if (version.empty()) {
+        version = "1.0.0";
+    }
+    std::memcpy(out_display_version->string.data(), version.data(),
+                (std::min)(version.size(), out_display_version->string.size()));
 
     out_display_version->string[out_display_version->string.size() - 1] = '\0';
     R_SUCCEED();

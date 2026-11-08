@@ -4,13 +4,18 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstring>
+#include <optional>
+#include <string>
+#include <vector>
 #include "common/logging.h"
 #include "common/random.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
+#include "core/file_sys/nup_container.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/romfs_factory.h"
 #include "core/file_sys/romfs.h"
@@ -72,6 +77,77 @@ struct PatchCollection {
     std::array<s32, 13> module_patcher_indices{};
 };
 
+namespace {
+
+/// A folder name that is a whole number (an update's version, e.g. 65536).
+std::optional<u64> NumericFolderName(const std::string& name) {
+    if (name.empty() || name.size() > 19 ||
+        !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+        return std::nullopt;
+    }
+    return std::stoull(name);
+}
+
+/// The newest loose update for a dump whose ExeFS is exefs_dir: a numeric folder with an exefs or
+/// romfs inside "updates" (or "update") next to the dump's exefs/romfs, or next to the folder
+/// holding the dump (<folder>/base/exefs with <folder>/updates/<number>/...).
+FileSys::VirtualDir FindLooseUpdate(const FileSys::VirtualDir& exefs_dir) {
+    if (exefs_dir == nullptr) {
+        return nullptr;
+    }
+    const auto title_dir = exefs_dir->GetParentDirectory();
+    if (title_dir == nullptr) {
+        return nullptr;
+    }
+    std::vector<FileSys::VirtualDir> roots{title_dir};
+    if (const auto above = title_dir->GetParentDirectory()) {
+        roots.push_back(above);
+    }
+    FileSys::VirtualDir best;
+    u64 best_version{};
+    for (const auto& root : roots) {
+        for (const char* container_name : {"updates", "update"}) {
+            const auto container = root->GetSubdirectory(container_name);
+            if (container == nullptr) {
+                continue;
+            }
+            for (const auto& candidate : container->GetSubdirectories()) {
+                const auto version = NumericFolderName(candidate->GetName());
+                if (!version || (candidate->GetSubdirectory("exefs") == nullptr &&
+                                 candidate->GetSubdirectory("romfs") == nullptr)) {
+                    continue;
+                }
+                if (best == nullptr || *version > best_version) {
+                    best = candidate;
+                    best_version = *version;
+                }
+            }
+        }
+        if (best != nullptr) {
+            break;
+        }
+    }
+    return best;
+}
+
+/// control.nacp (or any .nacp) in dir.
+FileSys::VirtualFile FindNacp(const FileSys::VirtualDir& dir) {
+    if (dir == nullptr) {
+        return nullptr;
+    }
+    if (auto nacp = dir->GetFile("control.nacp")) {
+        return nacp;
+    }
+    for (const auto& f : dir->GetFiles()) {
+        if (f->GetExtension() == "nacp") {
+            return f;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
 AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileSys::VirtualFile file_, bool override_update_)
     : AppLoader(std::move(file_))
     , override_update(override_update_)
@@ -108,20 +184,38 @@ AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileSys
             icon_data = (*icon_iter)->ReadAllBytes();
     }
 
-    // Metadata
-    FileSys::VirtualFile nacp_file = file_dir->GetFile("control.nacp");
-    if (nacp_file == nullptr) {
-        const auto& files = file_dir->GetFiles();
-        const auto nacp_iter =
-            std::find_if(files.begin(), files.end(),
-                         [](const FileSys::VirtualFile& f) { return f->GetExtension() == "nacp"; });
-        if (nacp_iter != files.end())
-            nacp_file = *nacp_iter;
+    // Metadata: control.nacp next to main, else in the dump's folder or the one above it
+    FileSys::VirtualFile nacp_file = FindNacp(file_dir);
+    auto nacp_parent = file_dir->GetParentDirectory();
+    for (int level = 0; level < 2 && nacp_file == nullptr && nacp_parent != nullptr; ++level) {
+        nacp_file = FindNacp(nacp_parent);
+        nacp_parent = nacp_parent->GetParentDirectory();
+    }
+
+    // A loose update next to the dump: its program runs, its romfs is laid over the base's, and
+    // its control data (name, version) wins.
+    update_dir = FindLooseUpdate(file_dir);
+    if (update_dir != nullptr) {
+        const auto update_exefs = update_dir->GetSubdirectory("exefs");
+        if (update_exefs != nullptr && update_exefs->GetFile("main") != nullptr &&
+            update_exefs->GetFile("main.npdm") != nullptr) {
+            dir = update_exefs;
+        }
+        if (auto update_nacp = FindNacp(update_dir); update_nacp != nullptr) {
+            nacp_file = update_nacp;
+        } else if (auto exefs_nacp = FindNacp(update_exefs); exefs_nacp != nullptr) {
+            nacp_file = exefs_nacp;
+        }
+        LOG_INFO(Loader, "Loose update {} found next to the dump: {}{}", update_dir->GetName(),
+                 dir != nullptr ? "its program runs" : "its program is missing, the base runs",
+                 update_dir->GetSubdirectory("romfs") != nullptr ? ", its romfs is laid over the base's"
+                                                                 : "");
     }
 
     if (nacp_file != nullptr) {
-        FileSys::NACP nacp(nacp_file);
-        name = nacp.GetApplicationName();
+        control.emplace(nacp_file);
+        name = control->GetApplicationName();
+        LOG_INFO(Loader, "Dump control data: {} version {}", name, control->GetVersionString());
     }
 }
 
@@ -294,17 +388,29 @@ ResultStatus AppLoader_DeconstructedRomDirectory::ReadRomFS(FileSys::VirtualFile
                 break;
             }
         }
+        FileSys::VirtualDir loose;
         if (romfs == nullptr) {
-            auto loose = directory->GetSubdirectory("romfs");
+            loose = directory->GetSubdirectory("romfs");
             if (!loose && directory->GetName() == "exefs") {
                 const auto parent = directory->GetParentDirectory();
                 if (parent) {
                     loose = parent->GetSubdirectory("romfs");
                 }
             }
-            if (loose) {
-                romfs = FileSys::CreateRomFS(std::move(loose));
+        }
+        // A loose update's romfs holds the files it changes or adds: lay it over the base's.
+        if (update_dir != nullptr) {
+            if (const auto update_romfs = update_dir->GetSubdirectory("romfs")) {
+                FileSys::VirtualDir base = loose;
+                if (base == nullptr && romfs != nullptr) {
+                    base = FileSys::ExtractRomFS(romfs);
+                }
+                loose = FileSys::NupContainer::MergeShadowDirs(base, update_romfs);
+                romfs = nullptr;
             }
+        }
+        if (romfs == nullptr && loose) {
+            romfs = FileSys::CreateRomFS(std::move(loose));
         }
     }
     if (romfs == nullptr) {
@@ -335,6 +441,14 @@ ResultStatus AppLoader_DeconstructedRomDirectory::ReadTitle(std::string& out_tit
     }
 
     out_title = name;
+    return ResultStatus::Success;
+}
+
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadControlData(FileSys::NACP& out_control) {
+    if (!control) {
+        return ResultStatus::ErrorNoControl;
+    }
+    out_control = *control;
     return ResultStatus::Success;
 }
 
