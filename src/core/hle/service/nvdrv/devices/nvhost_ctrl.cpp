@@ -30,7 +30,18 @@ nvhost_ctrl::nvhost_ctrl(Core::System& system_, EventInterface& events_interface
       syncpoint_manager{core_.GetSyncpointManager()} {}
 
 nvhost_ctrl::~nvhost_ctrl() {
+    // A pending wait's host action captures this device. Remove it before the events go away, or
+    // a later syncpoint increment (the fence thread outlives the services at shutdown) would read
+    // freed memory and signal a freed event. Deregistering takes the host1x lock that actions run
+    // under, so no action for this device is running once it returns.
+    auto lock = NvEventsLock();
     for (auto& event : events) {
+        if (event.status.exchange(EventState::Cancelling, std::memory_order_acq_rel) ==
+            EventState::Waiting) {
+            system.Host1x().GetSyncpointManager().DeregisterHostAction(event.assigned_syncpt,
+                                                                       event.wait_handle);
+            event.wait_handle = {};
+        }
         if (!event.registered) {
             continue;
         }
