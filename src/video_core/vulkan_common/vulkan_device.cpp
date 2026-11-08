@@ -1701,6 +1701,9 @@ void Device::CollectPhysicalMemoryInfo() {
             device_access_memory = std::min<u64>(device_access_memory, normal_memory + scaler_memory);
         }
     }
+    // Chooses what ASTC textures become for this boot (astc_recompression: Auto), from the card's
+    // own memory, before the texture cache makes any.
+    Settings::ResolveAstcRecompression(is_integrated ? 0 : local_memory);
 }
 
 void Device::CollectToolingInfo() {

@@ -17,6 +17,7 @@
 #include <string_view>
 #include <type_traits>
 #include <deque>
+#include <atomic>
 #include <fmt/core.h>
 
 #include "common/settings_enums.h"
@@ -366,6 +367,46 @@ void TranslateResolutionInfo(ResolutionSetup setup, ResolutionScalingInfo& info)
     info.up_factor = static_cast<f32>(info.up_scale) / (1U << info.down_shift);
     info.down_factor = static_cast<f32>(1U << info.down_shift) / info.up_scale;
     info.active = info.up_scale != 1 || info.down_shift != 0;
+}
+
+namespace {
+std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::Auto};
+}
+
+void ResolveAstcRecompression(u64 device_local_bytes) {
+    const AstcRecompression setting = values.astc_recompression.GetValue();
+    AstcRecompression effective = setting;
+    if (setting == AstcRecompression::Auto) {
+        // Uncompressed textures are 4x the size of BC3. At 1x they fit the ~7 GB the emulator uses
+        // on 8 GB and larger cards, and the GPU decodes them; higher resolutions, the ultrawide
+        // patch and smaller cards need BC3 to fit (BC3 is decoded on the CPU).
+        static constexpr u64 SmallCardBytes = 7ULL << 30; // 8 GB cards report a little under 8 GiB
+        const bool high_resolution =
+            values.resolution_setup.GetValue() >= ResolutionSetup::Res3_2X;
+        const bool ultrawide = values.fefw_ultrawide.GetValue();
+        const bool small_card = device_local_bytes != 0 && device_local_bytes < SmallCardBytes;
+        effective = high_resolution || ultrawide || small_card ? AstcRecompression::Bc3
+                                                               : AstcRecompression::Uncompressed;
+        LOG_INFO(Common, "ASTC textures: {} (Auto; resolution {}1.5x, ultrawide {}, {} MiB of video "
+                         "memory)",
+                 effective == AstcRecompression::Bc3 ? "BC3" : "uncompressed",
+                 high_resolution ? "at or above " : "below ", ultrawide ? "on" : "off",
+                 device_local_bytes >> 20);
+    } else {
+        LOG_INFO(Common, "ASTC textures: {} (set by the user)",
+                 CanonicalizeEnum(setting));
+    }
+    effective_astc_recompression.store(effective, std::memory_order_relaxed);
+}
+
+AstcRecompression EffectiveAstcRecompression() {
+    AstcRecompression effective = effective_astc_recompression.load(std::memory_order_relaxed);
+    if (effective == AstcRecompression::Auto) {
+        // Not resolved by a renderer yet (OpenGL): decide without the video memory size.
+        ResolveAstcRecompression(0);
+        effective = effective_astc_recompression.load(std::memory_order_relaxed);
+    }
+    return effective;
 }
 
 void UpdateRescalingInfo() {

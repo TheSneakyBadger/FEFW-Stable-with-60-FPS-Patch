@@ -568,8 +568,9 @@ struct Values {
                                                                true,
                                                                true};
 
+    // Auto: see EffectiveAstcRecompression.
     SwitchableSetting<AstcRecompression, true> astc_recompression{linkage,
-                                                                  AstcRecompression::Uncompressed,
+                                                                  AstcRecompression::Auto,
                                                                   "astc_recompression",
                                                                   Category::RendererAdvanced};
 
@@ -1001,6 +1002,15 @@ void LogSettings();
 
 void TranslateResolutionInfo(ResolutionSetup setup, ResolutionScalingInfo& info);
 void UpdateRescalingInfo();
+
+/// Decides what ASTC textures become for this boot of the renderer: astc_recompression, or with
+/// Auto, BC3 at 1.5x resolution and above, with the ultrawide patch, or under 8 GB of video memory
+/// (device_local_bytes, 0 when unknown), and uncompressed otherwise. Logs the choice.
+void ResolveAstcRecompression(u64 device_local_bytes);
+
+/// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
+/// renderer's start, so it can't change under images already made.
+AstcRecompression EffectiveAstcRecompression();
 
 // Restore the global state of all applicable settings in the Values struct
 void RestoreGlobalState(bool is_powered_on);

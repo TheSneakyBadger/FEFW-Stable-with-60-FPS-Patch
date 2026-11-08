@@ -608,10 +608,10 @@ u32 CalculateConvertedSizeBytes(const ImageInfo& info) noexcept {
         return info.size.width * BytesPerBlock(info.format);
     }
     static constexpr Extent2D TILE_SIZE{1, 1};
-    if (IsPixelFormatASTC(info.format) && Settings::values.astc_recompression.GetValue() !=
+    if (IsPixelFormatASTC(info.format) && Settings::EffectiveAstcRecompression() !=
                                               Settings::AstcRecompression::Uncompressed) {
         const u32 bpp_div =
-            Settings::values.astc_recompression.GetValue() == Settings::AstcRecompression::Bc1 ? 2
+            Settings::EffectiveAstcRecompression() == Settings::AstcRecompression::Bc1 ? 2
                                                                                                : 1;
         // NumBlocksPerLayer doesn't account for this correctly, so we have to do it manually.
         u32 output_size = 0;
@@ -940,7 +940,7 @@ void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8
         const auto input_offset = input.subspan(copy.buffer_offset);
         copy.buffer_offset = output_offset;
 
-        const auto recompression_setting = Settings::values.astc_recompression.GetValue();
+        const auto recompression_setting = Settings::EffectiveAstcRecompression();
         const bool astc = IsPixelFormatASTC(info.format);
 
         if (astc && recompression_setting == Settings::AstcRecompression::Uncompressed) {

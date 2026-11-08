@@ -161,7 +161,7 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     if (Settings::values.accelerate_astc.GetValue() != Settings::AstcDecodeMode::Gpu) {
         return false;
     }
-    return Settings::values.astc_recompression.GetValue() ==
+    return Settings::EffectiveAstcRecompression() ==
               Settings::AstcRecompression::Uncompressed &&
           info.size.depth == 1;
 }
