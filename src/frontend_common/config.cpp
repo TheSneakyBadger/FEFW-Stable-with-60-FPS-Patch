@@ -68,7 +68,10 @@ std::filesystem::path PathFromUTF8(const std::string& text) {
 /// (...\user\nand and so on) is ignored, and paths inside this build's own "user" folder are
 /// stored empty (the default), so the folder keeps working wherever it is copied. Paths
 /// anywhere else (a folder the player chose) are kept as before.
-std::string PortableDataPath(const std::string& stored, const char* leaf) {
+std::string PortableDataPath(const std::string& stored, const char* leaf, bool* from_other_build = nullptr) {
+    if (from_other_build != nullptr) {
+        *from_other_build = false;
+    }
 #ifdef _WIN32
     if (stored.empty()) {
         return stored;
@@ -91,6 +94,9 @@ std::string PortableDataPath(const std::string& stored, const char* leaf) {
     if (other_portable) {
         LOG_WARNING(Config, "Ignoring {} from another build's user folder: {} (using {})", leaf,
                     stored, FS::PathToUTF8String(*own / leaf));
+        if (from_other_build != nullptr) {
+            *from_other_build = true;
+        }
         return {};
     }
 #endif
@@ -373,8 +379,21 @@ void Config::ReadDataStorageValues() {
     setPath(EdenPath::DumpDir, "dump_directory", DUMP_DIR);
     setPath(EdenPath::TASDir, "tas_directory", TAS_DIR);
 
-    const auto save_dir_setting =
-        PortableDataPath(ReadStringSetting(std::string("save_directory")), NAND_DIR);
+    bool save_from_other_build = false;
+    const auto save_dir_setting = PortableDataPath(
+        ReadStringSetting(std::string("save_directory")), NAND_DIR, &save_from_other_build);
+#ifdef _WIN32
+    // The save folder is stored absolute whenever it differs from the NAND folder, so another
+    // build's user\nand here means "the portable save folder": use this build's own one, not a
+    // custom NAND folder the player may also have set.
+    if (save_from_other_build) {
+        if (const auto own = OwnPortableUserDir()) {
+            SetEdenPath(EdenPath::SaveDir, FS::PathToUTF8String(*own / NAND_DIR));
+        } else {
+            SetEdenPath(EdenPath::SaveDir, GetEdenPathString(EdenPath::NANDDir));
+        }
+    } else
+#endif
     if (save_dir_setting.empty()) {
         SetEdenPath(EdenPath::SaveDir, GetEdenPathString(EdenPath::NANDDir));
     } else {
