@@ -151,7 +151,12 @@ GPUVAddr MemoryManager::PageTableOp(GPUVAddr gpu_addr, [[maybe_unused]] DAddr de
         remaining_size -= page_size;
     }
     flush_run();
-    kind_map.Map(gpu_addr, gpu_addr + size, kind);
+    {
+        // GetPageKind and GetMemoryLayoutSize read the map under guard from the GPU thread while
+        // services map and unmap: change it under the same lock (as BigPageTableOp does).
+        std::unique_lock<std::mutex> lock(guard);
+        kind_map.Map(gpu_addr, gpu_addr + size, kind);
+    }
     return gpu_addr;
 }
 
