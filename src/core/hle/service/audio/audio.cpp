@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/thread.h"
 #include "core/core.h"
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -236,6 +237,11 @@ public:
 };
 
 void LoopProcess(Core::System& system) {
+    // This one host thread answers every audren/audout/hwopus call. At Normal priority it was
+    // starved by the Critical guest-core, GPU and audio-mixer threads on 4-core CPUs, and when it
+    // was preempted inside IAudioRenderer::RequestUpdate it held the lock the Critical mixer
+    // needs, so the output ran dry (crackle). It mostly sleeps waiting for requests.
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
     auto server_manager = std::make_unique<ServerManager>(system);
 
     server_manager->RegisterNamedService("aud:a", std::make_shared<IAudioSystemManagerForApplet>(system), 30);

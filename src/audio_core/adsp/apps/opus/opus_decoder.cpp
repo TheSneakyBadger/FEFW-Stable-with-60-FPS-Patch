@@ -79,6 +79,8 @@ void OpusDecoder::Init(std::stop_token stop_token) {
 
 void OpusDecoder::Main(std::stop_token stop_token) {
     Common::SetCurrentThreadName("DSP_OpusDecoder_Main");
+    // The audio service thread waits on this one for every hwopus decode.
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::VeryHigh);
 
     while (!stop_token.stop_requested()) {
         auto msg = Receive(Direction::DSP, stop_token);

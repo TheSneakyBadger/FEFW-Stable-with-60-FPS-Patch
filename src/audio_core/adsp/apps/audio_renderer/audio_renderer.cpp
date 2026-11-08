@@ -125,7 +125,9 @@ void AudioRenderer::CreateSinkStreams() {
         std::string name{fmt::format("ADSP_RenderStream-{}", i)};
         streams[i] =
             sink.AcquireSinkStream(system, channels, name, ::AudioCore::Sink::StreamType::Render);
-        streams[i]->SetRingSize(4);
+        // 6 x 5 ms buffers (was 4): WASAPI takes about 10 ms per callback, so 4 left only one
+        // spare render cycle before an underrun on a busy 4-core CPU. Costs 10 ms of latency.
+        streams[i]->SetRingSize(6);
     }
 }
 
