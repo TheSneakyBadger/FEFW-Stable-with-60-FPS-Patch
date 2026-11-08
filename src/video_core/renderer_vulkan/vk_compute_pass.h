@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <span>
 #include <utility>
@@ -21,6 +22,7 @@
 
 namespace VideoCommon {
 struct SwizzleParameters;
+struct ImageInfo;
 }
 
 namespace Vulkan {
@@ -130,11 +132,42 @@ public:
     void Assemble(Image& image, const StagingBufferRef& map,
                   std::span<const VideoCommon::SwizzleParameters> swizzles);
 
+    /// Where a decode writes: an RGBA8 image with a storage view per level.
+    struct Target {
+        VkImage image;
+        VkImageAspectFlags aspect_mask;
+        bool initialized;
+        std::function<VkImageView(s32 level)> level_view;
+    };
+
+    /// Decodes `info`'s ASTC data in `map` (`guest_size_bytes` long) into `target`, then submits.
+    void AssembleInto(const VideoCommon::ImageInfo& info, size_t guest_size_bytes,
+                      const Target& target, const StagingBufferRef& map,
+                      std::span<const VideoCommon::SwizzleParameters> swizzles);
+
 private:
     Scheduler& scheduler;
     StagingBufferPool& staging_buffer_pool;
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
     MemoryAllocator& memory_allocator;
+};
+
+/// Compresses an RGBA8 image level to BC1 or BC3 blocks in a buffer (bc_encoder.comp).
+class BcEncoderPass final : public ComputePass {
+public:
+    explicit BcEncoderPass(const Device& device_, Scheduler& scheduler_,
+                           DescriptorPool& descriptor_pool_,
+                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_);
+    ~BcEncoderPass();
+
+    /// Encodes every layer of one level (`source` is its RGBA8 storage view) into `buffer`,
+    /// `out_offset` bytes past `buffer_offset`; blocks are row-major, layer after layer.
+    void Encode(VkImageView source, u32 width, u32 height, u32 layers, bool bc3, VkBuffer buffer,
+                VkDeviceSize buffer_offset, VkDeviceSize buffer_size, VkDeviceSize out_offset);
+
+private:
+    Scheduler& scheduler;
+    ComputePassDescriptorQueue& compute_pass_descriptor_queue;
 };
 
 class BlockLinearUnswizzle3DPass final : public ComputePass {

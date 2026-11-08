@@ -18,6 +18,7 @@
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
 #include "video_core/host_shaders/astc_decoder_comp_spv.h"
+#include "video_core/host_shaders/bc_encoder_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_nosubgroups_comp_spv.h"
 #include "video_core/host_shaders/resolve_conditional_render_comp_spv.h"
@@ -185,6 +186,51 @@ struct AstcPushConstants {
     u32 block_height;
     u32 block_height_mask;
     u32 native_tiling;
+};
+
+constexpr std::array<VkDescriptorSetLayoutBinding, 2> BC_ENCODER_DESCRIPTOR_SET_BINDINGS{{
+    {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .pImmutableSamplers = nullptr,
+    },
+    {
+        .binding = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .pImmutableSamplers = nullptr,
+    },
+}};
+
+constexpr std::array<VkDescriptorUpdateTemplateEntry, 2> BC_ENCODER_DESCRIPTOR_UPDATE_TEMPLATE{{
+    {
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .offset = 0,
+        .stride = sizeof(DescriptorUpdateEntry),
+    },
+    {
+        .dstBinding = 1,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .offset = sizeof(DescriptorUpdateEntry),
+        .stride = sizeof(DescriptorUpdateEntry),
+    },
+}};
+
+struct BcEncoderPushConstants {
+    u32 blocks_x;
+    u32 blocks_y;
+    u32 width;
+    u32 height;
+    u32 bc3;
+    u32 out_offset; // in 8-byte units
 };
 
 struct QueriesPrefixScanPushConstants {
@@ -523,16 +569,28 @@ ASTCDecoderPass::~ASTCDecoderPass() = default;
 
 void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
                                std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    const Target target{
+        .image = image.Handle(),
+        .aspect_mask = image.AspectMask(),
+        .initialized = image.ExchangeInitialization(),
+        .level_view = [&image](s32 level) { return image.StorageImageView(level); },
+    };
+    AssembleInto(image.info, image.guest_size_bytes, target, map, swizzles);
+}
+
+void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, size_t guest_size_bytes,
+                                   const Target& target, const StagingBufferRef& map,
+                                   std::span<const VideoCommon::SwizzleParameters> swizzles) {
     using namespace VideoCommon::Accelerated;
     const std::array<u32, 2> block_dims{
-        VideoCore::Surface::DefaultBlockWidth(image.info.format),
-        VideoCore::Surface::DefaultBlockHeight(image.info.format),
+        VideoCore::Surface::DefaultBlockWidth(info.format),
+        VideoCore::Surface::DefaultBlockHeight(info.format),
     };
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
-    const VkImageAspectFlags aspect_mask = image.AspectMask();
-    const VkImage vk_image = image.Handle();
-    const bool is_initialized = image.ExchangeInitialization();
+    const VkImageAspectFlags aspect_mask = target.aspect_mask;
+    const VkImage vk_image = target.image;
+    const bool is_initialized = target.initialized;
     scheduler.Record([vk_pipeline, vk_image, aspect_mask,
                       is_initialized](vk::CommandBuffer cmdbuf) {
         const VkImageMemoryBarrier image_barrier{
@@ -563,16 +621,16 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
         const size_t input_offset = swizzle.buffer_offset + map.offset;
         const u32 num_dispatches_x = Common::DivCeil(swizzle.num_tiles.width, 8U);
         const u32 num_dispatches_y = Common::DivCeil(swizzle.num_tiles.height, 8U);
-        const u32 num_dispatches_z = image.info.resources.layers;
+        const u32 num_dispatches_z = info.resources.layers;
 
         compute_pass_descriptor_queue.Acquire(scheduler, 2);
         compute_pass_descriptor_queue.AddBuffer(map.buffer, input_offset,
-                                                image.guest_size_bytes - swizzle.buffer_offset);
-        compute_pass_descriptor_queue.AddImage(image.StorageImageView(swizzle.level));
+                                                guest_size_bytes - swizzle.buffer_offset);
+        compute_pass_descriptor_queue.AddImage(target.level_view(swizzle.level));
         const void* const descriptor_data{compute_pass_descriptor_queue.UpdateData()};
 
         // To unswizzle the ASTC data
-        const auto params = MakeBlockLinearSwizzle2DParams(swizzle, image.info);
+        const auto params = MakeBlockLinearSwizzle2DParams(swizzle, info);
         ASSERT(params.origin == (std::array<u32, 3>{0, 0, 0}));
         ASSERT(params.destination == (std::array<s32, 3>{0, 0, 0}));
         ASSERT(params.bytes_per_block_log2 == 4);
@@ -620,6 +678,45 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
     // buffer and descriptor sets are recycled by tick, so the CPU does not have to wait. Waiting
     // here stalled emulation once per streamed ASTC texture.
     scheduler.Flush();
+}
+
+BcEncoderPass::BcEncoderPass(const Device& device_, Scheduler& scheduler_,
+                             DescriptorPool& descriptor_pool_,
+                             ComputePassDescriptorQueue& compute_pass_descriptor_queue_)
+    : ComputePass(device_, scheduler_, descriptor_pool_, BC_ENCODER_DESCRIPTOR_SET_BINDINGS,
+                  BC_ENCODER_DESCRIPTOR_UPDATE_TEMPLATE, ASTC_BANK_INFO,
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcEncoderPushConstants)>, BC_ENCODER_COMP_SPV),
+      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_} {}
+
+BcEncoderPass::~BcEncoderPass() = default;
+
+void BcEncoderPass::Encode(VkImageView source, u32 width, u32 height, u32 layers, bool bc3,
+                           VkBuffer buffer, VkDeviceSize buffer_offset, VkDeviceSize buffer_size,
+                           VkDeviceSize out_offset) {
+    scheduler.RequestOutsideRenderPassOperationContext();
+    compute_pass_descriptor_queue.Acquire(scheduler, 2);
+    compute_pass_descriptor_queue.AddImage(source);
+    compute_pass_descriptor_queue.AddBuffer(buffer, buffer_offset, buffer_size);
+    const void* const descriptor_data{compute_pass_descriptor_queue.UpdateData()};
+    const BcEncoderPushConstants uniforms{
+        .blocks_x = Common::DivCeil(width, 4U),
+        .blocks_y = Common::DivCeil(height, 4U),
+        .width = width,
+        .height = height,
+        .bc3 = bc3 ? 1U : 0U,
+        .out_offset = static_cast<u32>(out_offset / 8),
+    };
+    const VkPipeline vk_pipeline = *pipeline;
+    scheduler.Record([this, vk_pipeline, uniforms, layers,
+                      descriptor_data](vk::CommandBuffer cmdbuf) {
+        const VkDescriptorSet set = descriptor_allocator.Commit();
+        device.GetLogical().UpdateDescriptorSet(set, *descriptor_template, descriptor_data);
+        cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, vk_pipeline);
+        cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *layout, 0, set, {});
+        cmdbuf.PushConstants(*layout, VK_SHADER_STAGE_COMPUTE_BIT, uniforms);
+        cmdbuf.Dispatch(Common::DivCeil(uniforms.blocks_x, 8U),
+                        Common::DivCeil(uniforms.blocks_y, 8U), layers);
+    });
 }
 
 constexpr u32 BL3D_BINDING_INPUT_BUFFER  = 0;

@@ -19,6 +19,7 @@
 #include <cstring>
 #include <numeric>
 #include "common/bit_util.h"
+#include "common/div_ceil.h"
 #include "common/settings.h"
 
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -152,6 +153,25 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     return usage;
+}
+
+// ASTC that the GPU decodes and re-compresses to BC1/BC3 itself (TranscodeAstcToBcn), instead of
+// the CPU decoding and re-compressing it on the thread that prepares draws (which stalled draws
+// while a battle loaded its textures). 2D images and arrays only; the rest keep the CPU path.
+// EDEN_GPU_BCN_TRANSCODE=0 turns it off. From Eglantine 0d5534a288.
+[[nodiscard]] bool WillUseGpuBcnTranscode(const Device& device, const ImageInfo& info) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_GPU_BCN_TRANSCODE");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!enabled || !IsPixelFormatASTC(info.format) || device.IsOptimalAstcSupported() ||
+        info.type != ImageType::e2D || info.size.depth != 1) {
+        return false;
+    }
+    const auto recompression = Settings::EffectiveAstcRecompression();
+    return Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu &&
+           (recompression == Settings::AstcRecompression::Bc1 ||
+            recompression == Settings::AstcRecompression::Bc3);
 }
 
 [[nodiscard]] bool WillUseAcceleratedAstcDecode(const Device& device, const ImageInfo& info) {
@@ -955,6 +975,11 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
     if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu) {
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
+        if (Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Uncompressed) {
+            bc_encoder_pass.emplace(device, scheduler, descriptor_pool,
+                                    compute_pass_descriptor_queue);
+            LOG_INFO(Render_Vulkan, "ASTC textures are decoded and re-compressed on the GPU");
+        }
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
@@ -2014,6 +2039,32 @@ void TextureCacheRuntime::ReleaseMsaaScratchImage(VkImage image) {
 
 void TextureCacheRuntime::TickFrame() {
     static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
+    // Finished decode images wait for the next texture of their shape, up to this much memory.
+    static constexpr u64 MaxFreeTranscodeBytes = u64{256} << 20;
+    const auto decode_bytes = [](const PendingTranscode& t) {
+        u64 bytes{};
+        for (u32 level = 0; level < t.levels; ++level) {
+            bytes += u64{(std::max)(t.width >> level, 1U)} * (std::max)(t.height >> level, 1U) * 4;
+        }
+        return bytes * t.layers;
+    };
+    u64 free_bytes{};
+    for (const PendingTranscode& t : free_transcodes) {
+        free_bytes += decode_bytes(t);
+    }
+    while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {
+        PendingTranscode& done = pending_transcodes.front();
+        const u64 bytes = decode_bytes(done);
+        if (free_bytes + bytes <= MaxFreeTranscodeBytes) {
+            done.unused_frames = 0;
+            free_bytes += bytes;
+            free_transcodes.push_back(std::move(done));
+        }
+        pending_transcodes.pop_front();
+    }
+    std::erase_if(free_transcodes, [](PendingTranscode& t) {
+        return ++t.unused_frames > MAX_UNUSED_SCRATCH_FRAMES;
+    });
     std::erase_if(msaa_scratch_images, [this](MsaaScratchImage& scratch) {
         if (!scheduler.IsFree(scratch.tick)) {
             scratch.unused_frames = 0;
@@ -2036,7 +2087,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
     if (IsPixelFormatASTC(info.format) && !runtime->device.IsOptimalAstcSupported()) {
         switch (Settings::values.accelerate_astc.GetValue()) {
         case Settings::AstcDecodeMode::Gpu:
-            if (WillUseAcceleratedAstcDecode(runtime->device, info)) {
+            if (WillUseAcceleratedAstcDecode(runtime->device, info) ||
+                (runtime->bc_encoder_pass && WillUseGpuBcnTranscode(runtime->device, info))) {
                 flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
             }
             break;
@@ -3327,12 +3379,128 @@ VkRenderPass Framebuffer::RenderPassVariant(u32 color_clear_mask, bool depth_ste
     return variant;
 }
 
+void TextureCacheRuntime::TranscodeAstcToBcn(
+    Image& image, const StagingBufferRef& map,
+    std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    const ImageInfo& info = image.info;
+    const u32 width = info.size.width;
+    const u32 height = info.size.height;
+    const u32 levels = static_cast<u32>(info.resources.levels);
+    const u32 layers = static_cast<u32>(info.resources.layers);
+    constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    // A decode image of the same shape the GPU is done with: many textures share a few shapes,
+    // and making an image each time cost more than the decode.
+    const auto reusable = std::ranges::find_if(free_transcodes, [&](const PendingTranscode& t) {
+        return t.width == width && t.height == height && t.levels == levels && t.layers == layers;
+    });
+    PendingTranscode pending;
+    if (reusable != free_transcodes.end()) {
+        pending = std::move(*reusable);
+        free_transcodes.erase(reusable);
+    } else {
+        pending = PendingTranscode{
+            .tick = 0,
+            .image = memory_allocator.CreateImage(VkImageCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = DecodeFormat,
+                .extent = {width, height, 1},
+                .mipLevels = levels,
+                .arrayLayers = layers,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = 0,
+                .pQueueFamilyIndices = nullptr,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            }),
+            .views = {},
+            .width = width,
+            .height = height,
+            .levels = levels,
+            .layers = layers,
+            .unused_frames = 0,
+        };
+        for (u32 level = 0; level < levels; ++level) {
+            pending.views.push_back(
+                MakeStorageView(device.GetLogical(), level, *pending.image, DecodeFormat));
+        }
+    }
+    // A reused image was left in GENERAL by its last decode; its old contents are overwritten.
+    astc_decoder_pass->AssembleInto(
+        info, image.guest_size_bytes,
+        ASTCDecoderPass::Target{
+            .image = *pending.image,
+            .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .initialized = false,
+            .level_view = [&pending](s32 level) { return *pending.views[level]; },
+        },
+        map, swizzles);
+
+    // Encode every level into one buffer, then copy it into the image.
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    const u64 block_bytes = bc3 ? 16 : 8;
+    boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
+    u64 total = 0;
+    for (u32 level = 0; level < levels; ++level) {
+        const u32 level_width = (std::max)(width >> level, 1U);
+        const u32 level_height = (std::max)(height >> level, 1U);
+        const u32 blocks_x = Common::DivCeil(level_width, 4U);
+        const u32 blocks_y = Common::DivCeil(level_height, 4U);
+        const u64 size = u64{blocks_x} * blocks_y * layers * block_bytes;
+        copies.push_back({
+            .buffer_offset = total,
+            .buffer_size = size,
+            .buffer_row_length = blocks_x * 4,
+            .buffer_image_height = blocks_y * 4,
+            .image_subresource{
+                .base_level = static_cast<s32>(level),
+                .base_layer = 0,
+                .num_layers = static_cast<s32>(layers),
+            },
+            .image_offset{0, 0, 0},
+            .image_extent{level_width, level_height, 1},
+        });
+        total += size;
+    }
+    const auto output = staging_buffer_pool.Request(total, MemoryUsage::DeviceLocal);
+    for (u32 level = 0; level < levels; ++level) {
+        bc_encoder_pass->Encode(*pending.views[level], copies[level].image_extent.width,
+                                copies[level].image_extent.height, layers, bc3, output.buffer,
+                                output.offset, total, copies[level].buffer_offset);
+    }
+    scheduler.Record([](vk::CommandBuffer cmdbuf) {
+        const VkMemoryBarrier barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, barrier);
+    });
+    image.UploadMemory(output.buffer, output.offset, copies);
+    static bool logged_first = false;
+    if (!std::exchange(logged_first, true)) {
+        LOG_INFO(Render_Vulkan, "First ASTC texture re-compressed on the GPU: {}x{}, {} levels, {} layers, {}",
+                 width, height, levels, layers, bc3 ? "BC3" : "BC1");
+    }
+    pending.tick = scheduler.CurrentTick();
+    pending_transcodes.push_back(std::move(pending));
+}
+
 void TextureCacheRuntime::AccelerateImageUpload(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles,
     u32 z_start, u32 z_count) {
 
     if (IsPixelFormatASTC(image.info.format)) {
+        if (bc_encoder_pass && WillUseGpuBcnTranscode(device, image.info)) {
+            return TranscodeAstcToBcn(image, map, swizzles);
+        }
         return astc_decoder_pass->Assemble(image, map, swizzles);
     }
 
