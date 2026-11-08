@@ -13,13 +13,6 @@ namespace Service::AM {
 Result CreateGraphicsSession(Core::System& system, HLERequestContext& ctx,
                              std::shared_ptr<SessionRequestHandler> handler,
                              Kernel::KClientSession** out_client) {
-    R_RETURN(CreateGraphicsSession(system, ctx.GetManager()->GetServerManager(), std::move(handler),
-                                   out_client));
-}
-
-Result CreateGraphicsSession(Core::System& system, ServerManager& server,
-                             std::shared_ptr<SessionRequestHandler> handler,
-                             Kernel::KClientSession** out_client) {
     auto& kernel = system.Kernel();
     Kernel::KScopedResourceReservation reservation(
         kernel, Kernel::GetCurrentProcessPointer(kernel), Kernel::LimitableResource::SessionCountMax);
@@ -29,6 +22,7 @@ Result CreateGraphicsSession(Core::System& system, ServerManager& server,
     session->Initialize(kernel, nullptr, 0);
     reservation.Commit();
     Kernel::KSession::Register(kernel, session);
+    auto& server = ctx.GetManager()->GetServerManager();
     auto manager = std::make_shared<SessionRequestManager>(kernel, server);
     manager->SetSessionHandler(std::move(handler));
     R_TRY(server.RegisterSession(&session->GetServerSession(), std::move(manager)));
