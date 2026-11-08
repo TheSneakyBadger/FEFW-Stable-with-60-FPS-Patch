@@ -1695,11 +1695,22 @@ void Device::CollectPhysicalMemoryInfo() {
         const u64 reserve_memory = std::min<u64>(device_access_memory / 8, 1_GiB);
         device_access_memory -= reserve_memory;
         if (Settings::values.vram_usage_mode.GetValue() != Settings::VramUsageMode::Aggressive) {
-            // Account for resolution scaling in memory limits
+            // Conservative: three quarters of the card, and never less than the old limit (6 GB,
+            // plus 1 GB per resolution step), which capped every card from 8 GB up at about 7 GB.
+            // The free quarter keeps the driver from paging when other programs take video memory,
+            // which Aggressive (the whole budget less 1 GB) ran into.
             const size_t normal_memory = 6_GiB;
             const size_t scaler_memory = 1_GiB * Settings::values.resolution_info.ScaleUp(1);
-            device_access_memory = std::min<u64>(device_access_memory, normal_memory + scaler_memory);
+            const u64 old_limit = normal_memory + scaler_memory;
+            const u64 three_quarters = local_memory / 4 * 3;
+            device_access_memory =
+                std::min<u64>(device_access_memory, std::max<u64>(old_limit, three_quarters));
         }
+        LOG_INFO(Render_Vulkan, "Video memory: {} MiB of {} MiB may be used ({})",
+                 device_access_memory >> 20, local_memory >> 20,
+                 Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive
+                     ? "Aggressive"
+                     : "Conservative");
     }
     // Chooses what ASTC textures become for this boot (astc_recompression: Auto), from the card's
     // own memory, before the texture cache makes any.
