@@ -1948,6 +1948,10 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         return;
     }
 
+    // The window layout was computed before the game loaded; redo it now that it is known
+    // whether the ultrawide patch applied (Settings::values.fefw_ultrawide_active).
+    render_window->OnFramebufferSizeChanged();
+
     QtCommon::system->SetShuttingDown(false);
     game_list->setDisabled(true);
 

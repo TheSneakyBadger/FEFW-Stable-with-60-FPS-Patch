@@ -414,6 +414,7 @@ struct System::Impl {
 
         // Reset per-game flags
         Settings::values.use_squashed_iterated_blend = false;
+        Settings::values.fefw_ultrawide_active = false;
 
         is_powered_on = false;
         exit_locked = false;
