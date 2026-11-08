@@ -201,8 +201,16 @@ public:
         u32 levels;
         u32 layers;
         u32 unused_frames;
+        u64 bytes; ///< Size of the decode image (all levels and layers, RGBA8).
     };
     std::deque<PendingTranscode> pending_transcodes;
+    u64 pending_transcode_bytes = 0;
+    u64 free_transcode_bytes = 0;
+    /// Video memory the decode images in flight, and the free ones, may each use.
+    [[nodiscard]] u64 TranscodeMemoryCap() const;
+    /// Moves decode images the GPU is done with to the free list (waiting for the oldest first
+    /// when asked), freeing those over the cap.
+    void RecycleTranscodes(bool wait_for_oldest);
     /// Decode images the GPU is done with, for the next texture of the same shape.
     std::vector<PendingTranscode> free_transcodes;
 

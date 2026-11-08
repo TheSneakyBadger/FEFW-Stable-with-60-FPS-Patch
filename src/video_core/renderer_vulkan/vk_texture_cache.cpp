@@ -2034,31 +2034,13 @@ void TextureCacheRuntime::ReleaseMsaaScratchImage(VkImage image) {
 
 void TextureCacheRuntime::TickFrame() {
     static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
-    // Finished decode images wait for the next texture of their shape, up to this much memory.
-    static constexpr u64 MaxFreeTranscodeBytes = u64{256} << 20;
-    const auto decode_bytes = [](const PendingTranscode& t) {
-        u64 bytes{};
-        for (u32 level = 0; level < t.levels; ++level) {
-            bytes += u64{(std::max)(t.width >> level, 1U)} * (std::max)(t.height >> level, 1U) * 4;
+    RecycleTranscodes(false);
+    std::erase_if(free_transcodes, [this](PendingTranscode& t) {
+        if (++t.unused_frames > MAX_UNUSED_SCRATCH_FRAMES) {
+            free_transcode_bytes -= t.bytes;
+            return true;
         }
-        return bytes * t.layers;
-    };
-    u64 free_bytes{};
-    for (const PendingTranscode& t : free_transcodes) {
-        free_bytes += decode_bytes(t);
-    }
-    while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {
-        PendingTranscode& done = pending_transcodes.front();
-        const u64 bytes = decode_bytes(done);
-        if (free_bytes + bytes <= MaxFreeTranscodeBytes) {
-            done.unused_frames = 0;
-            free_bytes += bytes;
-            free_transcodes.push_back(std::move(done));
-        }
-        pending_transcodes.pop_front();
-    }
-    std::erase_if(free_transcodes, [](PendingTranscode& t) {
-        return ++t.unused_frames > MAX_UNUSED_SCRATCH_FRAMES;
+        return false;
     });
     std::erase_if(msaa_scratch_images, [this](MsaaScratchImage& scratch) {
         if (!scheduler.IsFree(scratch.tick)) {
@@ -3374,6 +3356,32 @@ VkRenderPass Framebuffer::RenderPassVariant(u32 color_clear_mask, bool depth_ste
     return variant;
 }
 
+u64 TextureCacheRuntime::TranscodeMemoryCap() const {
+    // Temporary decode images, in flight and kept for reuse, may take up to this much video
+    // memory together: a 64th of the card, 64-256 MiB (128 MiB on an 8 GB card).
+    const u64 local = device.GetDeviceLocalMemory();
+    return std::clamp<u64>(local / 64, u64{64} << 20, u64{256} << 20);
+}
+
+void TextureCacheRuntime::RecycleTranscodes(bool wait_for_oldest) {
+    // A decode image the GPU is done with goes back to the free list for the next texture of its
+    // shape (up to the cap), or is destroyed.
+    if (wait_for_oldest && !pending_transcodes.empty()) {
+        scheduler.Wait(pending_transcodes.front().tick);
+    }
+    const u64 cap = TranscodeMemoryCap();
+    while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {
+        PendingTranscode& done = pending_transcodes.front();
+        pending_transcode_bytes -= done.bytes;
+        if (free_transcode_bytes + done.bytes <= cap) {
+            done.unused_frames = 0;
+            free_transcode_bytes += done.bytes;
+            free_transcodes.push_back(std::move(done));
+        }
+        pending_transcodes.pop_front();
+    }
+}
+
 void TextureCacheRuntime::TranscodeAstcToBcn(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles) {
@@ -3385,13 +3393,61 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
     // A decode image of the same shape the GPU is done with: many textures share a few shapes,
     // and making an image each time cost more than the decode.
-    const auto reusable = std::ranges::find_if(free_transcodes, [&](const PendingTranscode& t) {
-        return t.width == width && t.height == height && t.levels == levels && t.layers == layers;
-    });
+    u64 bytes{};
+    for (u32 level = 0; level < levels; ++level) {
+        bytes += u64{(std::max)(width >> level, 1U)} * (std::max)(height >> level, 1U) * 4;
+    }
+    bytes *= layers;
+    const auto find_reusable = [&] {
+        return std::ranges::find_if(free_transcodes, [&](const PendingTranscode& t) {
+            return t.width == width && t.height == height && t.levels == levels &&
+                   t.layers == layers;
+        });
+    };
+    if (find_reusable() == free_transcodes.end()) {
+        // When a scene loads many textures at once, each needs its own decode image until the GPU
+        // has encoded it. Unbounded, a burst at nightfall on an 8 GB card took 757 MB past the
+        // driver's budget into system memory, and the game ran at 2 FPS for minutes. Over the cap,
+        // free the idle decode images, then wait for the oldest decodes to finish and reuse or
+        // free theirs.
+        const u64 cap = TranscodeMemoryCap();
+        while (pending_transcode_bytes + free_transcode_bytes + bytes > cap) {
+            if (free_transcode_bytes > 0) {
+                free_transcodes.clear();
+                free_transcode_bytes = 0;
+                continue;
+            }
+            // Only wait for work already submitted. The newest decodes can still be in the
+            // command buffer being recorded, together with this texture's staging upload (map),
+            // whose tick is the current one: waiting there would flush and retire that tick
+            // before this decode is recorded, so the staging pool could hand map out again (or
+            // free it) while the GPU still reads it. Go over the cap for this texture instead.
+            if (pending_transcodes.empty() ||
+                pending_transcodes.front().tick >= scheduler.CurrentTick()) {
+                break;
+            }
+            static u32 waits_logged = 0;
+            if (waits_logged < 20) {
+                ++waits_logged;
+                LOG_INFO(Render_Vulkan,
+                         "ASTC re-compression waited for the GPU: {} MiB of decode images in "
+                         "flight, limit {} MiB",
+                         pending_transcode_bytes >> 20, cap >> 20);
+            }
+            RecycleTranscodes(true);
+            if (find_reusable() != free_transcodes.end()) {
+                break;
+            }
+        }
+    }
+    // Looked up again here: clearing or adding to free_transcodes above invalidates iterators
+    // into it (v1.6.1's first build kept one across a clear and crashed on loading screens).
+    const auto reusable = find_reusable();
     PendingTranscode pending;
     if (reusable != free_transcodes.end()) {
         pending = std::move(*reusable);
         free_transcodes.erase(reusable);
+        free_transcode_bytes -= pending.bytes;
     } else {
         pending = PendingTranscode{
             .tick = 0,
@@ -3418,6 +3474,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
             .levels = levels,
             .layers = layers,
             .unused_frames = 0,
+            .bytes = bytes,
         };
         for (u32 level = 0; level < levels; ++level) {
             pending.views.push_back(
@@ -3484,6 +3541,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                  width, height, levels, layers, bc3 ? "BC3" : "BC1");
     }
     pending.tick = scheduler.CurrentTick();
+    pending_transcode_bytes += pending.bytes;
     pending_transcodes.push_back(std::move(pending));
 }
 
