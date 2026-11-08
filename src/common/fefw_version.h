@@ -6,9 +6,9 @@
 namespace Common {
 
 /// Fortune's Eden's release, shown in the window title and written at the top of the log.
-inline constexpr const char* FefwVersion = "v1.6.2 test 1";
+inline constexpr const char* FefwVersion = "v1.6.2 test 2";
 
-/// The window title: "Fortune's Eden v1.6.2 test 1".
-inline constexpr const char* FefwTitle = "Fortune's Eden v1.6.2 test 1";
+/// The window title: "Fortune's Eden v1.6.2 test 2".
+inline constexpr const char* FefwTitle = "Fortune's Eden v1.6.2 test 2";
 
 } // namespace Common

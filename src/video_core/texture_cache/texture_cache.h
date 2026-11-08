@@ -999,7 +999,7 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
             if (inputs != last_inputs && logged < 200) {
                 ++logged;
                 last_inputs = inputs;
-                LOG_INFO(Render_Vulkan, "NVIDIA DLSS inputs: {}", inputs);
+                LOG_INFO(Render_Vulkan, "DLSS replacement inputs: {}", inputs);
             }
         }
         if (!src_id || !dst_id || !motion_id || !depth_id) {
