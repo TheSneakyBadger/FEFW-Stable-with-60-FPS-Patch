@@ -1068,11 +1068,15 @@ void ConstantPropagation(Environment& env, IR::Block& block, IR::Inst& inst) {
         return;
     case IR::Opcode::BitFieldInsert:
         FoldWhenAllImmediates(inst, [](u32 base, u32 insert, u32 offset, u32 bits) {
-            if (bits >= 32 || offset >= 32) {
-                throw LogicError("Undefined result in {}({}, {}, {}, {})",
-                                 IR::Opcode::BitFieldInsert, base, insert, offset, bits);
+            // Like OpBitFieldInsert, only the low `bits` bits of insert are inserted. A count of
+            // 32 (BFI with count 32 and offset 0) inserts the whole value, and an offset of 32 or
+            // more inserts nothing (BFI selects the base for it). Bits shifted past bit 31 are
+            // dropped. Every shift stays below 32.
+            if (offset >= 32) {
+                return base;
             }
-            return (base & ~(~(~0u << bits) << offset)) | (insert << offset);
+            const u32 mask{bits >= 32 ? ~0U : (1U << bits) - 1U};
+            return (base & ~(mask << offset)) | ((insert & mask) << offset);
         });
         return;
     case IR::Opcode::CompositeExtractU32x2:
