@@ -521,10 +521,16 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
     for (const auto& subdir : patch_dirs) {
         if (std::find(disabled.cbegin(), disabled.cend(), subdir->GetName()) == disabled.cend()) {
             if (auto cheats_dir = FindSubdirectoryCaseless(subdir, "cheats"); cheats_dir != nullptr) {
-                if (auto const res = ReadCheatFileFromFolder(title_id, build_id_, cheats_dir, true))
+                // Upper-case name first, then lower-case, but not both: Windows finds the same
+                // file either way, and loading it twice ran every cheat twice per frame (button
+                // toggles flipped back, and the opcode limit was hit at half the real size).
+                auto res = ReadCheatFileFromFolder(title_id, build_id_, cheats_dir, true);
+                if (!res) {
+                    res = ReadCheatFileFromFolder(title_id, build_id_, cheats_dir, false);
+                }
+                if (res) {
                     std::copy(res->begin(), res->end(), std::back_inserter(out));
-                if (auto const res = ReadCheatFileFromFolder(title_id, build_id_, cheats_dir, false))
-                    std::copy(res->begin(), res->end(), std::back_inserter(out));
+                }
             }
         }
     }
