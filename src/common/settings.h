@@ -954,6 +954,9 @@ struct Values {
 
     // Per-game overrides
     bool use_squashed_iterated_blend;
+    // Set when the built-in ultrawide patch was actually applied to the running game (the
+    // fefw_ultrawide setting alone does not mean it was: it fits only one game build).
+    bool fefw_ultrawide_active = false;
 
 };
 

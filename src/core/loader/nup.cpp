@@ -200,23 +200,24 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
     }
     secondary_loader = std::make_unique<AppLoader_DeconstructedRomDirectory>(exefs, true);
 
-    if (update_index) {
-        const auto& update = nup->GetPackages()[*update_index];
-        display_version = update.display_version.empty() ? DecodeVersion(update.version)
-                                                         : update.display_version;
-    } else {
-        display_version = program.display_version.empty() ? DecodeVersion(program.version)
-                                                          : program.display_version;
-    }
+    const auto& version_package = nup->GetPackages()[update_index ? *update_index : *program_index];
+    display_version = version_package.display_version;
     if (display_version.empty()) {
         // The container names no version (e.g. made without its metadata): the package's own
-        // control data, else a known build of the program. Otherwise the game's menu shows 1.0.0.
+        // control data, else a known build of the program, else the numeric version. The numeric
+        // one comes last because it may be a Nintendo title version (65536 is the first update),
+        // which would read as 1.0.0. Otherwise the game's menu shows 1.0.0.
         const std::size_t version_index = update_index ? *update_index : *program_index;
         display_version = VersionFromPackageNacp(nup->GetPackageDir(version_index));
         const char* source = "its control data";
         if (display_version.empty()) {
             display_version = VersionFromKnownBuild(exefs);
             source = "the program's build ID";
+        }
+        if (display_version.empty() && (version_package.version & 0xFFFF) != 0) {
+            // A multiple of 0x10000 is ambiguous (title version N or major.0.0), so skip it.
+            display_version = DecodeVersion(version_package.version);
+            source = "its version number";
         }
         if (!display_version.empty()) {
             LOG_INFO(Loader, "NUP container names no version; version {} from {}", display_version,

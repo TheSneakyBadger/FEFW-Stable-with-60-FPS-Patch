@@ -26,9 +26,10 @@ static Common::Rectangle<u32> MaxRectangle(Common::Rectangle<u32> window_area, f
 FramebufferLayout DefaultFrameLayout(u32 width, u32 height) noexcept {
     ASSERT(width > 0 && height > 0);
     auto const window_aspect_ratio = float(height) / float(width);
-    // The ultrawide patch draws for a 43:18 screen, so its picture fills the window.
+    // The ultrawide patch draws for a 43:18 screen, so its picture fills the window. Only when
+    // the patch was applied: with the setting on, other game builds still draw 16:9.
     auto const emulation_aspect_ratio = EmulationAspectRatio(
-        Settings::values.fefw_ultrawide.GetValue() ? Settings::AspectRatio::Stretch
+        Settings::values.fefw_ultrawide_active ? Settings::AspectRatio::Stretch
                                                    : Settings::values.aspect_ratio.GetValue(),
         window_aspect_ratio);
     Common::Rectangle<u32> const screen_window_area{0, 0, width, height};

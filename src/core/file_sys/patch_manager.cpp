@@ -453,6 +453,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), patch);
         if (patched != nullptr) {
             out = patched->ReadAllBytes();
+            Settings::values.fefw_ultrawide_active = true;
         } else {
             LOG_ERROR(Loader, "    - The built-in ultrawide patch could not be applied");
         }

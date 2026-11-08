@@ -5,9 +5,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include "common/assert.h"
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "common/string_util.h"
 #include "common/swap.h"
 #include "core/file_sys/fsmitm_romfsbuild.h"
@@ -63,10 +66,17 @@ struct RomFSTraversalContext {
     VirtualFile file;
     std::vector<u8> directory_meta;
     std::vector<u8> file_meta;
+    // Entries left to visit: a corrupt image whose sibling/child links form a cycle would
+    // otherwise be walked forever.
+    size_t entries_left;
 };
 
+// Deeper than any real RomFS; bounds the recursion on corrupt images.
+constexpr size_t MaxDirectoryDepth = 256;
+
 template <typename EntryType, auto Member>
-std::pair<EntryType, std::string> GetEntry(const RomFSTraversalContext& ctx, size_t offset) {
+std::optional<std::pair<EntryType, std::string>> GetEntry(const RomFSTraversalContext& ctx,
+                                                          size_t offset) {
     const size_t entry_end = offset + sizeof(EntryType);
     const std::vector<u8>& vec = ctx.*Member;
     const size_t size = vec.size();
@@ -74,30 +84,37 @@ std::pair<EntryType, std::string> GetEntry(const RomFSTraversalContext& ctx, siz
     EntryType entry{};
 
     if (entry_end > size) {
-        return {};
+        return std::nullopt;
     }
     std::memcpy(&entry, data + offset, sizeof(EntryType));
 
     const size_t name_length = (std::min)(entry_end + entry.name_length, size) - entry_end;
     std::string name(reinterpret_cast<const char*>(data + entry_end), name_length);
 
-    return {entry, std::move(name)};
+    return std::make_pair(entry, std::move(name));
 }
 
-std::pair<DirectoryEntry, std::string> GetDirectoryEntry(const RomFSTraversalContext& ctx,
-                                                         size_t directory_offset) {
+std::optional<std::pair<DirectoryEntry, std::string>> GetDirectoryEntry(
+    const RomFSTraversalContext& ctx, size_t directory_offset) {
     return GetEntry<DirectoryEntry, &RomFSTraversalContext::directory_meta>(ctx, directory_offset);
 }
 
-std::pair<FileEntry, std::string> GetFileEntry(const RomFSTraversalContext& ctx,
-                                               size_t file_offset) {
+std::optional<std::pair<FileEntry, std::string>> GetFileEntry(const RomFSTraversalContext& ctx,
+                                                              size_t file_offset) {
     return GetEntry<FileEntry, &RomFSTraversalContext::file_meta>(ctx, file_offset);
 }
 
-void ProcessFile(const RomFSTraversalContext& ctx, u32 this_file_offset,
+void ProcessFile(RomFSTraversalContext& ctx, u32 this_file_offset,
                  std::shared_ptr<VectorVfsDirectory>& parent) {
     while (this_file_offset != ROMFS_ENTRY_EMPTY) {
-        auto entry = GetFileEntry(ctx, this_file_offset);
+        auto found = GetFileEntry(ctx, this_file_offset);
+        if (!found || ctx.entries_left == 0) {
+            LOG_ERROR(Service_FS, "RomFS file table is corrupt, stopping at offset {:#x}",
+                      this_file_offset);
+            return;
+        }
+        --ctx.entries_left;
+        auto& entry = *found;
 
         parent->AddFile(std::make_shared<OffsetVfsFile>(ctx.file, entry.first.size,
                                                         entry.first.offset + ctx.header.data_offset,
@@ -107,10 +124,17 @@ void ProcessFile(const RomFSTraversalContext& ctx, u32 this_file_offset,
     }
 }
 
-void ProcessDirectory(const RomFSTraversalContext& ctx, u32 this_dir_offset,
-                      std::shared_ptr<VectorVfsDirectory>& parent) {
+void ProcessDirectory(RomFSTraversalContext& ctx, u32 this_dir_offset,
+                      std::shared_ptr<VectorVfsDirectory>& parent, size_t depth = 0) {
     while (this_dir_offset != ROMFS_ENTRY_EMPTY) {
-        auto entry = GetDirectoryEntry(ctx, this_dir_offset);
+        auto found = GetDirectoryEntry(ctx, this_dir_offset);
+        if (!found || ctx.entries_left == 0 || depth >= MaxDirectoryDepth) {
+            LOG_ERROR(Service_FS, "RomFS directory table is corrupt, stopping at offset {:#x}",
+                      this_dir_offset);
+            return;
+        }
+        --ctx.entries_left;
+        auto& entry = *found;
         auto current = std::make_shared<VectorVfsDirectory>(
             std::vector<VirtualFile>{}, std::vector<VirtualDir>{}, entry.second);
 
@@ -119,7 +143,7 @@ void ProcessDirectory(const RomFSTraversalContext& ctx, u32 this_dir_offset,
         }
 
         if (entry.first.child_dir != ROMFS_ENTRY_EMPTY) {
-            ProcessDirectory(ctx, entry.first.child_dir, current);
+            ProcessDirectory(ctx, entry.first.child_dir, current, depth + 1);
         }
 
         parent->AddDirectory(current);
@@ -144,10 +168,22 @@ VirtualDir ExtractRomFS(VirtualFile file) {
         return nullptr;
     }
 
+    // A truncated or corrupt image can name tables far past its end; don't allocate for them.
+    const u64 file_size = file->GetSize();
+    const auto table_fits = [file_size](const TableLocation& table) {
+        return table.offset <= file_size && table.size <= file_size - table.offset;
+    };
+    if (!table_fits(ctx.header.directory_meta) || !table_fits(ctx.header.file_meta)) {
+        LOG_ERROR(Service_FS, "RomFS tables lie outside the image");
+        return nullptr;
+    }
+
     ctx.file = file;
     ctx.directory_meta =
         file->ReadBytes(ctx.header.directory_meta.size, ctx.header.directory_meta.offset);
     ctx.file_meta = file->ReadBytes(ctx.header.file_meta.size, ctx.header.file_meta.offset);
+    ctx.entries_left = ctx.directory_meta.size() / sizeof(DirectoryEntry) +
+                       ctx.file_meta.size() / sizeof(FileEntry);
 
     ProcessDirectory(ctx, 0, root_container);
 

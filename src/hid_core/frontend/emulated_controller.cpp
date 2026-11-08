@@ -1245,6 +1245,7 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
         return Settings::values.vibration_enabled.GetValue();
     }
 
+    const VibrationValue previous_vibration = last_vibration_value[index];
     last_vibration_value[index] = vibration;
 
     if (!Settings::values.vibration_enabled) {
@@ -1269,6 +1270,9 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
         // Filter out non-zero vibrations that are within 15ms of each other.
         if ((vibration.low_amplitude != 0.0f || vibration.high_amplitude != 0.0f) &&
             duration_cast<milliseconds>(now - last_vibration_timepoint[index]) < milliseconds(15)) {
+            // Not sent: keep the last sent value, so the same request is not skipped as a
+            // duplicate once the filter would let it through.
+            last_vibration_value[index] = previous_vibration;
             return false;
         }
 

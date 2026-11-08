@@ -484,6 +484,7 @@ void RestoreGlobalState(bool is_powered_on) {
 
     // Reset per-game flags
     values.use_squashed_iterated_blend = false;
+    values.fefw_ultrawide_active = false;
 }
 
 static bool configuring_global = true;

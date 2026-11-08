@@ -36,6 +36,11 @@ constexpr u8 CodecRaw = 0;
 constexpr u8 CodecZstd = 1;
 constexpr u8 PackageFlagStandaloneUpdate = 0x01;
 constexpr u32 MaxDirDepth = 128;
+// Limits far above any real container, so a corrupt header cannot make the loader allocate
+// gigabytes or expand a shared directory graph exponentially.
+constexpr u64 MaxTocSize = 256ULL << 20;
+constexpr u32 MaxMetaSize = 64U << 20;
+constexpr u64 MaxExpandedNodes = 1ULL << 24;
 
 #pragma pack(push, 1)
 struct Superblock {
@@ -398,7 +403,7 @@ bool NupContainer::Parse() {
     file_size = super.file_size;
     if (file_size != file->GetSize() || toc_offset < SuperblockSize || blob_offset > file_size ||
         toc_offset > blob_offset || toc_size > blob_offset - toc_offset ||
-        blob_offset % 0x10 != 0) {
+        toc_size > MaxTocSize || blob_offset % 0x10 != 0) {
         status = Loader::ResultStatus::ErrorNUPBadFormat;
         return false;
     }
@@ -468,8 +473,8 @@ bool NupContainer::Parse() {
         package.root_dir = record.root_dir;
         package.exefs_dir = record.exefs_dir;
         package.romfs_dir = record.romfs_dir;
-        if (record.meta_size > 0 && record.meta_offset != 0 && record.meta_offset <= file_size &&
-            record.meta_size <= file_size - record.meta_offset) {
+        if (record.meta_size > 0 && record.meta_size <= MaxMetaSize && record.meta_offset != 0 &&
+            record.meta_offset <= file_size && record.meta_size <= file_size - record.meta_offset) {
             package.meta_offset = record.meta_offset;
             package.meta_size = record.meta_size;
         }
@@ -550,6 +555,17 @@ bool NupContainer::ValidateDirTree() const {
     };
     std::vector<u8> state(dirs.size(), Unvisited);
     std::vector<u32> height(dirs.size(), 0);
+    // Nodes BuildDirTree creates for each directory: a directory shared by several parents is
+    // built once per parent, so a chain of shared directories grows exponentially.
+    std::vector<u64> expanded(dirs.size(), 1);
+    const auto add_expanded = [&expanded](u32 dir, u64 count) {
+        expanded[dir] += count;
+        if (expanded[dir] > MaxExpandedNodes) {
+            LOG_ERROR(Loader, "NUP directory tree expands to too many entries");
+            return false;
+        }
+        return true;
+    };
     std::vector<Frame> stack;
     for (u32 start = 0; start < dirs.size(); ++start) {
         if (state[start] != Unvisited) {
@@ -566,12 +582,18 @@ bool NupContainer::ValidateDirTree() const {
                 if (!stack.empty()) {
                     u32& parent_height = height[stack.back().dir];
                     parent_height = std::max(parent_height, height[frame.dir] + 1);
+                    if (!add_expanded(stack.back().dir, expanded[frame.dir])) {
+                        return false;
+                    }
                 }
                 continue;
             }
             ++stack.back().next;
             const u32 child = children[static_cast<std::size_t>(node.first_child) + frame.next];
             if (child >= dirs.size()) {
+                if (!add_expanded(frame.dir, 1)) {
+                    return false;
+                }
                 continue;
             }
             if (state[child] == InProgress) {
@@ -580,6 +602,9 @@ bool NupContainer::ValidateDirTree() const {
             }
             if (state[child] == Done) {
                 height[frame.dir] = std::max(height[frame.dir], height[child] + 1);
+                if (!add_expanded(frame.dir, expanded[child])) {
+                    return false;
+                }
             } else {
                 state[child] = InProgress;
                 stack.push_back({child, 0});
