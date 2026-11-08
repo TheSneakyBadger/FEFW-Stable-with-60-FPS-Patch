@@ -115,6 +115,14 @@ void MigrateTitleZeroSave(const VirtualDir& dir, ProgramId program_id, SaveDataS
         LOG_ERROR(Service_FS, "Could not copy the loose-file save {} to {}", old_path, new_path);
         return;
     }
+    // Keep the size the empty folder was given if the old save never had one.
+    if (existing != nullptr && old_dir->GetFile(GetSaveDataSizeFileName()) == nullptr) {
+        if (const auto size_file = existing->GetFile(GetSaveDataSizeFileName())) {
+            if (const auto copy = temp_dir->CreateFile(GetSaveDataSizeFileName())) {
+                VfsRawCopy(size_file, copy);
+            }
+        }
+    }
     if (existing != nullptr && !parent_dir->DeleteSubdirectoryRecursive(leaf)) {
         parent_dir->DeleteSubdirectoryRecursive(temp_name);
         LOG_ERROR(Service_FS, "Could not replace the empty save folder {}", new_path);

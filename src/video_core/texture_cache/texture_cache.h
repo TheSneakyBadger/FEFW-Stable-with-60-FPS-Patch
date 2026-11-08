@@ -157,15 +157,17 @@ void TextureCache<P>::RunGarbageCollector() {
             return;
         }
         size_t total_size_bytes = 0;
+        // Each image starts 64-byte aligned: copy offsets must be multiples of 4 and of the
+        // texel block size.
         for (const ImageId image_id : writebacks) {
-            total_size_bytes += slot_images[image_id].unswizzled_size_bytes;
+            total_size_bytes += Common::AlignUp(slot_images[image_id].unswizzled_size_bytes, 64);
         }
         auto map = runtime.DownloadStagingBuffer(total_size_bytes);
         const size_t original_offset = map.offset;
         for (const ImageId image_id : writebacks) {
             Image& image = slot_images[image_id];
             image.DownloadMemory(map, FullDownloadCopies(image.info));
-            map.offset += image.unswizzled_size_bytes;
+            map.offset += Common::AlignUp(image.unswizzled_size_bytes, 64);
         }
         runtime.Finish();
         map.offset = original_offset;
@@ -174,7 +176,8 @@ void TextureCache<P>::RunGarbageCollector() {
             const ImageBase& image = slot_images[image_id];
             SwizzleImage(*gpu_memory, image.gpu_addr, image.info, FullDownloadCopies(image.info),
                          span, swizzle_data_buffer);
-            span = span.subspan(image.unswizzled_size_bytes);
+            span = span.subspan((std::min<size_t>)(span.size(),
+                                           Common::AlignUp(image.unswizzled_size_bytes, 64)));
         }
         for (const ImageId image_id : writebacks) {
             DeleteImage(image_id, slot_images[image_id].scale_tick > frame_tick + 5);
@@ -2644,10 +2647,6 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     const u64 freed_bytes = ImageMemoryEstimate(image);
     total_used_memory -= (std::min)(freed_bytes, total_used_memory);
-    if (!immediate_delete) {
-        // Freed only when sentenced_images lets go of it, TICKS_TO_DESTROY frames from now.
-        sentenced_bytes[sentenced_bytes_index] += freed_bytes;
-    }
     const GPUVAddr gpu_addr = image.gpu_addr;
     const auto alloc_it = image_allocs_table.find(gpu_addr);
     if (alloc_it == image_allocs_table.end()) {
@@ -2713,6 +2712,8 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         LOG_INFO(Render_Vulkan, "Retained image for queued download: id={}", image_id.Value());
     } else if (!immediate_delete) {
         sentenced_images.Push(std::move(slot_images[image_id]));
+        // Freed only when sentenced_images lets go of it, TICKS_TO_DESTROY frames from now.
+        sentenced_bytes[sentenced_bytes_index] += freed_bytes;
     }
     slot_images.erase(image_id);
 

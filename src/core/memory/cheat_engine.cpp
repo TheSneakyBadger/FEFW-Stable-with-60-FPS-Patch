@@ -114,7 +114,10 @@ void StandardVmCallbacks::MemoryWriteUnsafe(VAddr address, const void* data, u64
         return;
     }
 
-    if (process->GetMemory().WriteBlock(address, data, size) && IsExecutable(process, address, size)) {
+    // With one emulated core this runs inside a core-timing callback on the guest thread, where
+    // waiting for the page-table lock (held by a service thread) could hang: always flush there.
+    if (process->GetMemory().WriteBlock(address, data, size) &&
+        (!system.IsMulticore() || IsExecutable(process, address, size))) {
         Core::InvalidateInstructionCacheRange(process, address, size);
     }
 }
