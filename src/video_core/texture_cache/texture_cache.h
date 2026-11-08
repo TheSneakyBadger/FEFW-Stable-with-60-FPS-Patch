@@ -351,7 +351,10 @@ void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compu
         // A pass that deletes images is repeated, so the memo only lives for one pass.
         memo.Reset();
         for (ImageViewInOut& view : views) {
-            if (const ImageViewId* const known = memo.Find(view.index)) {
+            // Once a lookup has deleted images, ids remembered earlier in the pass may have been
+            // erased: look every later element up again (the pass is then repeated anyway).
+            const ImageViewId* const known = has_deleted_images ? nullptr : memo.Find(view.index);
+            if (known) {
                 view.id = *known;
             } else {
                 view.id = VisitImageView(view.index, compute);
