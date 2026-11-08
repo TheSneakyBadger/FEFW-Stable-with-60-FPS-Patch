@@ -252,7 +252,9 @@ void DecodeFromWaveBuffers(Core::Memory::Memory& memory, const DecodeFromWaveBuf
     u32 offset{voice_state.offset};
 
     auto output_buffer = args.output;
-    std::array<s16, TempBufferSize> temp_buffer{};
+    // Not zeroed here (32 KB per voice channel every 5 ms): the part the resampler reads past the
+    // decoded samples is zeroed below, before it is used.
+    std::array<s16, TempBufferSize> temp_buffer;
 
     while (remaining_sample_count > 0) {
         const auto samples_to_write{(std::min)(remaining_sample_count, max_remaining_sample_count)};
