@@ -431,6 +431,9 @@ private:
     /// Delete image from the cache
     void DeleteImage(ImageId image, bool immediate_delete = false);
 
+    /// The video memory an image is counted as using (what DeleteImage gives back).
+    [[nodiscard]] u64 ImageMemoryEstimate(const ImageBase& image);
+
     /// Remove image views references from the cache
     void RemoveImageViewReferences(std::span<const ImageViewId> removed_views);
 

@@ -144,8 +144,47 @@ void TextureCache<P>::RunGarbageCollector() {
         was_high_priority = was_high_priority || high_priority_mode;
         was_aggressive = was_aggressive || aggressive_mode;
     };
+    // Images that must be written back to guest memory first. They are unregistered as they are
+    // picked and written back together after each walk: one GPU wait for all of them instead of
+    // one per image (a pass could wait up to 40 times, 20-90 ms).
+    boost::container::small_vector<ImageId, 16> writebacks;
+    u64 writeback_bytes = 0;
+    const auto UsedMemory = [this, &writeback_bytes] {
+        return total_used_memory - (std::min)(writeback_bytes, total_used_memory);
+    };
+    const auto FlushWritebacks = [&] {
+        if (writebacks.empty()) {
+            return;
+        }
+        size_t total_size_bytes = 0;
+        for (const ImageId image_id : writebacks) {
+            total_size_bytes += slot_images[image_id].unswizzled_size_bytes;
+        }
+        auto map = runtime.DownloadStagingBuffer(total_size_bytes);
+        const size_t original_offset = map.offset;
+        for (const ImageId image_id : writebacks) {
+            Image& image = slot_images[image_id];
+            image.DownloadMemory(map, FullDownloadCopies(image.info));
+            map.offset += image.unswizzled_size_bytes;
+        }
+        runtime.Finish();
+        map.offset = original_offset;
+        std::span<u8> span = map.mapped_span;
+        for (const ImageId image_id : writebacks) {
+            const ImageBase& image = slot_images[image_id];
+            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, FullDownloadCopies(image.info),
+                         span, swizzle_data_buffer);
+            span = span.subspan(image.unswizzled_size_bytes);
+        }
+        for (const ImageId image_id : writebacks) {
+            DeleteImage(image_id, slot_images[image_id].scale_tick > frame_tick + 5);
+        }
+        writebacks.clear();
+        writeback_bytes = 0;
+    };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &num_deleted, &num_downloaded](ImageId image_id) {
+                          &evict_old_costly, &num_deleted, &num_downloaded, &writebacks,
+                          &writeback_bytes, &UsedMemory](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -172,24 +211,22 @@ void TextureCache<P>::RunGarbageCollector() {
             ++num_iterations;
             return false;
         }
-        if (must_download) {
-            auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
-            const auto copies = FullDownloadCopies(image.info);
-            image.DownloadMemory(map, copies);
-            runtime.Finish();
-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
-            ++num_downloaded;
-        }
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
         UnregisterImage(image_id);
-        DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+        if (must_download) {
+            writebacks.push_back(image_id);
+            writeback_bytes += ImageMemoryEstimate(image);
+            ++num_downloaded;
+        } else {
+            DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+        }
         ++num_deleted;
-        if (aggressive_mode && total_used_memory < critical_memory) {
+        if (aggressive_mode && UsedMemory() < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
-        } else if (high_priority_mode && total_used_memory < expected_memory) {
+        } else if (high_priority_mode && UsedMemory() < expected_memory) {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
@@ -211,9 +248,11 @@ void TextureCache<P>::RunGarbageCollector() {
         evict_old_costly = false;
     }
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    FlushWritebacks();
     if (total_used_memory >= critical_memory) {
         Configure(true);
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+        FlushWritebacks();
     }
     // Log the passes long enough to show as a hitch (each image written back to guest memory
     // waits for the GPU), at most 200 times a session.
@@ -2578,6 +2617,21 @@ void TextureCache<P>::UntrackImage(ImageBase& image, ImageId image_id) {
 }
 
 template <class P>
+u64 TextureCache<P>::ImageMemoryEstimate(const ImageBase& image) {
+    u64 bytes = 0;
+    if (image.HasScaled()) {
+        bytes += GetScaledImageSizeBytes(image);
+    }
+    u64 tentative_size = (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
+    if ((IsPixelFormatASTC(image.info.format) &&
+         True(image.flags & ImageFlagBits::AcceleratedUpload)) ||
+        True(image.flags & ImageFlagBits::Converted)) {
+        tentative_size = TranscodedAstcSize(tentative_size, image.info.format);
+    }
+    return bytes + Common::AlignUp(tentative_size, 1024);
+}
+
+template <class P>
 void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     ImageBase& image = slot_images[image_id];
     // Drop every decode still queued for it: a result left behind would be uploaded into the next
@@ -2588,17 +2642,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
             async_decode->cancelled = true;
         }
     }
-    u64 freed_bytes = 0;
-    if (image.HasScaled()) {
-        freed_bytes += GetScaledImageSizeBytes(image);
-    }
-    u64 tentative_size = (std::max)(image.guest_size_bytes, image.unswizzled_size_bytes);
-    if ((IsPixelFormatASTC(image.info.format) &&
-         True(image.flags & ImageFlagBits::AcceleratedUpload)) ||
-        True(image.flags & ImageFlagBits::Converted)) {
-        tentative_size = TranscodedAstcSize(tentative_size, image.info.format);
-    }
-    freed_bytes += Common::AlignUp(tentative_size, 1024);
+    const u64 freed_bytes = ImageMemoryEstimate(image);
     total_used_memory -= (std::min)(freed_bytes, total_used_memory);
     if (!immediate_delete) {
         // Freed only when sentenced_images lets go of it, TICKS_TO_DESTROY frames from now.
