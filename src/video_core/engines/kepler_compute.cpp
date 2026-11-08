@@ -8,6 +8,7 @@
 #include <bit>
 #include <bitset>
 #include <cstdlib>
+#include "common/settings.h"
 #include "common/assert.h"
 #include "common/logging.h"
 #include "shader_recompiler/exception.h"
@@ -344,7 +345,12 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     }
     if (dlss_chain.active) {
         const GPUVAddr program = regs.code_loc.Address();
-        if (dlss_depth && rasterizer->UsesReplacementUpscaler() && dlss_chain.programs.contains(program)) {
+        // AMD FSR 4 skips the whole network from the first evaluation, as the build it comes
+        // from does (the network hangs RADV on RDNA 4); NVIDIA DLSS skips the programs it has
+        // seen run.
+        const bool skip_all = Settings::values.amd_fsr4.GetValue();
+        if (dlss_depth && rasterizer->UsesReplacementUpscaler() &&
+            (skip_all || dlss_chain.programs.contains(program))) {
             if (output_pass) {
                 FinishDlssEvaluation(true);
             }
