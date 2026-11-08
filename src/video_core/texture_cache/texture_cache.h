@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <bit>
+#include <chrono>
 #include "common/container/unordered_map.h"
 #include <boost/container/small_vector.hpp>
 
@@ -80,6 +81,9 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         critical_memory = DEFAULT_CRITICAL_MEMORY + 1_GiB;
         minimum_memory = 0;
     }
+    LOG_INFO(HW_GPU,
+             "Texture cache memory: collects above {} MiB, faster above {} MiB, hard above {} MiB",
+             minimum_memory >> 20, expected_memory >> 20, critical_memory >> 20);
 
     const bool gpu_unswizzle_enabled = Settings::values.gpu_unswizzle_enabled.GetValue();
 
@@ -123,13 +127,23 @@ void TextureCache<P>::RunGarbageCollector() {
     bool aggressive_mode = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
+    // Diagnostics: a pass that takes long is logged (see the end of this function).
+    const auto pass_start = std::chrono::steady_clock::now();
+    const u64 used_before = total_used_memory;
+    u32 num_deleted = 0;
+    u32 num_downloaded = 0;
+    bool was_high_priority = false;
+    bool was_aggressive = false;
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
+        was_high_priority = was_high_priority || high_priority_mode;
+        was_aggressive = was_aggressive || aggressive_mode;
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
+                          &num_deleted, &num_downloaded](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -161,12 +175,14 @@ void TextureCache<P>::RunGarbageCollector() {
             image.DownloadMemory(map, copies);
             runtime.Finish();
             SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
+            ++num_downloaded;
         }
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
         UnregisterImage(image_id);
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+        ++num_deleted;
         if (aggressive_mode && total_used_memory < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
@@ -182,6 +198,20 @@ void TextureCache<P>::RunGarbageCollector() {
         Configure(true);
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
+    // Log the passes long enough to show as a hitch (each image written back to guest memory
+    // waits for the GPU), at most 200 times a session.
+    const auto pass_ms = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - pass_start)
+                             .count();
+    static u32 slow_passes_logged = 0;
+    if (pass_ms >= 20.0 && slow_passes_logged < 200) {
+        ++slow_passes_logged;
+        LOG_INFO(HW_GPU,
+                 "Texture cache cleanup took {:.0f} ms ({} mode): {} images freed, {} written back "
+                 "first, memory {} -> {} MiB",
+                 pass_ms, was_aggressive ? "hard" : (was_high_priority ? "fast" : "normal"),
+                 num_deleted, num_downloaded, used_before >> 20, total_used_memory >> 20);
+    }
 }
 
 template <class P>
@@ -192,6 +222,13 @@ void TextureCache<P>::TickFrame() {
     }
     if (total_used_memory > minimum_memory) {
         RunGarbageCollector();
+    }
+    // Diagnostics: how much video memory the game uses, about once a minute.
+    static u64 peak_used_memory = 0;
+    peak_used_memory = (std::max)(peak_used_memory, total_used_memory);
+    if (frame_tick % 3600 == 0 && frame_tick != 0) {
+        LOG_INFO(HW_GPU, "Video memory in use: {} MiB (highest so far {} MiB)",
+                 total_used_memory >> 20, peak_used_memory >> 20);
     }
     sentenced_images.Tick();
     sentenced_framebuffers.Tick();
