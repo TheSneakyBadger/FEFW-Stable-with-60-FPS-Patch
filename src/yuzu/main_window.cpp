@@ -8,6 +8,7 @@
 #undef VMA_IMPLEMENTATION
 #endif
 
+#include <cstdlib>
 #include <boost/algorithm/string/split.hpp>
 #include "common/fefw_version.h"
 #include "common/fs/path_util.h"
@@ -2130,10 +2131,31 @@ void MainWindow::OnEmulationStopped() {
     shutdown_timer.stop();
     if (QtCommon::emu_thread) {
         QtCommon::emu_thread->disconnect();
-        if (!QtCommon::emu_thread->wait(QDeadlineTimer(10'000))) {
-            LOG_ERROR(Frontend, "Emulation thread failed to stop, terminating it");
-            QtCommon::emu_thread->terminate();
-            QtCommon::emu_thread->wait();
+        // Never terminate() the emulation thread: it would die holding its locks with the
+        // System half shut down, and that System is reused by the next boot. Keep waiting, or
+        // let the player quit the whole emulator.
+        while (!QtCommon::emu_thread->wait(QDeadlineTimer(10'000))) {
+            LOG_ERROR(Frontend, "Emulation thread has not stopped after 10 seconds");
+            QMessageBox box(QMessageBox::Warning, tr("Closing software"),
+                            tr("The game is taking a long time to close.\n\n"
+                               "You can keep waiting, or quit the emulator now. Quitting now "
+                               "loses any game progress that was not saved."),
+                            QMessageBox::NoButton, this);
+            QPushButton* wait_button = box.addButton(tr("Keep Waiting"), QMessageBox::AcceptRole);
+            QPushButton* quit_button =
+                box.addButton(tr("Quit Emulator"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(wait_button);
+            box.setEscapeButton(wait_button);
+            box.exec();
+            if (box.clickedButton() == quit_button && !QtCommon::emu_thread->isFinished()) {
+                LOG_CRITICAL(Frontend, "Emulation thread did not stop, quitting the emulator");
+                config->SaveAllValues();
+                Common::Log::Stop();
+#ifdef _WIN32
+                TerminateProcess(GetCurrentProcess(), 1);
+#endif
+                std::_Exit(1);
+            }
         }
         QtCommon::emu_thread.reset();
     }
