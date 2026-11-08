@@ -32,6 +32,8 @@ UpdateDescriptorQueue::~UpdateDescriptorQueue() = default;
 void UpdateDescriptorQueue::TickFrame() {
     if (++frame_index >= FRAMES_IN_FLIGHT) {
         frame_index = 0;
+        // Every slice is rewritten only after a wrap: entries of older generations may be stale.
+        ++generation;
     }
     payload_start = payload.data() + frame_index * frame_payload_size;
     payload_cursor = payload_start;
@@ -52,6 +54,8 @@ void UpdateDescriptorQueue::Acquire(Scheduler& scheduler, size_t required_entrie
         // hundreds of records per draw) and overflowed twice per frame, each time stalling the GPU
         // thread until the worker drained; a bigger slice stops the overflows.
         scheduler.WaitWorker();
+        // The slice is rewritten from its start (or the payload reallocated).
+        ++generation;
         if (frame_payload_size < max_frame_payload_size) {
             frame_payload_size *= 2;
             payload.assign(frame_payload_size * FRAMES_IN_FLIGHT, DescriptorUpdateEntry{});

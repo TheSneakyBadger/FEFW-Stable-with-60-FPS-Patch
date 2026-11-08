@@ -298,6 +298,11 @@ public:
         return num_images;
     }
 
+    /// Layers of the VkFramebuffer: a render pass load-op clear clears all of them.
+    [[nodiscard]] u32 NumLayers() const noexcept {
+        return framebuffer_layers;
+    }
+
     [[nodiscard]] const std::array<VkImage, 9>& Images() const noexcept {
         return images;
     }
@@ -343,6 +348,7 @@ private:
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
     u32 num_color_buffers = 0;
     u32 num_images = 0;
+    u32 framebuffer_layers = 1;
     std::array<VkImage, 9> images{};
     std::array<VkImageSubresourceRange, 9> image_ranges{};
     std::array<size_t, NUM_RT> rt_map{};

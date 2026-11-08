@@ -297,6 +297,10 @@ void TextureCache<P>::TickFrame() {
         LOG_INFO(HW_GPU, "Video memory in use: {} MiB (highest so far {} MiB)",
                  total_used_memory >> 20, peak_used_memory >> 20);
     }
+    for (std::shared_ptr<Image>& image : retired_images) {
+        sentenced_images.Push(std::move(*image));
+    }
+    retired_images.clear();
     sentenced_images.Tick();
     sentenced_bytes_index = (sentenced_bytes_index + 1) % TICKS_TO_DESTROY;
     sentenced_bytes[sentenced_bytes_index] = 0;
@@ -350,7 +354,10 @@ void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compu
         // A pass that deletes images is repeated, so the memo only lives for one pass.
         memo.Reset();
         for (ImageViewInOut& view : views) {
-            if (const ImageViewId* const known = memo.Find(view.index)) {
+            // Once a lookup has deleted images, ids remembered earlier in the pass may have been
+            // erased: look every later element up again (the pass is then repeated anyway).
+            const ImageViewId* const known = has_deleted_images ? nullptr : memo.Find(view.index);
+            if (known) {
                 view.id = *known;
             } else {
                 view.id = VisitImageView(view.index, compute);
@@ -379,19 +386,31 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
     if (!Settings::values.barrier_feedback_loops.GetValue()) {
         return;
     }
-
-    if (render_targets_serial == last_feedback_loop_serial &&
-        texture_bindings_serial == last_feedback_texture_serial) {
-        if (last_feedback_loop_result) {
-            runtime.BarrierFeedbackLoop();
-        }
+    if (rt_active_mask == 0) {
+        // Nothing is rendered to, so nothing sampled can be a render target.
         return;
     }
 
-    if (rt_active_mask == 0) {
-        last_feedback_loop_serial = render_targets_serial;
-        last_feedback_texture_serial = texture_bindings_serial;
-        last_feedback_loop_result = false;
+    // The answer depends on which views the draw samples, not only on the render targets and the
+    // descriptor table: key the cached answer on the bound view ids too. The view generation
+    // changes when erased view ids may name other views.
+    u64 bound_views_hash = view_generation;
+    const auto hash_id = [&bound_views_hash](ImageViewId view_id) {
+        bound_views_hash = (bound_views_hash ^ view_id.index) * 0x9E3779B97F4A7C15ULL;
+        bound_views_hash ^= bound_views_hash >> 29;
+    };
+    for (const auto& view : views) {
+        hash_id(view.id);
+    }
+    for (const ImageViewId view_id : more_ids) {
+        hash_id(view_id);
+    }
+    if (render_targets_serial == last_feedback_loop_serial &&
+        texture_bindings_serial == last_feedback_texture_serial &&
+        bound_views_hash == last_feedback_views_hash) {
+        if (last_feedback_loop_result) {
+            runtime.BarrierFeedbackLoop();
+        }
         return;
     }
     const u32 depth_bit = 1u << NUM_RT;
@@ -434,6 +453,7 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
 
     last_feedback_loop_serial = render_targets_serial;
     last_feedback_texture_serial = texture_bindings_serial;
+    last_feedback_views_hash = bound_views_hash;
     last_feedback_loop_result = requires_barrier;
     if (requires_barrier) {
         runtime.BarrierFeedbackLoop();
@@ -813,6 +833,8 @@ void TextureCache<P>::UnmapMemory(DAddr cpu_addr, size_t size) {
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, id);
         }
+        // A download still queued for it must not be written back into the unmapped range.
+        image.flags |= ImageFlagBits::Unmapped;
         UnregisterImage(id);
         DeleteImage(id);
     }
@@ -1197,7 +1219,10 @@ void TextureCache<P>::PopAsyncFlushes() {
                 download_buffer.offset -= Common::AlignUp(image.unswizzled_size_bytes, 64);
                 std::span<u8> download_span =
                     download_buffer.mapped_span.subspan(download_buffer.offset);
-                SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span, swizzle_data_buffer);
+                if (!SkipRetiredSwizzle(download_info)) {
+                    SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
+                                 swizzle_data_buffer);
+                }
             } else {
                 const BufferDownload& buffer_info = slot_buffer_downloads[download_info.object_id];
                 std::span<u8> download_span =
@@ -1210,7 +1235,7 @@ void TextureCache<P>::PopAsyncFlushes() {
         for (auto& download_buffer : download_map) {
             async_buffers_death_ring.emplace_back(download_buffer);
         }
-        committed_downloads.pop_front();
+        PopCommittedDownloads();
         async_buffers.pop_front();
     } else {
         const auto& download_ids = committed_downloads.front();
@@ -1245,11 +1270,41 @@ void TextureCache<P>::PopAsyncFlushes() {
             }
             const ImageBase& image = download_info.GetImage(slot_images);
             const auto copies = FullDownloadCopies(image.info);
-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span, swizzle_data_buffer);
+            if (!SkipRetiredSwizzle(download_info)) {
+                SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
+                             swizzle_data_buffer);
+            }
             download_map.offset += image.unswizzled_size_bytes;
             download_span = download_span.subspan(image.unswizzled_size_bytes);
         }
-        committed_downloads.pop_front();
+        PopCommittedDownloads();
+    }
+}
+
+template <class P>
+bool TextureCache<P>::SkipRetiredSwizzle(const PendingDownload& download_info) const {
+    // The image was deleted because its range was unmapped after the download was queued: writing
+    // the old GPU contents back would land in whatever is mapped there now.
+    return download_info.retired_image &&
+           True(download_info.retired_image->flags & ImageFlagBits::Unmapped);
+}
+
+template <class P>
+void TextureCache<P>::PopCommittedDownloads() {
+    boost::container::small_vector<std::shared_ptr<Image>, 4> retired;
+    for (const PendingDownload& download_info : committed_downloads.front()) {
+        if (download_info.retired_image &&
+            std::find(retired.begin(), retired.end(), download_info.retired_image) == retired.end()) {
+            retired.push_back(download_info.retired_image);
+        }
+    }
+    committed_downloads.pop_front();
+    for (std::shared_ptr<Image>& image : retired) {
+        // The last download that kept it is done. Later commands may still use it: hand it to
+        // TickFrame (GPU thread), which delays its destruction like any deleted image.
+        if (image.use_count() == 1) {
+            retired_images.push_back(std::move(image));
+        }
     }
 }
 

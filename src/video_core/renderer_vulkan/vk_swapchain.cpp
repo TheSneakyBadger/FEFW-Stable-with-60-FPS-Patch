@@ -166,6 +166,8 @@ void Swapchain::Create(
     const auto physical_device = device.GetPhysical();
     const auto capabilities{physical_device.GetSurfaceCapabilitiesKHR(VkSurfaceKHR(surface))};
     if (capabilities.maxImageExtent.width == 0 || capabilities.maxImageExtent.height == 0) {
+        // The window has no size (minimised): the old swapchain stays, still out of date.
+        is_outdated = true;
         return;
     }
 
