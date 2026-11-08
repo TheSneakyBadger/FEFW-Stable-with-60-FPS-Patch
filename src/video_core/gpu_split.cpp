@@ -4,9 +4,14 @@
 #include <algorithm>
 #include <cstdlib>
 #include <thread>
+#include <vector>
 
 #ifdef _MSC_VER
 #include <intrin.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 #include "common/logging.h"
@@ -34,11 +39,66 @@ void Pause() {
 #endif
 }
 
-/// EDEN_GPU_SPLIT: '0' off, '1' engine methods on the back, '2' (default) macros on the front too.
+/// Cores of the fastest kind (performance cores on a hybrid CPU, every core otherwise), or 0
+/// when that can't be told.
+u32 FastCoreCount() {
+#ifdef _WIN32
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+    if (length == 0) {
+        return 0;
+    }
+    std::vector<u8> buffer(length);
+    auto* const first =
+        reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data());
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, first, &length)) {
+        return 0;
+    }
+    std::vector<u8> classes;
+    for (DWORD offset = 0; offset < length;) {
+        const auto* const info =
+            reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + offset);
+        if (info->Size == 0) {
+            break;
+        }
+        if (info->Relationship == RelationProcessorCore) {
+            classes.push_back(info->Processor.EfficiencyClass);
+        }
+        offset += info->Size;
+    }
+    if (classes.empty()) {
+        return 0;
+    }
+    const u8 fastest = *std::ranges::max_element(classes);
+    return static_cast<u32>(std::ranges::count(classes, fastest));
+#else
+    return 0;
+#endif
+}
+
+/// The split's second thread is busy whenever the game draws. With 4 or fewer fast cores (a
+/// laptop's 4 performance cores, a 4-core desktop) it competed with the game's own threads,
+/// and on an i5-12450H battles' sound crackled while the FPS held 30.
+constexpr u32 MinFastCoresForSplit = 5;
+
+/// EDEN_GPU_SPLIT: '0' off, '1' engine methods on the back, '2' macros on the front too. Unset:
+/// '2' with 5 or more fast cores, '0' with fewer.
 char SplitMode() {
     static const char mode = [] {
         const char* value = std::getenv("EDEN_GPU_SPLIT");
-        return value != nullptr && value[0] != '\0' ? value[0] : '2';
+        if (value != nullptr && value[0] != '\0') {
+            return value[0];
+        }
+        const u32 fast_cores = FastCoreCount();
+        if (fast_cores != 0 && fast_cores < MinFastCoresForSplit) {
+            LOG_INFO(HW_GPU,
+                     "GPU thread split: off, this CPU has {} fast cores ({} or more needed; "
+                     "EDEN_GPU_SPLIT=2 turns it on)",
+                     fast_cores, MinFastCoresForSplit);
+            return '0';
+        }
+        LOG_INFO(HW_GPU, "GPU thread split: allowed, this CPU has {} fast cores", fast_cores);
+        return '2';
     }();
     return mode;
 }
