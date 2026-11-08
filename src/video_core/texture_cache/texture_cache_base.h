@@ -306,6 +306,13 @@ public:
     std::recursive_mutex mutex;
 
 private:
+    /// Pops the front batch of committed_downloads. Images kept alive only for its downloads go
+    /// to retired_images rather than being destroyed here.
+    void PopCommittedDownloads();
+
+    /// Whether a finished download of a deleted image must not be written back to guest memory.
+    [[nodiscard]] bool SkipRetiredSwizzle(const PendingImageDownload<Image>& download_info) const;
+
     /// Iterate over all page indices in a range
     template <typename Func>
     static void ForEachCPUPage(DAddr addr, size_t size, Func&& func) {
@@ -549,6 +556,9 @@ private:
     std::vector<AsyncBuffer> uncommitted_async_buffers;
     std::deque<std::vector<AsyncBuffer>> async_buffers;
     std::deque<AsyncBuffer> async_buffers_death_ring;
+    /// Images whose queued downloads have finished. Commands recorded after a download can still
+    /// use them, so TickFrame moves them into sentenced_images instead of destroying them at once.
+    std::vector<std::shared_ptr<Image>> retired_images;
 
     struct LRUItemParams {
         using ObjectType = ImageId;
