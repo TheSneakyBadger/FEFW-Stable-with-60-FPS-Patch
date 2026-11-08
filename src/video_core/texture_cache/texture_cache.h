@@ -376,19 +376,31 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
     if (!Settings::values.barrier_feedback_loops.GetValue()) {
         return;
     }
-
-    if (render_targets_serial == last_feedback_loop_serial &&
-        texture_bindings_serial == last_feedback_texture_serial) {
-        if (last_feedback_loop_result) {
-            runtime.BarrierFeedbackLoop();
-        }
+    if (rt_active_mask == 0) {
+        // Nothing is rendered to, so nothing sampled can be a render target.
         return;
     }
 
-    if (rt_active_mask == 0) {
-        last_feedback_loop_serial = render_targets_serial;
-        last_feedback_texture_serial = texture_bindings_serial;
-        last_feedback_loop_result = false;
+    // The answer depends on which views the draw samples, not only on the render targets and the
+    // descriptor table: key the cached answer on the bound view ids too. The view generation
+    // changes when erased view ids may name other views.
+    u64 bound_views_hash = view_generation;
+    const auto hash_id = [&bound_views_hash](ImageViewId view_id) {
+        bound_views_hash = (bound_views_hash ^ view_id.index) * 0x9E3779B97F4A7C15ULL;
+        bound_views_hash ^= bound_views_hash >> 29;
+    };
+    for (const auto& view : views) {
+        hash_id(view.id);
+    }
+    for (const ImageViewId view_id : more_ids) {
+        hash_id(view_id);
+    }
+    if (render_targets_serial == last_feedback_loop_serial &&
+        texture_bindings_serial == last_feedback_texture_serial &&
+        bound_views_hash == last_feedback_views_hash) {
+        if (last_feedback_loop_result) {
+            runtime.BarrierFeedbackLoop();
+        }
         return;
     }
     const u32 depth_bit = 1u << NUM_RT;
@@ -431,6 +443,7 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
 
     last_feedback_loop_serial = render_targets_serial;
     last_feedback_texture_serial = texture_bindings_serial;
+    last_feedback_views_hash = bound_views_hash;
     last_feedback_loop_result = requires_barrier;
     if (requires_barrier) {
         runtime.BarrierFeedbackLoop();
