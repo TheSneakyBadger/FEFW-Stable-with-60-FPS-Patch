@@ -12,6 +12,7 @@
 #include <optional>
 #include <bit>
 #include <chrono>
+#include <cstdlib>
 #include "common/container/unordered_map.h"
 #include <boost/container/small_vector.hpp>
 
@@ -125,6 +126,7 @@ template <class P>
 void TextureCache<P>::RunGarbageCollector() {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
+    bool evict_old_costly = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     // Diagnostics: a pass that takes long is logged (see the end of this function).
@@ -143,7 +145,7 @@ void TextureCache<P>::RunGarbageCollector() {
         was_aggressive = was_aggressive || aggressive_mode;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &num_deleted, &num_downloaded](ImageId image_id) {
+                          &evict_old_costly, &num_deleted, &num_downloaded](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -153,7 +155,8 @@ void TextureCache<P>::RunGarbageCollector() {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
-        if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download)) {
+        if ((!aggressive_mode && !evict_old_costly && True(image.flags & ImageFlagBits::CostlyLoad)) ||
+            (!high_priority_mode && must_download)) {
             return false;
         }
         // An image the GPU drew into that can't be written back (BadOverlap, or not downloadable)
@@ -193,6 +196,20 @@ void TextureCache<P>::RunGarbageCollector() {
         return false;
     };
     Configure(false);
+    // Costly images (every converted ASTC texture, so nearly all of Fortune's Weave's) were only
+    // collected in the hard mode near the limit: the cache filled up to it with earlier scenes'
+    // textures and then collected in bursts (uncompressed at 1x with the ultrawide patch on a 7 GB
+    // limit ran at 35 FPS doing so). Over the expected use, first collect costly images unused for
+    // EDEN_TC_OLD_AGE frames (1800, 30 s at 60 FPS; 0 turns it off). From Eglantine a407703f6d.
+    static const u64 old_age = [] {
+        const char* value = std::getenv("EDEN_TC_OLD_AGE");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 1800ULL;
+    }();
+    if (high_priority_mode && old_age != 0 && frame_tick > old_age) {
+        evict_old_costly = true;
+        lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
+        evict_old_costly = false;
+    }
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     if (total_used_memory >= critical_memory) {
         Configure(true);
