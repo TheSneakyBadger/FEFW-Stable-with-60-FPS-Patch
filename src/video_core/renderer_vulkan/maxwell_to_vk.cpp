@@ -247,6 +247,7 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
     // Transcode on hardware that doesn't support ASTC natively
     if (!device.IsOptimalAstcSupported() && VideoCore::Surface::IsPixelFormatASTC(pixel_format)) {
         switch (Settings::EffectiveAstcRecompression()) {
+        case Settings::AstcRecompression::Auto: // Never returned: resolved to one of the others
         case Settings::AstcRecompression::Uncompressed:
             if (is_srgb) {
                 tuple.format = VK_FORMAT_A8B8G8R8_SRGB_PACK32;
