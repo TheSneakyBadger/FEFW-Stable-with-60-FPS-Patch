@@ -57,6 +57,19 @@ std::string GetFutureSaveDataPath(SaveDataSpaceId space_id, SaveDataType type, u
 
 namespace {
 
+// A save folder with no files except the save-size file, and no subfolders.
+bool IsEmptySave(const VirtualDir& save) {
+    if (!save->GetSubdirectories().empty()) {
+        return false;
+    }
+    for (const auto& file : save->GetFiles()) {
+        if (file->GetName() != GetSaveDataSizeFileName()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Loose-file (exefs) dumps used to register no program ID, so their account and device saves went
 // to title 0000000000000000. They now use the game's real ID. The first time that ID has no save
 // but title 0 does, copy the old save across; the old folder is left for older builds.
@@ -71,18 +84,45 @@ void MigrateTitleZeroSave(const VirtualDir& dir, ProgramId program_id, SaveDataS
     }
     const auto new_path = SaveDataFactory::GetFullPath(program_id, dir, space, meta.type, title_id,
                                                        meta.user_id, meta.system_save_data_id);
-    if (dir->GetDirectoryRelative(new_path) != nullptr) {
+    // A folder holding nothing but the save-size file counts as missing: EnsureSaveData,
+    // GetSaveDataSize and "Open Save Data Location" create the folder (through program ID 0)
+    // before the game opens its save, which used to stop the old save from ever being copied.
+    const auto existing = dir->GetDirectoryRelative(new_path);
+    if (existing != nullptr && !IsEmptySave(existing)) {
         return;
     }
     const auto old_path = SaveDataFactory::GetFullPath(0, dir, space, meta.type, 0, meta.user_id,
                                                        meta.system_save_data_id);
     const auto old_dir = dir->GetDirectoryRelative(old_path);
-    if (old_dir == nullptr || (old_dir->GetFiles().empty() && old_dir->GetSubdirectories().empty())) {
+    if (old_dir == nullptr || IsEmptySave(old_dir)) {
         return;
     }
-    const auto new_dir = dir->CreateDirectoryRelative(new_path);
-    if (new_dir == nullptr || !VfsRawCopyD(old_dir, new_dir)) {
+    // Copy into a sibling folder and rename it into place only when the copy is complete, so a
+    // copy that fails part way (disk full, a file in use) never becomes the save.
+    const auto slash = new_path.find_last_of('/');
+    const std::string parent_path = slash == std::string::npos ? std::string{} : new_path.substr(0, slash);
+    const std::string leaf = slash == std::string::npos ? new_path : new_path.substr(slash + 1);
+    const std::string temp_name = leaf + ".migrating";
+    const auto parent_dir = parent_path.empty() ? dir : dir->CreateDirectoryRelative(parent_path);
+    if (parent_dir == nullptr) {
+        LOG_ERROR(Service_FS, "Could not open {} to copy the loose-file save {}", parent_path, old_path);
+        return;
+    }
+    parent_dir->DeleteSubdirectoryRecursive(temp_name);
+    const auto temp_dir = parent_dir->CreateSubdirectory(temp_name);
+    if (temp_dir == nullptr || !VfsRawCopyD(old_dir, temp_dir)) {
+        parent_dir->DeleteSubdirectoryRecursive(temp_name);
         LOG_ERROR(Service_FS, "Could not copy the loose-file save {} to {}", old_path, new_path);
+        return;
+    }
+    if (existing != nullptr && !parent_dir->DeleteSubdirectoryRecursive(leaf)) {
+        parent_dir->DeleteSubdirectoryRecursive(temp_name);
+        LOG_ERROR(Service_FS, "Could not replace the empty save folder {}", new_path);
+        return;
+    }
+    if (!temp_dir->Rename(leaf)) {
+        LOG_ERROR(Service_FS, "Could not move the copied save into {} (it is in {})", new_path,
+                  temp_name);
         return;
     }
     LOG_INFO(Service_FS, "Copied the loose-file save {} to {} (the old copy is kept)", old_path,
