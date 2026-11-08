@@ -180,6 +180,17 @@ void FixedPipelineState::Refresh(Tegra::Engines::Maxwell3D& maxwell3d, DynamicFe
     for (size_t i = 0; i < regs.rt.size(); ++i) {
         color_formats[i] = static_cast<u8>(regs.rt[i].format);
     }
+    // Snap the reference to the middle of its 8-bit alpha step (or onto the step when it is
+    // already exact), so every 8-bit alpha compares the same way as against the real reference.
+    // Snapping onto the nearest step flipped one alpha level in or out of cutouts.
+    const auto QuantizeAlphaRef = [](float ref) {
+        const float q = ref * 255.0f;
+        const float nearest = std::nearbyint(q);
+        if (std::abs(q - nearest) < 1e-4f) {
+            return nearest / 255.0f;
+        }
+        return (std::floor(q) + 0.5f) / 255.0f;
+    };
     // The reference only matters when the test can fail. Fortune's Weave animates the register with
     // alpha test disabled, which otherwise creates a new pipeline for every value. With the test on,
     // fades move the reference by less than one step of 8-bit alpha per frame; rounding it to 1/255
@@ -187,7 +198,7 @@ void FixedPipelineState::Refresh(Tegra::Engines::Maxwell3D& maxwell3d, DynamicFe
     alpha_test_ref = test_func == Maxwell::ComparisonOp::Always_GL ||
                              test_func == Maxwell::ComparisonOp::Always_D3D
                          ? 0
-                         : std::bit_cast<u32>(std::round(regs.alpha_test_ref * 255.0f) / 255.0f);
+                         : std::bit_cast<u32>(QuantizeAlphaRef(regs.alpha_test_ref));
     point_size = std::bit_cast<u32>(regs.point_size);
 
     if (maxwell3d.dirty.flags[Dirty::VertexInput]) {
