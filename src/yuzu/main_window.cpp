@@ -2064,6 +2064,10 @@ bool MainWindow::OnShutdownBegin() {
         return false;
     }
 
+    // Stop reading perf stats and shader state now: ShutdownMainProcess destroys them on the
+    // emulation thread while this (UI) thread would keep polling them.
+    status_bar_update_timer.stop();
+
     if (ui->action_Fullscreen->isChecked()) {
         HideFullscreen();
     }
