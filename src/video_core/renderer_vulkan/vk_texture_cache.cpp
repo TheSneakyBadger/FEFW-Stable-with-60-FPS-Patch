@@ -3304,6 +3304,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
     }
 
     num_color_buffers = static_cast<u32>(num_colors);
+    framebuffer_layers = static_cast<u32>((std::max)(num_layers, 1));
     framebuffer = runtime.device.GetLogical().CreateFramebuffer({
         .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
         .pNext = nullptr,
@@ -3313,7 +3314,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
         .pAttachments = attachments.data(),
         .width = render_area.width,
         .height = render_area.height,
-        .layers = static_cast<u32>((std::max)(num_layers, 1)),
+        .layers = framebuffer_layers,
     });
 }
 

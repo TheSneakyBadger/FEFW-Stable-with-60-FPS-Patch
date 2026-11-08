@@ -569,6 +569,8 @@ void RasterizerVulkan::Clear(u32 layer_count) {
         clear_rect.rect.extent.height >= render_area.height;
     const bool can_defer_clear = ENABLE_DEFERRED_CLEAR && (!regs.clear_control.use_scissor || clear_covers_render_area) &&
                                  regs.clear_surface.layer == 0 &&
+                                 // A deferred clear clears every layer of the framebuffer.
+                                 layer_count >= framebuffer->NumLayers() &&
                                  !scheduler.IsRenderPassActive() &&
                                  (!use_color || color_full_channels) && ds_deferrable;
     if (!can_defer_clear) {
