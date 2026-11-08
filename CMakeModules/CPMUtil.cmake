@@ -186,6 +186,17 @@ function(cpm_download url file)
         unset(args)
     endif()
 
+    # A copy already there with the right hash (downloaded by hand when GitHub won't serve it,
+    # or left by an earlier configure) is used as it is.
+    if (DEFINED hash AND EXISTS "${file}")
+        file(SHA512 "${file}" existing_hash)
+        string(TOLOWER "${hash}" wanted_hash)
+        if (existing_hash STREQUAL wanted_hash)
+            echo("Using the existing ${file}")
+            return()
+        endif()
+    endif()
+
     foreach(i RANGE 5)
         file(DOWNLOAD ${url} ${file}
             ${args}
