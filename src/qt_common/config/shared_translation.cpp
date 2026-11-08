@@ -141,6 +141,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("This setting selects the GPU to use (Vulkan only)."));
     INSERT(Settings, resolution_setup, tr("Resolution:"),
            tr("Forces to render at a different resolution.\n"
+              "The sizes shown are Fortune's Weave's picture in docked mode: at 1X it draws the\n"
+              "3D scene at 720p and its DLSS upscales it to 1440p, and each step scales both.\n"
               "Higher resolutions require more VRAM and bandwidth.\n"
               "Options lower than 1X can cause artifacts."));
     INSERT(Settings, scaling_filter, tr("Window Adapting Filter:"), QString());
@@ -474,19 +476,19 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
     translations->insert(
         {Settings::EnumMetadata<Settings::ResolutionSetup>::Index(),
          {
-             PAIR(ResolutionSetup, Res1_4X, tr("0.25X (180p/270p) [EXPERIMENTAL]")),
-             PAIR(ResolutionSetup, Res1_2X, tr("0.5X (360p/540p) [EXPERIMENTAL]")),
-             PAIR(ResolutionSetup, Res3_4X, tr("0.75X (540p/810p) [EXPERIMENTAL]")),
-             PAIR(ResolutionSetup, Res1X, tr("1X (720p/1080p)")),
-             PAIR(ResolutionSetup, Res5_4X, tr("1.25X (900p/1350p) [EXPERIMENTAL]")),
-             PAIR(ResolutionSetup, Res3_2X, tr("1.5X (1080p/1620p) [EXPERIMENTAL]")),
-             PAIR(ResolutionSetup, Res2X, tr("2X (1440p/2160p)")),
-             PAIR(ResolutionSetup, Res3X, tr("3X (2160p/3240p)")),
-             PAIR(ResolutionSetup, Res4X, tr("4X (2880p/4320p)")),
-             PAIR(ResolutionSetup, Res5X, tr("5X (3600p/5400p)")),
-             PAIR(ResolutionSetup, Res6X, tr("6X (4320p/6480p)")),
-             PAIR(ResolutionSetup, Res7X, tr("7X (5040p/7560p)")),
-             PAIR(ResolutionSetup, Res8X, tr("8X (5760p/8640p)")),
+             PAIR(ResolutionSetup, Res1_4X, tr("0.25X (360p) [EXPERIMENTAL]")),
+             PAIR(ResolutionSetup, Res1_2X, tr("0.5X (720p) [EXPERIMENTAL]")),
+             PAIR(ResolutionSetup, Res3_4X, tr("0.75X (1080p) [EXPERIMENTAL]")),
+             PAIR(ResolutionSetup, Res1X, tr("1X (1440p, native)")),
+             PAIR(ResolutionSetup, Res5_4X, tr("1.25X (1800p) [EXPERIMENTAL]")),
+             PAIR(ResolutionSetup, Res3_2X, tr("1.5X (2160p, 4K) [EXPERIMENTAL]")),
+             PAIR(ResolutionSetup, Res2X, tr("2X (2880p, 5K)")),
+             PAIR(ResolutionSetup, Res3X, tr("3X (4320p, 8K)")),
+             PAIR(ResolutionSetup, Res4X, tr("4X (5760p)")),
+             PAIR(ResolutionSetup, Res5X, tr("5X (7200p)")),
+             PAIR(ResolutionSetup, Res6X, tr("6X (8640p)")),
+             PAIR(ResolutionSetup, Res7X, tr("7X (10080p)")),
+             PAIR(ResolutionSetup, Res8X, tr("8X (11520p)")),
          }});
     translations->insert({Settings::EnumMetadata<Settings::ScalingFilter>::Index(),
                           {
