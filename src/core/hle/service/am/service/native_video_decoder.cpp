@@ -39,7 +39,9 @@
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/am/service/graphics_session.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/hle/service/ipc_helpers.h"
+#include "core/hle/service/server_manager.h"
 #include "core/hle/service/service.h"
 
 namespace {
@@ -117,6 +119,10 @@ struct NativeVideoState {
     std::mutex mutex;
     std::vector<std::shared_ptr<NativeVideoImagePool>> pools;
     std::vector<std::shared_ptr<NativeVideoMapping>> mappings;
+    // Serves the codec sessions (started on the first CreateDecoder; owned by the kernel, which
+    // stops it with the other servers). Decoding, conversion and the frame write block for several
+    // ms per frame, and on the AM thread they held up VI2 presents and syncpoint calls.
+    ServerManager* codec_server{};
 };
 
 namespace {
@@ -624,8 +630,12 @@ private:
                     }
                 }
                 const u64 offset = u64{image->index} * pool.layout.image_stride;
+                // Invalidate before the write (untracks the pages so the copy is a plain memcpy) and
+                // again after it: the GPU thread may re-upload the image while the copy is running,
+                // and the second invalidation makes it upload the finished frame.
                 system.GPU().InvalidateRegion(pool.device_address + offset, nv12.size());
                 R_UNLESS(process->GetMemory().WriteBlock(pool.address + offset, nv12.data(), nv12.size()), Kernel::ResultInvalidAddress);
+                system.GPU().InvalidateRegion(pool.device_address + offset, nv12.size());
             } else if (!frame.eos) {
                 auto stage_start = std::chrono::steady_clock::now();
                 const auto lap = [&](std::chrono::steady_clock::duration& total) {
@@ -705,8 +715,11 @@ private:
                 }
                 lap(timing.convert);
                 const u64 offset = u64{image->index} * pool.layout.image_stride;
+                // As above: invalidate before the write for a fast copy, and after it so a GPU upload
+                // made during the copy does not keep a half-written frame.
                 system.GPU().InvalidateRegion(pool.device_address + offset, tiled.size());
                 R_UNLESS(process->GetMemory().WriteBlock(pool.address + offset, tiled.data(), tiled.size()), Kernel::ResultInvalidAddress);
+                system.GPU().InvalidateRegion(pool.device_address + offset, tiled.size());
                 lap(timing.write);
             }
             if (!frame.eos && ++timing.frames == 60) {
@@ -897,6 +910,17 @@ private:
                     DropAv1InFlight();
                 }
                 if (result.IsSuccess()) {
+                    // As in Flush: outputs written but not fetched give their image back to the
+                    // decoder, at the end of the fence sequence. The game never learns of these
+                    // outputs, so it never releases their images, and a decoder started again after
+                    // Stop would otherwise run out of images and freeze.
+                    for (const auto& properties : output_properties) {
+                        const auto image = std::ranges::find(registered_images, properties[0], &RegisteredImage::id);
+                        if (image != registered_images.end() && !image->available) {
+                            image->completion_value = ++next_completion_value;
+                            image->available = true;
+                        }
+                    }
                     started = false;
                     flushed = false;
                     pending_inputs.clear();
@@ -1228,7 +1252,16 @@ private:
         Kernel::KClientSession* client{};
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0x11 && packet[1] == 0) {
-            result = CreateGraphicsSession(system, ctx,
+            if (!state->codec_server) {
+                // Context sessions are only served on the AM thread, so this runs on one thread.
+                auto* const server = new ServerManager(system);
+                system.Kernel()
+                    .RunOnHostCoreProcess("NativeVideoCodec",
+                                          [server] { ServerManager::RunServer(std::unique_ptr<ServerManager>(server)); })
+                    .detach();
+                state->codec_server = server;
+            }
+            result = CreateGraphicsSession(system, *state->codec_server,
                 std::make_shared<INativeVideoCodec>(system, state, kind), &client);
         }
         LOG_DEBUG(Service_AM, "native video decoder create result={:#x}", result.raw);

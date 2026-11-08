@@ -182,12 +182,21 @@ NvResult Module::VerifyFD(DeviceFD fd) const {
         return NvResult::InvalidState;
     }
 
-    if (open_files.find(fd) == open_files.end()) {
+    if (!FindDevice(fd)) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
     return NvResult::Success;
+}
+
+std::shared_ptr<Devices::nvdevice> Module::FindDevice(DeviceFD fd) const {
+    std::scoped_lock lock{open_files_mutex};
+    const auto itr = open_files.find(fd);
+    if (itr == open_files.end()) {
+        return nullptr;
+    }
+    return itr->second;
 }
 
 DeviceFD Module::Open(const std::string& device_name, NvCore::SessionId session_id) {
@@ -203,9 +212,13 @@ DeviceFD Module::Open(const std::string& device_name, NvCore::SessionId session_
         return INVALID_NVDRV_FD;
     }
 
-    const DeviceFD fd = next_fd++;
-    auto& builder = it->second;
-    auto device = builder(fd)->second;
+    DeviceFD fd;
+    std::shared_ptr<Devices::nvdevice> device;
+    {
+        std::scoped_lock lock{open_files_mutex};
+        fd = next_fd++;
+        device = it->second(fd)->second;
+    }
 
     device->OnOpen(session_id, fd);
 
@@ -219,14 +232,14 @@ NvResult Module::Ioctl1(DeviceFD fd, Ioctl command, std::span<const u8> input,
         return NvResult::InvalidState;
     }
 
-    const auto itr = open_files.find(fd);
+    const auto device = FindDevice(fd);
 
-    if (itr == open_files.end()) {
+    if (!device) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
-    return itr->second->Ioctl1(fd, command, input, output);
+    return device->Ioctl1(fd, command, input, output);
 }
 
 NvResult Module::Ioctl2(DeviceFD fd, Ioctl command, std::span<const u8> input,
@@ -236,14 +249,14 @@ NvResult Module::Ioctl2(DeviceFD fd, Ioctl command, std::span<const u8> input,
         return NvResult::InvalidState;
     }
 
-    const auto itr = open_files.find(fd);
+    const auto device = FindDevice(fd);
 
-    if (itr == open_files.end()) {
+    if (!device) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
-    return itr->second->Ioctl2(fd, command, input, inline_input, output);
+    return device->Ioctl2(fd, command, input, inline_input, output);
 }
 
 NvResult Module::Ioctl3(DeviceFD fd, Ioctl command, std::span<const u8> input, std::span<u8> output,
@@ -253,14 +266,14 @@ NvResult Module::Ioctl3(DeviceFD fd, Ioctl command, std::span<const u8> input, s
         return NvResult::InvalidState;
     }
 
-    const auto itr = open_files.find(fd);
+    const auto device = FindDevice(fd);
 
-    if (itr == open_files.end()) {
+    if (!device) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
-    return itr->second->Ioctl3(fd, command, input, output, inline_output);
+    return device->Ioctl3(fd, command, input, output, inline_output);
 }
 
 NvResult Module::Close(DeviceFD fd) {
@@ -269,16 +282,23 @@ NvResult Module::Close(DeviceFD fd) {
         return NvResult::InvalidState;
     }
 
-    const auto itr = open_files.find(fd);
+    std::shared_ptr<Devices::nvdevice> device;
+    {
+        std::scoped_lock lock{open_files_mutex};
+        const auto itr = open_files.find(fd);
+        if (itr != open_files.end()) {
+            device = std::move(itr->second);
+            open_files.erase(itr);
+        }
+    }
 
-    if (itr == open_files.end()) {
+    if (!device) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
-    itr->second->OnClose(fd);
-
-    open_files.erase(itr);
+    // Outside the lock: closing a device may free resources that take other locks.
+    device->OnClose(fd);
 
     return NvResult::Success;
 }
@@ -289,14 +309,14 @@ NvResult Module::QueryEvent(DeviceFD fd, u32 event_id, Kernel::KEvent*& event) {
         return NvResult::InvalidState;
     }
 
-    const auto itr = open_files.find(fd);
+    const auto device = FindDevice(fd);
 
-    if (itr == open_files.end()) {
+    if (!device) {
         LOG_ERROR(Service_NVDRV, "Could not find DeviceFD={}!", fd);
         return NvResult::NotImplemented;
     }
 
-    event = itr->second->QueryEvent(event_id);
+    event = device->QueryEvent(event_id);
     if (!event) {
         return NvResult::BadParameter;
     }

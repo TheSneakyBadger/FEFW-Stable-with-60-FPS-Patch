@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <list>
@@ -58,6 +59,10 @@ public:
 
     void WaitHost(u32 syncpoint_id, u32 expected_value);
 
+    /// Waits until the host syncpoint reaches expected_value or the timeout passes.
+    /// Returns true if the value was reached.
+    bool WaitHostFor(u32 syncpoint_id, u32 expected_value, std::chrono::nanoseconds timeout);
+
     bool IsReadyGuest(u32 syncpoint_id, u32 expected_value) const {
         return syncpoints_guest[syncpoint_id].load(std::memory_order_acquire) >= expected_value;
     }
@@ -77,6 +82,9 @@ private:
     void DeregisterAction(std::list<RegisteredAction>& action_storage, const ActionHandle& handle);
 
     void Wait(std::atomic<u32>& syncpoint, std::condition_variable& wait_cv, u32 expected_value);
+
+    bool WaitFor(std::atomic<u32>& syncpoint, std::condition_variable& wait_cv, u32 expected_value,
+                 std::chrono::nanoseconds timeout);
 
     static constexpr size_t NUM_MAX_SYNCPOINTS = 192;
 

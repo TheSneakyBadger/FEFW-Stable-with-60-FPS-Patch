@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <bit>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 
@@ -24,13 +25,29 @@
 
 namespace Service::Nvidia::Devices {
 
+namespace {
+// How long a wait on a slot whose last waits were all cancelled may block for the GPU to catch up.
+constexpr std::chrono::milliseconds FailingWaitTimeout{50};
+} // namespace
+
 nvhost_ctrl::nvhost_ctrl(Core::System& system_, EventInterface& events_interface_,
                          NvCore::Container& core_)
     : nvdevice{system_}, events_interface{events_interface_}, core{core_},
       syncpoint_manager{core_.GetSyncpointManager()} {}
 
 nvhost_ctrl::~nvhost_ctrl() {
+    // A pending wait's host action captures this device. Remove it before the events go away, or
+    // a later syncpoint increment (the fence thread outlives the services at shutdown) would read
+    // freed memory and signal a freed event. Deregistering takes the host1x lock that actions run
+    // under, so no action for this device is running once it returns.
+    auto lock = NvEventsLock();
     for (auto& event : events) {
+        if (event.status.exchange(EventState::Cancelling, std::memory_order_acq_rel) ==
+            EventState::Waiting) {
+            system.Host1x().GetSyncpointManager().DeregisterHostAction(event.assigned_syncpt,
+                                                                       event.wait_handle);
+            event.wait_handle = {};
+        }
         if (!event.registered) {
             continue;
         }
@@ -147,13 +164,16 @@ NvResult nvhost_ctrl::IocCtrlEventWait(IocCtrlEventWaitParams& params, bool is_a
 
     const auto check_failing = [&]() {
         if (events[slot].fails > 2) {
-            {
-                auto lk = system.StallApplication();
-                host1x_syncpoint_manager.WaitHost(fence_id, target_value);
-                system.UnstallApplication();
+            // The guest cancelled its last waits on this slot because the GPU was behind. Give the
+            // GPU a bounded time to reach the fence, blocking only this caller: pausing every guest
+            // core (as before) hitched the whole game and could deadlock on GPU work that waits for
+            // the CPU. The count restarts either way, so a fence that stays out of reach does not
+            // block every following wait.
+            events[slot].fails = 0;
+            if (host1x_syncpoint_manager.WaitHostFor(fence_id, target_value, FailingWaitTimeout)) {
+                params.value.raw = target_value;
+                return true;
             }
-            params.value.raw = target_value;
-            return true;
         }
         return false;
     };
