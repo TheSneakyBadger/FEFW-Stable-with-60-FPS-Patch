@@ -861,10 +861,18 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
             return fmt::format("{}x{} format {} samples {}", info.size.width, info.size.height,
                                static_cast<u32>(info.format), info.num_samples);
         };
-        if (logged < 3) {
-            ++logged;
-            LOG_INFO(Render_Vulkan, "NVIDIA DLSS inputs: colour {}, motion {}, depth {}, output {}",
-                     describe(src_id), describe(motion_id), describe(depth_id), describe(dst_id));
+        // Logged again whenever the inputs change (a scene that renders differently), up to 200
+        // times a session, so a log shows what DLSS was given when something looks wrong.
+        {
+            static std::string last_inputs;
+            const std::string inputs =
+                fmt::format("colour {}, motion {}, depth {}, output {}", describe(src_id),
+                            describe(motion_id), describe(depth_id), describe(dst_id));
+            if (inputs != last_inputs && logged < 200) {
+                ++logged;
+                last_inputs = inputs;
+                LOG_INFO(Render_Vulkan, "NVIDIA DLSS inputs: {}", inputs);
+            }
         }
         if (!src_id || !dst_id || !motion_id || !depth_id) {
             return false;
