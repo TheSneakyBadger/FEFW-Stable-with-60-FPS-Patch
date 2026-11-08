@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <bitset>
 #include <chrono>
 #include <filesystem>
@@ -1705,6 +1706,13 @@ void Device::CollectPhysicalMemoryInfo() {
             const u64 three_quarters = local_memory / 4 * 3;
             device_access_memory =
                 std::min<u64>(device_access_memory, std::max<u64>(old_limit, three_quarters));
+        }
+        // EDEN_VRAM_LIMIT_MIB lowers the limit, to see how a smaller card behaves.
+        if (const char* value = std::getenv("EDEN_VRAM_LIMIT_MIB")) {
+            const u64 forced = std::strtoull(value, nullptr, 10) << 20;
+            if (forced != 0) {
+                device_access_memory = std::min<u64>(device_access_memory, forced);
+            }
         }
         LOG_INFO(Render_Vulkan, "Video memory: {} MiB of {} MiB may be used ({})",
                  device_access_memory >> 20, local_memory >> 20,
