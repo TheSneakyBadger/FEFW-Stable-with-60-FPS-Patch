@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <chrono>
 #include <cstdlib>
 #include <limits>
 #include "core/hle/service/am/service/native_video_layout.h"
@@ -889,6 +890,52 @@ private:
         }
         if (m_images->module) m_images->DrainRetiredMemories();
     }
+    // One line about every 10 seconds on how evenly frames reach the screen: frames, average and
+    // worst time between them, and how many took over 50 ms (a missed frame at 30 FPS is ~67 ms)
+    // and over 100 ms. Shows whether a PC keeps up without logging every frame. A gap over 2 s
+    // (loading, a pause, the window in the background) starts a new period instead of counting.
+    void LogFramePacing() {
+        using Clock = std::chrono::steady_clock;
+        struct Pacing {
+            Clock::time_point last{};
+            Clock::time_point period_start{};
+            u32 frames{};
+            double total_ms{};
+            double worst_ms{};
+            u32 over_50{};
+            u32 over_100{};
+        };
+        static Pacing pacing;
+        const auto now = Clock::now();
+        if (pacing.last == Clock::time_point{}) {
+            pacing.last = pacing.period_start = now;
+            return;
+        }
+        const double gap_ms = std::chrono::duration<double, std::milli>(now - pacing.last).count();
+        pacing.last = now;
+        if (gap_ms > 2000.0) {
+            pacing = Pacing{now, now};
+            return;
+        }
+        ++pacing.frames;
+        pacing.total_ms += gap_ms;
+        pacing.worst_ms = (std::max)(pacing.worst_ms, gap_ms);
+        if (gap_ms > 50.0) {
+            ++pacing.over_50;
+        }
+        if (gap_ms > 100.0) {
+            ++pacing.over_100;
+        }
+        if (now - pacing.period_start >= std::chrono::seconds{10}) {
+            LOG_INFO(Service_AM,
+                     "Frame pacing, last {:.0f} s: {} frames ({:.1f} FPS), average {:.1f} ms, worst {:.0f} ms, {} over 50 ms, {} over 100 ms",
+                     std::chrono::duration<double>(now - pacing.period_start).count(), pacing.frames,
+                     static_cast<double>(pacing.frames) /
+                         std::chrono::duration<double>(now - pacing.period_start).count(),
+                     pacing.total_ms / static_cast<double>(pacing.frames), pacing.worst_ms, pacing.over_50, pacing.over_100);
+            pacing = Pacing{now, now};
+        }
+    }
     Result QueueNativeImage(ClientState& state, const u32* packet) {
         const u32 slot = GraphicsSupervisorProtocol::DecodeBufferSlot(packet[4]);
         R_UNLESS(!state.player_display, Kernel::ResultNotImplemented);
@@ -978,6 +1025,7 @@ private:
             });
             system.CoreTiming().ScheduleLoopingEvent(std::chrono::milliseconds{1}, std::chrono::milliseconds{1}, m_release_poll);
         }
+        LogFramePacing();
         // Every frame (60 a second): at Info only the first few and when the size changes, so a long
         // session's log stays small enough to send. All of them at Debug.
         static u32 queued_logged{};
