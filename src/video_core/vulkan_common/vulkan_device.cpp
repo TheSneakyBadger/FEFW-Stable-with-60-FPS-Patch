@@ -1336,8 +1336,21 @@ bool Device::GetSuitability(bool requires_swapchain) {
     // Disable VertexInputDynamicState on old Intel Windows drivers
     if (extensions.vertex_input_dynamic_state) {
         const u32 version = (properties.properties.driverVersion << 3) >> 3;
+        // NVIDIA packs its version as major:10 minor:8 secondary:8 tertiary:6, which
+        // VK_MAKE_API_VERSION cannot hold (580 overflows its 7-bit major), so the old test was true
+        // for every driver. Compare it properly. It stays off by default all the same: turning it
+        // on changes every pipeline key, so every player's shader cache would rebuild, and the
+        // fork's pipeline cache has only been tested without it. EDEN_NVIDIA_VIDS=1 turns it on.
+        const u32 nv = properties.properties.driverVersion;
+        const u32 nv_major = nv >> 22;
+        const u32 nv_minor = (nv >> 14) & 0xff;
+        const u32 nv_secondary = (nv >> 6) & 0xff;
+        const bool nv_fixed = nv_major != 580 ? nv_major > 580
+                              : (nv_minor != 119 ? nv_minor > 119 : nv_secondary >= 2);
+        const char* const nv_vids = std::getenv("EDEN_NVIDIA_VIDS");
+        const bool nv_vids_on = nv_fixed && nv_vids != nullptr && nv_vids[0] == '1';
         if ((driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS && version < VK_MAKE_API_VERSION(27, 20, 100, 0))
-        || (driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY && version < VK_MAKE_API_VERSION(580, 119, 02, 0))) {
+        || (driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY && !nv_vids_on)) {
             LOG_WARNING(Render_Vulkan, "Disabling broken VK_EXT_vertex_input_dynamic_state");
             RemoveExtensionFeature(extensions.vertex_input_dynamic_state, features.vertex_input_dynamic_state, VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
         }
