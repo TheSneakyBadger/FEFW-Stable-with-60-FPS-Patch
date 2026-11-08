@@ -688,9 +688,23 @@ struct Memory::Impl {
         if (!gpu_device_memory) [[unlikely]] {
             gpu_device_memory = &system.Host1x().MemoryManager();
         }
-        const size_t core = system.GetCurrentHostThreadID();
-        auto& current_area = rasterizer_read_areas[core];
-        gpu_device_memory->ApplyOpOnPointer(p, scratch_buffers[core], [&](DAddr address) {
+        // Host threads that are not CPU cores (HLE service threads) have host thread ID 255, which
+        // indexed the per-core arrays far out of bounds and wrote into the heap. They now use an
+        // area and scratch buffer of their own (thread-local: no lock is held across OnCPURead,
+        // which can wait for the GPU).
+        const size_t thread_id = system.GetCurrentHostThreadID();
+        thread_local VideoCore::RasterizerDownloadArea host_read_area{};
+        thread_local Common::ScratchBuffer<u32> host_scratch;
+        thread_local const void* host_area_owner = nullptr;
+        const bool is_core = thread_id < Core::Hardware::NUM_CPU_CORES;
+        if (!is_core && host_area_owner != this) {
+            // A new emulation session: forget the previous one's area.
+            host_read_area = {};
+            host_area_owner = this;
+        }
+        auto& current_area = is_core ? rasterizer_read_areas[thread_id] : host_read_area;
+        auto& scratch = is_core ? scratch_buffers[thread_id] : host_scratch;
+        gpu_device_memory->ApplyOpOnPointer(p, scratch, [&](DAddr address) {
             const DAddr end_address = address + size;
             if (current_area.start_address <= address && end_address <= current_area.end_address)
                 [[likely]] {
