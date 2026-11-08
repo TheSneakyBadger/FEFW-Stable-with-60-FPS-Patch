@@ -126,6 +126,10 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
     const bool loop_safety_checks{!Settings::values.disable_shader_loop_safety_checks};
     // Safety counters of the loops being emitted, by loop header, innermost last.
     std::vector<std::pair<const IR::Block*, Id>> safety_counters;
+    // Counters to reset at the start of a loop's merge block. A loop whose header is the first
+    // block of an enclosing loop or if body has no block of its own to reset it on entry, so it is
+    // reset on the way out instead, ready for the next entry.
+    std::vector<std::pair<const IR::Block*, Id>> merge_resets;
     const auto make_safety_counter{[&ctx] {
         const Id pointer_type{ctx.TypePointer(spv::StorageClass::Private, ctx.U32[1])};
         const Id safety_counter{ctx.AddGlobalVariable(
@@ -160,8 +164,24 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             }
             current_block = node.data.block;
             ctx.AddLabel(label);
+            // OpPhi must open the block, so the resets go after the phis.
+            bool resets_done{false};
+            const auto emit_resets{[&] {
+                resets_done = true;
+                for (const auto& [merge, counter] : merge_resets) {
+                    if (merge == node.data.block) {
+                        ctx.OpStore(counter, ctx.Const(LOOP_SAFETY_ITERATIONS));
+                    }
+                }
+            }};
             for (IR::Inst& inst : node.data.block->Instructions()) {
+                if (!resets_done && inst.GetOpcode() != IR::Opcode::Phi) {
+                    emit_resets();
+                }
                 EmitInst(ctx, &inst);
+            }
+            if (!resets_done) {
+                emit_resets();
             }
             break;
         }
@@ -177,6 +197,10 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             const Id continue_label{node.data.loop.continue_block->Definition<Id>()};
             const Id endloop_label{node.data.loop.merge->Definition<Id>()};
 
+            if (loop_safety_checks && !safety_counters.empty() &&
+                safety_counters.back().first == current_block) {
+                merge_resets.emplace_back(node.data.loop.merge, safety_counters.back().second);
+            }
             ctx.OpLoopMerge(endloop_label, continue_label, spv::LoopControlMask::MaskNone);
             ctx.OpBranch(body_label);
             break;
