@@ -1043,25 +1043,37 @@ function(AddCIPackage)
             set(EXTRA_ARGS MODULE_PATH)
         endif()
 
-        # download sha512sum file
+        # download sha512sum file, once: it is kept next to the package cache, so later
+        # configures (every build reruns it) don't need GitHub for it. A release's files never
+        # change, so a kept sum stays right; a failed download leaves nothing behind.
         # TODO: CI pkgs
         set(sha512sum_url
             "https://${ARTIFACT_GIT_HOST}/${ARTIFACT_REPO}/releases/download/${ARTIFACT_VERSION}/${ARTIFACT}.sha512sum")
+        set(sha512sum_kept "${CPM_SOURCE_CACHE}/.sha512sums/${ARTIFACT}.sha512sum")
         set(sha512sum_file
             "${CMAKE_CURRENT_BINARY_DIR}/.cpmutil_${ARTIFACT}_sha512sum")
 
-        file(DOWNLOAD "${sha512sum_url}" "${sha512sum_file}"
-            STATUS sha512sum_status)
-        list(GET sha512sum_status 0 sha512sum_error)
+        if (EXISTS "${sha512sum_kept}")
+            file(READ "${sha512sum_kept}" sha512sum_hash)
+        else()
+            file(DOWNLOAD "${sha512sum_url}" "${sha512sum_file}"
+                STATUS sha512sum_status)
+            list(GET sha512sum_status 0 sha512sum_error)
 
-        if(sha512sum_error)
-            message(FATAL_ERROR "[CPMUtil] Failed to download sha512sum "
-                "for ${ARTIFACT_NAME} from ${sha512sum_url}")
+            if(sha512sum_error)
+                file(REMOVE "${sha512sum_file}")
+                message(FATAL_ERROR "[CPMUtil] Failed to download sha512sum "
+                    "for ${ARTIFACT_NAME} from ${sha512sum_url}")
+            endif()
+
+            file(READ "${sha512sum_file}" sha512sum_hash)
+            file(REMOVE "${sha512sum_file}")
+            string(STRIP "${sha512sum_hash}" sha512sum_hash)
+            if (sha512sum_hash MATCHES "^[0-9a-fA-F]+")
+                file(WRITE "${sha512sum_kept}" "${sha512sum_hash}")
+            endif()
         endif()
-
-        file(READ "${sha512sum_file}" sha512sum_hash)
         string(STRIP "${sha512sum_hash}" sha512sum_hash)
-        file(REMOVE "${sha512sum_file}")
 
         AddPackage(
             NAME ${ARTIFACT_PACKAGE}
