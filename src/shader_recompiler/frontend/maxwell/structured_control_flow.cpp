@@ -298,14 +298,33 @@ Node SiblingFromNephew(Node uncle, Node nephew) noexcept {
     return Tree::s_iterator_to(*it);
 }
 
+/// Returns true when left_sibling comes before right_sibling in their parent's children.
+/// Walks forward from both siblings in lockstep, so the cost is the distance between them or the
+/// shorter tail, instead of always the whole tail after right_sibling (quadratic in the number of
+/// top-level statements, since every forward goto asks this about its label).
 bool AreOrdered(Node left_sibling, Node right_sibling) noexcept {
+    if (left_sibling == right_sibling) {
+        return false;
+    }
     const Node end{right_sibling->up->children.end()};
-    for (auto it = right_sibling; it != end; ++it) {
-        if (it == left_sibling) {
+    Node from_left{left_sibling};
+    Node from_right{right_sibling};
+    while (true) {
+        ++from_left;
+        if (from_left == right_sibling) {
+            return true;
+        }
+        if (from_left == end) {
             return false;
         }
+        ++from_right;
+        if (from_right == left_sibling) {
+            return false;
+        }
+        if (from_right == end) {
+            return true;
+        }
     }
-    return true;
 }
 
 bool NeedsLift(Node goto_stmt, Node label_stmt) noexcept {
@@ -881,12 +900,19 @@ private:
         std::vector<IR::U1> demote_conds;
         u32 num_epilogues{};
         u32 branch_depth{};
+        u32 loop_depth{};
         for (const IR::AbstractSyntaxNode& node : syntax_list) {
             if (node.type == Type::If) {
                 ++branch_depth;
             }
             if (node.type == Type::EndIf) {
                 --branch_depth;
+            }
+            if (node.type == Type::Loop) {
+                ++loop_depth;
+            }
+            if (node.type == Type::Repeat) {
+                --loop_depth;
             }
             if (node.type != Type::Block) {
                 continue;
@@ -898,7 +924,11 @@ private:
             for (const IR::Inst& inst : node.data.block->Instructions()) {
                 const IR::Opcode op{inst.GetOpcode()};
                 if (op == IR::Opcode::DemoteToHelperInvocation) {
-                    demote_blocks.push_back(node.data.block);
+                    // A demote inside a loop is left in place: after the loop, its condition
+                    // would only hold the last iteration's value (and may not dominate the end).
+                    if (loop_depth == 0) {
+                        demote_blocks.push_back(node.data.block);
+                    }
                     break;
                 }
                 if (op == IR::Opcode::Epilogue) {
@@ -913,32 +943,45 @@ private:
             LOG_DEBUG(Shader, "Combining demotes with more than one return is not implemented.");
             return;
         }
-        s64 last_iterator_offset{};
         auto& asl{syntax_list};
+        // Check every demote before changing anything, so the syntax list is either fully
+        // rewritten or left untouched (returning halfway used to drop the demotes already erased).
+        // Each demote must be the only content of an if body: If, Block, EndIf, in that order,
+        // with a block that holds nothing but demotes (other instructions would be lost or moved).
+        std::vector<size_t> if_indices;
+        if_indices.reserve(demote_blocks.size());
+        size_t search_from{};
         for (const IR::Block* demote_block : demote_blocks) {
-            const auto start_it{asl.begin() + last_iterator_offset};
-            auto asl_it{std::find_if(start_it, asl.end(), [&](const IR::AbstractSyntaxNode& asn) {
-                return asn.type == Type::If && asn.data.if_node.body == demote_block;
-            })};
+            const auto asl_it{std::find_if(asl.begin() + static_cast<std::ptrdiff_t>(search_from),
+                                           asl.end(), [&](const IR::AbstractSyntaxNode& asn) {
+                                               return asn.type == Type::If &&
+                                                      asn.data.if_node.body == demote_block;
+                                           })};
             if (asl_it == asl.end()) {
                 // Demote without a conditional branch.
                 // No need to proceed since all fragment instances will be demoted regardless.
                 return;
             }
-            const IR::Block* const end_if = asl_it->data.if_node.merge;
-            demote_conds.push_back(asl_it->data.if_node.cond);
-            last_iterator_offset = std::distance(asl.begin(), asl_it);
-
-            asl_it = asl.erase(asl_it);
-            asl_it = std::find_if(asl_it, asl.end(), [&](const IR::AbstractSyntaxNode& asn) {
-                return asn.type == Type::Block && asn.data.block == demote_block;
-            });
-
-            asl_it = asl.erase(asl_it);
-            asl_it = std::find_if(asl_it, asl.end(), [&](const IR::AbstractSyntaxNode& asn) {
-                return asn.type == Type::EndIf && asn.data.end_if.merge == end_if;
-            });
-            asl_it = asl.erase(asl_it);
+            const size_t if_index{static_cast<size_t>(std::distance(asl.begin(), asl_it))};
+            if (if_index + 2 >= asl.size()) {
+                return;
+            }
+            const IR::AbstractSyntaxNode& body_node{asl[if_index + 1]};
+            const IR::AbstractSyntaxNode& end_if_node{asl[if_index + 2]};
+            if (body_node.type != Type::Block || body_node.data.block != demote_block ||
+                end_if_node.type != Type::EndIf ||
+                end_if_node.data.end_if.merge != asl_it->data.if_node.merge) {
+                LOG_DEBUG(Shader, "Demote branch is not a plain if body, not combining demotes.");
+                return;
+            }
+            for (const IR::Inst& inst : demote_block->Instructions()) {
+                if (inst.GetOpcode() != IR::Opcode::DemoteToHelperInvocation) {
+                    LOG_DEBUG(Shader, "Demote block has other instructions, not combining demotes.");
+                    return;
+                }
+            }
+            if_indices.push_back(if_index);
+            search_from = if_index + 3;
         }
         const auto epilogue_func{[](const IR::AbstractSyntaxNode& asn) {
             if (asn.type != Type::Block) {
@@ -951,6 +994,22 @@ private:
             }
             return false;
         }};
+        {
+            // The combined demote goes before the last epilogue block, which must exist and must
+            // not be the first node.
+            const auto epilogue_it{std::find_if(asl.rbegin(), asl.rend(), epilogue_func)};
+            if (epilogue_it == asl.rend() || std::next(epilogue_it) == asl.rend()) {
+                return;
+            }
+        }
+        for (const size_t if_index : if_indices) {
+            demote_conds.push_back(asl[if_index].data.if_node.cond);
+        }
+        // Erase back to front so the earlier indices stay valid.
+        for (auto it = if_indices.rbegin(); it != if_indices.rend(); ++it) {
+            const auto first{asl.begin() + static_cast<std::ptrdiff_t>(*it)};
+            asl.erase(first, first + 3);
+        }
         const auto reverse_it{std::find_if(asl.rbegin(), asl.rend(), epilogue_func)};
         const auto return_block_it{(reverse_it + 1).base()};
 

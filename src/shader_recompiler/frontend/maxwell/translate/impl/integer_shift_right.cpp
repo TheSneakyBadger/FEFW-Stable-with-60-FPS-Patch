@@ -30,22 +30,21 @@ void SHR(TranslatorVisitor& v, u64 insn, const IR::U32& shift) {
     if (shr.brev == 1) {
         base = v.ir.BitReverse(base);
     }
+    // Without .W, Maxwell saturates shifts of 32 or more: unsigned shifts give 0 and signed shifts
+    // fill with the sign bit. SPIR-V leaves such shifts undefined (AMD masks the amount to 5 bits),
+    // so clamp the amount before shifting rather than inspecting an undefined result.
+    const IR::U32 safe_shift = shr.is_wrapped == 0 ? v.ir.UMin(shift, v.ir.Imm32(31))
+                                                   : v.ir.BitwiseAnd(shift, v.ir.Imm32(31));
     IR::U32 result;
-    const IR::U32 safe_shift = shr.is_wrapped == 0 ? shift : v.ir.BitwiseAnd(shift, v.ir.Imm32(31));
     if (shr.is_signed == 1) {
+        // An arithmetic shift by 31 already is the sign fill.
         result = IR::U32{v.ir.ShiftRightArithmetic(base, safe_shift)};
     } else {
         result = IR::U32{v.ir.ShiftRightLogical(base, safe_shift)};
-    }
-
-    if (shr.is_wrapped == 0) {
-        const IR::U32 zero{v.ir.Imm32(0)};
-        const IR::U32 safe_bits{v.ir.Imm32(32)};
-
-        const IR::U1 is_negative{v.ir.ILessThan(result, zero, true)};
-        const IR::U1 is_safe{v.ir.ILessThan(shift, safe_bits, false)};
-        const IR::U32 clamped_value{v.ir.Select(is_negative, v.ir.Imm32(-1), zero)};
-        result = IR::U32{v.ir.Select(is_safe, result, clamped_value)};
+        if (shr.is_wrapped == 0) {
+            const IR::U1 is_safe{v.ir.ILessThan(shift, v.ir.Imm32(32), false)};
+            result = IR::U32{v.ir.Select(is_safe, result, v.ir.Imm32(0))};
+        }
     }
     v.X(shr.dest_reg, result);
 }

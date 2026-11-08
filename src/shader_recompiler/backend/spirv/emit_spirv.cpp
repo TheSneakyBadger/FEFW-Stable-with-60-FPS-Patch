@@ -122,11 +122,39 @@ Id TypeId(const EmitContext& ctx, IR::Type type) {
 }
 
 void Traverse(EmitContext& ctx, IR::Program& program) {
+    static constexpr u32 LOOP_SAFETY_ITERATIONS{0x2000};
+    const bool loop_safety_checks{!Settings::values.disable_shader_loop_safety_checks};
+    // Safety counters of the loops being emitted, by loop header, innermost last.
+    std::vector<std::pair<const IR::Block*, Id>> safety_counters;
+    const auto make_safety_counter{[&ctx] {
+        const Id pointer_type{ctx.TypePointer(spv::StorageClass::Private, ctx.U32[1])};
+        const Id safety_counter{ctx.AddGlobalVariable(
+            pointer_type, spv::StorageClass::Private, ctx.Const(LOOP_SAFETY_ITERATIONS))};
+        if (ctx.profile.supported_spirv >= 0x00010400) {
+            ctx.interfaces.push_back(safety_counter);
+        }
+        return safety_counter;
+    }};
     IR::Block* current_block{};
-    for (const IR::AbstractSyntaxNode& node : program.syntax_list) {
+    const IR::AbstractSyntaxList& syntax_list{program.syntax_list};
+    for (size_t node_index = 0; node_index < syntax_list.size(); ++node_index) {
+        const IR::AbstractSyntaxNode& node{syntax_list[node_index]};
         switch (node.type) {
         case IR::AbstractSyntaxNode::Type::Block: {
             const Id label{node.data.block->Definition<Id>()};
+            const bool is_loop_header{node_index + 1 < syntax_list.size() &&
+                                      syntax_list[node_index + 1].type ==
+                                          IR::AbstractSyntaxNode::Type::Loop};
+            if (loop_safety_checks && is_loop_header) {
+                // The block before a Loop node is its header. Each loop gets its own counter, and
+                // the block entering the header resets it, so that every entry into the loop (for
+                // example each iteration of an enclosing loop) has the full iteration budget.
+                const Id safety_counter{make_safety_counter()};
+                if (current_block) {
+                    ctx.OpStore(safety_counter, ctx.Const(LOOP_SAFETY_ITERATIONS));
+                }
+                safety_counters.emplace_back(node.data.block, safety_counter);
+            }
             if (current_block) {
                 ctx.OpBranch(label);
             }
@@ -166,12 +194,18 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             break;
         case IR::AbstractSyntaxNode::Type::Repeat: {
             Id cond{ctx.Def(node.data.repeat.cond)};
-            if (!Settings::values.disable_shader_loop_safety_checks) {
-                const Id pointer_type{ctx.TypePointer(spv::StorageClass::Private, ctx.U32[1])};
-                const Id safety_counter{ctx.AddGlobalVariable(
-                    pointer_type, spv::StorageClass::Private, ctx.Const(0x2000u))};
-                if (ctx.profile.supported_spirv >= 0x00010400) {
-                    ctx.interfaces.push_back(safety_counter);
+            if (loop_safety_checks) {
+                const auto counter_it{std::find_if(
+                    safety_counters.rbegin(), safety_counters.rend(), [&](const auto& entry) {
+                        return entry.first == node.data.repeat.loop_header;
+                    })};
+                Id safety_counter{};
+                if (counter_it != safety_counters.rend()) {
+                    safety_counter = counter_it->second;
+                    safety_counters.erase(std::next(counter_it).base());
+                } else {
+                    // Header not seen: a counter that is never reset, as before.
+                    safety_counter = make_safety_counter();
                 }
                 const Id old_counter{ctx.OpLoad(ctx.U32[1], safety_counter)};
                 const Id new_counter{ctx.OpISub(ctx.U32[1], old_counter, ctx.Const(1u))};

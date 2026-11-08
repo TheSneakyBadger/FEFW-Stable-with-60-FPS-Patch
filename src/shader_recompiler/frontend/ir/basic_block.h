@@ -8,6 +8,7 @@
 
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <span>
 #include <vector>
 #include <bit>
@@ -82,11 +83,29 @@ public:
         return std::bit_cast<DefinitionType>(definition);
     }
 
-    void SetSsaRegValue(IR::Reg reg, const Value& value) noexcept {
-        ssa_reg_values[RegIndex(reg)] = value;
+    void SetSsaRegValue(IR::Reg reg, const Value& value) {
+        const size_t index{RegIndex(reg)};
+        if (index < NUM_BLOCK_REGS) {
+            ssa_reg_values[index] = value;
+            return;
+        }
+        if (!ssa_high_reg_values) {
+            // Only shadowed native registers live above the guest register file: allocate their
+            // slots the first time one is defined in this block.
+            ssa_high_reg_values = std::make_unique<std::array<Value, NUM_REGS - NUM_BLOCK_REGS>>();
+        }
+        (*ssa_high_reg_values)[index - NUM_BLOCK_REGS] = value;
     }
     const Value& SsaRegValue(IR::Reg reg) const noexcept {
-        return ssa_reg_values[RegIndex(reg)];
+        static const Value empty_value{};
+        const size_t index{RegIndex(reg)};
+        if (index < NUM_BLOCK_REGS) {
+            return ssa_reg_values[index];
+        }
+        if (!ssa_high_reg_values) {
+            return empty_value;
+        }
+        return (*ssa_high_reg_values)[index - NUM_BLOCK_REGS];
     }
 
     /// Number of other fixed-count variables the SSA pass stores in blocks
@@ -191,8 +210,16 @@ private:
     /// Block immediate successors
     std::vector<Block*> imm_successors;
 
+    /// Registers whose SSA values are stored inline in every block: the guest register file.
+    /// Registers above it (native lowering shadows) are rare and stored out of line, so that
+    /// every block does not carry NUM_REGS slots (12 KB instead of 4 KB per block).
+    static constexpr size_t NUM_BLOCK_REGS = 256;
+    static_assert(NUM_BLOCK_REGS <= NUM_REGS);
+
     /// Intrusively store the value of a register in the block.
-    std::array<Value, NUM_REGS> ssa_reg_values;
+    std::array<Value, NUM_BLOCK_REGS> ssa_reg_values;
+    /// Values of registers at or above NUM_BLOCK_REGS, allocated on the first definition.
+    std::unique_ptr<std::array<Value, NUM_REGS - NUM_BLOCK_REGS>> ssa_high_reg_values;
     /// Intrusively store the value of the other fixed-count SSA variables in the block.
     std::array<Value, NUM_SSA_VALUES> ssa_values;
     /// Intrusively store if the block is sealed in the SSA pass.
