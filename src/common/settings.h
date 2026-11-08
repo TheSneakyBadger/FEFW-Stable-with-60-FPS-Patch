@@ -379,6 +379,10 @@ struct Values {
                                                        true};
     // NVIDIA DLSS (through NVIDIA Streamline) in place of a game's own DLSS.
     SwitchableSetting<bool> nvidia_dlss{linkage, false, "nvidia_dlss", Category::Renderer};
+    // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
+    // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
+    // game starts.
+    SwitchableSetting<bool> hdr_output{linkage, false, "hdr_output", Category::Renderer};
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};
@@ -1013,6 +1017,11 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode = f
 /// Whether ASTC may be re-compressed to BC1/BC3 on the GPU (Vulkan, ASTC decoding on the GPU).
 /// EDEN_GPU_BCN_TRANSCODE=0 turns it off, for comparisons.
 bool GpuBcnTranscodeAllowed();
+
+/// Whether the window's swapchain is HDR10 (set by the Vulkan swapchain when hdr_output is on and
+/// the display accepts HDR10). Games are only told the display is HDR while this is true.
+bool HdrOutputActive();
+void SetHdrOutputActive(bool active);
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.

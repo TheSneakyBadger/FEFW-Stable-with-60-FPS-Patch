@@ -153,6 +153,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "the HUD, menus and movies centred at 16:9, and stretches the picture to the window. "
               "For 21:9 monitors only; play fullscreen.\nOnly for game version 1.1.0. Takes effect "
               "when the game starts."));
+    INSERT(Settings, hdr_output, tr("HDR output (HDR10)"),
+           tr("Shows the game in HDR on an HDR display. Turn on HDR in Windows first (Settings > "
+              "Display > Use HDR).\nFire Emblem: Fortune's Weave then makes its own HDR picture: "
+              "set its Brightness and UI Brightness in the game's options.\nWithout Windows HDR "
+              "the picture stays SDR. Takes effect when a game starts."));
     INSERT(Settings, nvidia_dlss, tr("Use NVIDIA DLSS in place of the game's DLSS"),
            tr("Uses NVIDIA DLSS on GeForce RTX cards in place of a Switch 2 game's own DLSS "
               "(Fire Emblem: Fortune's Weave).\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS "

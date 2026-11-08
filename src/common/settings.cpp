@@ -374,6 +374,20 @@ namespace {
 std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::Auto};
 }
 
+namespace {
+std::atomic<bool> hdr_output_active{false};
+}
+
+bool HdrOutputActive() {
+    return hdr_output_active.load(std::memory_order_relaxed);
+}
+
+void SetHdrOutputActive(bool active) {
+    if (hdr_output_active.exchange(active, std::memory_order_relaxed) != active) {
+        LOG_INFO(Common, "HDR output: {}", active ? "on (HDR10)" : "off (SDR)");
+    }
+}
+
 bool GpuBcnTranscodeAllowed() {
     static const bool allowed = [] {
         const char* value = std::getenv("EDEN_GPU_BCN_TRANSCODE");

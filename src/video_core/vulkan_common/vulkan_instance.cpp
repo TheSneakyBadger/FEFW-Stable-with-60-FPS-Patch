@@ -87,6 +87,9 @@ namespace {
 #endif
     if (enable_validation && AreExtensionsSupported(dld, properties, std::array{VK_EXT_DEBUG_UTILS_EXTENSION_NAME}))
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    // HDR10 swapchain colour spaces (HDR output).
+    if (AreExtensionsSupported(dld, properties, std::array{VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME}))
+        extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 #ifdef EGLANTINE_STREAMLINE
     // What NVIDIA's DLSS asks for through Streamline, where available. Static: the returned
     // pointers must outlive this call.

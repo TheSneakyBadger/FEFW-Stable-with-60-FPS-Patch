@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #ifdef __ANDROID__
@@ -27,7 +28,26 @@ namespace Vulkan {
 
 namespace {
 
-VkSurfaceFormatKHR ChooseSwapSurfaceFormat(vk::Span<VkSurfaceFormatKHR> formats) {
+VkSurfaceFormatKHR ChooseSwapSurfaceFormat(vk::Span<VkSurfaceFormatKHR> formats, bool want_hdr) {
+    if (want_hdr) {
+        // HDR output: a 10-bit HDR10 (PQ, BT.2020) surface, offered while Windows HDR is on. The
+        // game's own HDR frames are already PQ-encoded 10-bit and are passed through unchanged.
+        for (const VkFormat hdr_format :
+             {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32}) {
+            const auto hdr = std::find_if(formats.begin(), formats.end(), [&](const auto& format) {
+                return format.format == hdr_format &&
+                       format.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
+            });
+            if (hdr != formats.end()) {
+                return *hdr;
+            }
+        }
+        static bool logged = false;
+        if (!std::exchange(logged, true)) {
+            LOG_WARNING(Render_Vulkan, "HDR output is on, but the display offers no HDR10 format "
+                                       "(is HDR on in Windows display settings?): using SDR");
+        }
+    }
     if (formats.size() == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
         VkSurfaceFormatKHR format;
         format.format = VK_FORMAT_B8G8R8A8_UNORM;
@@ -283,7 +303,9 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
                                  VK_PRESENT_MODE_FIFO_RELAXED_KHR) != present_modes.end();
 
     const VkCompositeAlphaFlagBitsKHR alpha_flags{ChooseAlphaFlags(capabilities)};
-    surface_format = ChooseSwapSurfaceFormat(formats);
+    surface_format = ChooseSwapSurfaceFormat(formats, Settings::values.hdr_output.GetValue());
+    is_hdr = surface_format.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
+    Settings::SetHdrOutputActive(is_hdr);
     present_mode = ChooseSwapPresentMode(has_imm, has_mailbox, has_fifo_relaxed);
 
     u32 requested_image_count{capabilities.minImageCount + 1};
@@ -368,6 +390,9 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
 #else
     image_view_format = VK_FORMAT_B8G8R8A8_UNORM;
 #endif
+    if (is_hdr) {
+        image_view_format = surface_format.format;
+    }
 }
 
 void Swapchain::CreateSemaphores() {

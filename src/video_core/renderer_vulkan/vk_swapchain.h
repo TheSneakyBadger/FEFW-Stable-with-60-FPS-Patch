@@ -141,6 +141,7 @@ private:
     VkExtent2D extent{};
     VkPresentModeKHR present_mode{};
     VkSurfaceFormatKHR surface_format{};
+    bool is_hdr{}; ///< The surface is HDR10 (hdr_output on and offered by the display).
     bool has_imm{false};
     bool has_mailbox{false};
     bool has_fifo_relaxed{false};

@@ -1204,6 +1204,10 @@ private:
     }
     static constexpr u32 SdrPeakLuminanceNits = 400;
     static constexpr u32 HdrPaperWhiteNits = 203;
+    // Observed with Fortune's Weave: format 2 turns on its HDR output and HDR options (Brightness,
+    // UI Brightness). The peak is a typical HDR10 display's; the game's Brightness option sets it.
+    static constexpr u64 HdrDisplayFormat = 2;
+    static constexpr u32 HdrPeakLuminanceNits = 1000;
 
     void GetHdrStatus(HLERequestContext& ctx) {
         const auto* packet = ctx.CommandBuffer();
@@ -1219,6 +1223,12 @@ private:
                 // typical SDR panel's peak.
                 format = 1;
                 peak_nits = SdrPeakLuminanceNits;
+                if (Settings::HdrOutputActive()) {
+                    // The window is HDR10: report an HDR display, so the game renders and sends
+                    // its own PQ-encoded HDR picture (in 10-bit frames).
+                    format = HdrDisplayFormat;
+                    peak_nits = HdrPeakLuminanceNits;
+                }
                 result = ResultSuccess;
             }
         }
