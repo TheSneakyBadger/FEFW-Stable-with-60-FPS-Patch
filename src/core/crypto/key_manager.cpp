@@ -637,6 +637,9 @@ void KeyManager::LoadFromFile(const std::filesystem::path& file_path, bool is_ti
                     }
 
                     const auto index = std::strtoul(out[0].substr(8, 2).c_str(), nullptr, 16);
+                    if (index >= keyblobs.size()) {
+                        continue;
+                    }
                     keyblobs[index] = Common::HexStringToArray<0x90>(out[1]);
                 } else if (out[0].compare(0, 18, "encrypted_keyblob_") == 0) {
                     if (!ValidCryptoRevisionString(out[0], 18, 2)) {
@@ -644,6 +647,9 @@ void KeyManager::LoadFromFile(const std::filesystem::path& file_path, bool is_ti
                     }
 
                     const auto index = std::strtoul(out[0].substr(18, 2).c_str(), nullptr, 16);
+                    if (index >= encrypted_keyblobs.size()) {
+                        continue;
+                    }
                     encrypted_keyblobs[index] = Common::HexStringToArray<0xB0>(out[1]);
                 } else if (out[0].compare(0, 20, "eticket_extended_kek") == 0) {
                     eticket_extended_kek = Common::HexStringToArray<576>(out[1]);
