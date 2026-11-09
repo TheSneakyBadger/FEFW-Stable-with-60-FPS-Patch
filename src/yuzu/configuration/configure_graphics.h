@@ -114,4 +114,5 @@ private:
     QComboBox* resolution_combobox;
     QComboBox* upscaler_combobox{};
     QLabel* upscaler_quality_warning{};
+    QWidget* upscaler_quality_widget{};
 };

@@ -350,6 +350,7 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             group_layout->setContentsMargins(0, 0, 0, 0);
             group_layout->setSpacing(2);
             group_layout->addWidget(widget);
+            upscaler_quality_widget = widget;
             upscaler_quality_warning = new QLabel(group);
             upscaler_quality_warning->setWordWrap(true);
             upscaler_quality_warning->setStyleSheet(QStringLiteral("color: #e0a030;"));
@@ -519,6 +520,13 @@ void ConfigureGraphics::UpdateUpscalerQualityWarning() {
     if (!upscaler_quality_warning) {
         return;
     }
+    const bool game_dlss =
+        upscaler_combobox &&
+        upscaler_combobox->currentData().toUInt() == static_cast<u32>(Settings::Upscaler::GameDlss);
+    // The game's own DLSS has no quality modes: grey the list out.
+    if (upscaler_quality_widget) {
+        upscaler_quality_widget->setEnabled(!game_dlss);
+    }
     QString warning;
     if (resolution_combobox &&
         resolution_combobox->currentData().toUInt() !=
@@ -526,8 +534,7 @@ void ConfigureGraphics::UpdateUpscalerQualityWarning() {
         warning = tr("Upscaler quality only works at 1X resolution. At this resolution the 3D "
                      "scene is drawn at Performance (half size) and the whole picture is scaled "
                      "instead.");
-    } else if (upscaler_combobox && upscaler_combobox->currentData().toUInt() ==
-                                        static_cast<u32>(Settings::Upscaler::GameDlss)) {
+    } else if (game_dlss) {
         warning = tr("Upscaler quality doesn't apply to the game's own DLSS: it always draws "
                      "the 3D scene at Performance.");
     }
