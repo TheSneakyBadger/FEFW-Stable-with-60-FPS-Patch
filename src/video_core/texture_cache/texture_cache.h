@@ -77,6 +77,13 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
             (std::max)((std::min)(device_local_memory - min_vacancy_critical, min_spacing_critical),
                      DEFAULT_CRITICAL_MEMORY));
         minimum_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+        // Clean up earlier on big cards: faster above 70% of the limit and hard above 85%, not
+        // 2.4 GB and 0.8 GB below it. Long sessions crept towards the limit (where other
+        // allocations and the driver push it over and performance drops); this keeps a margin
+        // that grows with the card. 8 GB cards change little.
+        expected_memory = (std::min)(expected_memory, static_cast<u64>(device_local_memory) / 10 * 7);
+        critical_memory = (std::min)(critical_memory, static_cast<u64>(device_local_memory) / 20 * 17);
+        critical_memory = (std::max)(critical_memory, expected_memory + 256_MiB);
     } else {
         expected_memory = DEFAULT_EXPECTED_MEMORY + 512_MiB;
         critical_memory = DEFAULT_CRITICAL_MEMORY + 1_GiB;
@@ -284,6 +291,8 @@ void TextureCache<P>::TickFrame() {
         for (const u64 bytes : sentenced_bytes) {
             pending_free += bytes;
         }
+        // At most 1 GiB: an estimate that ran high would otherwise hold cleanup back.
+        pending_free = (std::min)(pending_free, u64{1_GiB});
         const u64 device_usage = runtime.GetDeviceMemoryUsage();
         total_used_memory = device_usage > pending_free ? device_usage - pending_free : 0;
     }
