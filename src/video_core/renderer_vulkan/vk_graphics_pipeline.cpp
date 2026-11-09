@@ -615,8 +615,14 @@ void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {
     transitions.push_back(transition);
 }
 
+GraphicsPipeline::SharedTextureArrays& GraphicsPipeline::SharedArrays() {
+    static SharedTextureArrays arrays;
+    return arrays;
+}
+
 template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
+    ++SharedArrays().draw;
     if (std::any_of(stage_infos.begin(), stage_infos.end(), [](const auto& info) {
             return info.stores[Shader::IR::Attribute::VprsTableIndex];
         })) {
@@ -947,67 +953,89 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             if (desc.has_secondary) {
                 gpu_memory->ReadBlockUnsafe(secondary, cbuf_words.data() + span, span);
             }
-            auto cached = std::ranges::find(buffer_texture_handles, &desc, &BufferTextureHandles::desc);
-            if (cached != buffer_texture_handles.end() && cached->cacheable &&
-                cached->count == desc.count && cached->via_header_index == via_header_index &&
-                cached->bytes == cbuf_words) {
+            // Shared decodes (SharedArrays): this pipeline's last one for the array first (the array
+            // usually did not change), then any pipeline's decode of the same words and shape.
+            auto& shared = SharedArrays();
+            const auto mix = [](u64 hash, u64 value) {
+                hash = (hash ^ value) * 0x9E3779B97F4A7C15ULL;
+                return hash ^ (hash >> 31);
+            };
+            u64 shape = 0x6A09E667F3BCC909ULL;
+            shape = mix(shape, static_cast<u64>(desc.type));
+            shape = mix(shape, (desc.is_depth ? 1 : 0) | (desc.is_multisample ? 2 : 0) |
+                                   (desc.is_integer ? 4 : 0) | (desc.has_secondary ? 8 : 0) |
+                                   (via_header_index ? 16 : 0));
+            shape = mix(shape, desc.count);
+            shape = mix(shape, desc.size_shift);
+            shape = mix(shape, desc.shift_left);
+            shape = mix(shape, desc.secondary_shift_left);
+            const auto same_array = [&](const SharedTextureArray& entry) {
+                return entry.shape == shape && entry.handles.count == desc.count &&
+                       entry.handles.via_header_index == via_header_index &&
+                       entry.handles.bytes == cbuf_words;
+            };
+            auto last_key = std::ranges::find(shared_array_keys, &desc,
+                                              &std::pair<const Shader::TextureDescriptor*, u64>::first);
+            const auto use = [&](std::list<SharedTextureArray>::iterator it) {
+                it->last_draw = shared.draw;
+                shared.entries.splice(shared.entries.begin(), shared.entries, it);
+                if (last_key != shared_array_keys.end()) {
+                    last_key->second = it->key;
+                } else {
+                    shared_array_keys.emplace_back(&desc, it->key);
+                }
+                return &it->handles;
+            };
+            if (last_key != shared_array_keys.end()) {
+                if (const auto it = shared.by_key.find(last_key->second);
+                    it != shared.by_key.end() && same_array(*it->second)) {
+                    if (stats) {
+                        ++compact_stats.cbuf_reused;
+                    }
+                    return use(it->second);
+                }
+            }
+            const u64 key = mix(Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
+                                                   cbuf_words.size()),
+                                shape);
+            const auto existing = shared.by_key.find(key);
+            if (existing != shared.by_key.end() && same_array(*existing->second)) {
                 if (stats) {
                     ++compact_stats.cbuf_reused;
+                    ++compact_stats.cbuf_seen_before;
                 }
-                return &*cached;
+                return use(existing->second);
             }
             if (stats) {
                 ++compact_stats.cbuf_decoded;
-                // Statistics: would a cache shared between arrays and pipelines find this array?
-                // (Recent words hashes of every decoded array, by texture type, oldest dropped.)
-                static thread_local std::vector<u64> recent_words;
-                static thread_local size_t recent_next = 0;
-                const u64 words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
-                                                          cbuf_words.size()) ^
-                                       (u64{static_cast<u32>(desc.type)} << 56) ^ (desc.is_depth ? 1 : 0);
-                if (std::ranges::find(recent_words, words_hash) != recent_words.end()) {
-                    ++compact_stats.cbuf_seen_before;
-                }
-                if (recent_words.size() < 256) {
-                    recent_words.push_back(words_hash);
-                } else {
-                    recent_words[recent_next] = words_hash;
-                    recent_next = (recent_next + 1) % recent_words.size();
-                }
-                if (cached != buffer_texture_handles.end() &&
-                    cached->compact.element_tics.size() == desc.count) {
-                    // Same TIC list as the table had (another sampler or order only)?
-                    bool same = true;
-                    for (u32 index = 0; index < desc.count && same; ++index) {
-                        const u64 offset = u64{index} << desc.size_shift;
-                        u32 word;
-                        std::memcpy(&word, cbuf_words.data() + offset, sizeof(word));
-                        u32 raw = word;
-                        if (desc.has_secondary) {
-                            raw = word << desc.shift_left;
-                            std::memcpy(&word, cbuf_words.data() + span + offset, sizeof(word));
-                            raw |= word << desc.secondary_shift_left;
-                        }
-                        same = TexturePair(raw, via_header_index).first ==
-                               cached->compact.element_tics[index];
-                    }
-                    if (same) {
-                        ++compact_stats.cbuf_same_tics;
-                    }
-                }
             }
             VideoCommon::BackStats::Mark(VideoCommon::BackStats::Handles);
+            // A new decode: the least recently used entry's storage is reused (its table keeps its
+            // written descriptors for patching), unless a draw being configured now uses it.
+            constexpr size_t max_shared_arrays = 256;
+            std::list<SharedTextureArray>::iterator slot;
+            if (existing != shared.by_key.end() && existing->second->last_draw != shared.draw) {
+                slot = existing->second; // same key, other words (a hash collision): replace it
+            } else if (shared.entries.size() >= max_shared_arrays &&
+                       shared.entries.back().last_draw != shared.draw) {
+                slot = std::prev(shared.entries.end());
+                if (const auto old = shared.by_key.find(slot->key);
+                    old != shared.by_key.end() && old->second == slot) {
+                    shared.by_key.erase(old);
+                }
+            } else {
+                shared.entries.emplace_back();
+                slot = std::prev(shared.entries.end());
+            }
+            slot->key = key;
+            slot->shape = shape;
+            shared.by_key.insert_or_assign(key, slot);
             const auto word_at = [&](u64 offset) {
                 u32 word;
                 std::memcpy(&word, cbuf_words.data() + offset, sizeof(word));
                 return word;
             };
-            // Decoded in place (nothing below throws), reusing the entry's storage: these arrays may
-            // change on every draw, and the table keeps its written descriptors for patching (the
-            // banks usually stay the same when the array changes).
-            BufferTextureHandles& decoded = cached != buffer_texture_handles.end()
-                                                ? *cached
-                                                : buffer_texture_handles.emplace_back();
+            BufferTextureHandles& decoded = slot->handles;
             decoded.desc = &desc;
             decoded.source = {};
             decoded.count = desc.count;
@@ -1030,7 +1058,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             decoded.bytes.assign(cbuf_words.begin(), cbuf_words.end());
             decoded.compact.Build(decoded.handles, decoded.excluded);
             VideoCommon::BackStats::Mark(VideoCommon::BackStats::TableBuild);
-            return &decoded;
+            return use(slot);
         }};
         const auto add_image{[&](const auto& desc, bool blacklist) LAMBDA_FORCEINLINE {
             for (u32 index = 0; index < desc.count; ++index) {

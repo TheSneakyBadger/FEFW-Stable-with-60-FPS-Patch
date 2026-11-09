@@ -11,12 +11,14 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <list>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <type_traits>
 #include <vector>
 
+#include "common/container/unordered_map.h"
 #include "common/thread_worker.h"
 #include "shader_recompiler/shader_info.h"
 #include "video_core/engines/maxwell_3d.h"
@@ -207,6 +209,26 @@ private:
     };
     /// A deque: draws keep pointers to these (compact blocks) while other arrays are added.
     std::deque<BufferTextureHandles> buffer_texture_handles;
+
+    /// Texture arrays read from constant buffers, decoded once and shared by every pipeline: in
+    /// busy scenes most arrays a draw reads were just decoded for another pipeline (the Saramis hub:
+    /// 97% of the arrays that changed). Keyed by the words and everything that shapes the
+    /// descriptors written for them (texture type, depth, decode parameters), so a shared table's
+    /// written descriptors are valid for every user. Used only by the thread that configures draws.
+    struct SharedTextureArray {
+        u64 key{};
+        u64 shape{};
+        u64 last_draw{};
+        BufferTextureHandles handles;
+    };
+    struct SharedTextureArrays {
+        std::list<SharedTextureArray> entries; ///< Most recently used first; stable addresses
+        ::Common::unordered_map<u64, std::list<SharedTextureArray>::iterator> by_key;
+        u64 draw{};                            ///< Draws configured (no eviction of this draw's)
+    };
+    static SharedTextureArrays& SharedArrays();
+    /// Per array of this pipeline: the key of the shared decode it used last.
+    std::vector<std::pair<const Shader::TextureDescriptor*, u64>> shared_array_keys;
     std::array<u32, 5> enabled_uniform_buffer_masks{};
     VideoCommon::UniformBufferSizes uniform_buffer_sizes{};
     u32 num_descriptor_entries{};
