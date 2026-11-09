@@ -23,6 +23,9 @@
 #include "input_common/drivers/tas_input.h"
 #include "qt_common/config/qt_config.h"
 #include "yuzu/fefw_updater.h"
+
+#include <QFuture>
+#include <QFutureWatcher>
 #include "qt_common/qt_common.h"
 #include "qt_common/util/game.h"
 #include "yuzu/hotkeys.h"
