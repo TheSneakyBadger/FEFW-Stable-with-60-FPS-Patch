@@ -292,10 +292,10 @@ void TextureCache<P>::TickFrame() {
     // The driver still counts the images a pass freed until sentenced_images destroys them,
     // TICKS_TO_DESTROY frames later, so the next passes saw no drop and evicted again (on 8 GB
     // cards several times what was needed). Wait those frames after a pass that freed something,
-    // unless use is over the limit itself. (v1.6.2 instead took the pending frees off the measured
+    // unless use is past the hard threshold, where v1.6.1 cleaned up every frame. (v1.6.2 instead took the pending frees off the measured
     // use, which under steady eviction let real use creep past the limit on 6 GB cards.)
     if (total_used_memory > minimum_memory &&
-        (frame_tick >= collect_quiet_until || total_used_memory >= memory_limit)) {
+        (frame_tick >= collect_quiet_until || total_used_memory >= critical_memory)) {
         const u32 freed = RunGarbageCollector();
         if (freed != 0) {
             collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
