@@ -686,7 +686,10 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, size_t gu
         unflushed_bytes = 0;
     }
     ++unflushed_decodes;
-    unflushed_bytes += guest_size_bytes;
+    // Counted as decoded RGBA8 (a 16-byte ASTC block becomes block_w x block_h x 4 bytes): the
+    // re-compression memory cap counts the decode images, and compressed sizes let a batch of
+    // 8x8 textures run far past it before it could recycle them.
+    unflushed_bytes += guest_size_bytes * block_dims[0] * block_dims[1] / 4;
     if (unflushed_decodes >= 8 || unflushed_bytes >= (size_t{16} << 20)) {
         scheduler.Flush();
     }
