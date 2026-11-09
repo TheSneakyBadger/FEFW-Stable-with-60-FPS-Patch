@@ -1,5 +1,12 @@
 # fsr4-vk in Fortune's Eden
 
+**Correction (v1.6.4):** the `amd_fidelityfx_upscaler_vk.dll` shipped with Fortune's Eden v1.6.2
+and later is not built from this source. It is AMD's own signed FidelityFX (Vulkan) Upscaler
+Library (FSR Upscaling 4.1.2, FSR SDK 2.4), redistributed unmodified under the FidelityFX SDK
+licence; see `licenses/amd-fsr4` in the package. The emulator only compiles in the FidelityFX API
+headers kept here in `third_party/fidelityfx-api` (MIT, AMD) to call it. The rest of this folder
+is fsr4-vk's source as it was vendored, kept for reference.
+
 Fortune's Eden ships `amd_fidelityfx_upscaler_vk.dll`, built from
 [fsr4-vk](https://github.com/Astyyyyy/fsr4-vk) (GPL-3.0-only, see `LICENSE`) at commit
 `b0125ea` ("add more windows fp8 performance patches"). The emulator loads it at run time for
