@@ -1136,15 +1136,20 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
         if (!src_range || !motion_range || !depth_range || !dst_range) {
             return false;
         }
-        const auto view = [&](ImageId id, const SubresourceRange& range) {
+        // Views in the formats the evaluation itself reads (its texture descriptors), not the
+        // images' own: an image created for other data at the same memory (an 8-bit sRGB target
+        // the motion vectors were later drawn into through an R16G16 float view, seen in a
+        // cutscene) would otherwise hand the upscaler the wrong format, and garbage motion.
+        const auto view = [&](ImageId id, const SubresourceRange& range,
+                              const Tegra::Texture::TICEntry& tic) {
             return FindOrEmplaceImageView(
-                id, ImageViewInfo(ImageViewType::e2D, slot_images[id].info.format, range));
+                id, ImageViewInfo(ImageViewType::e2D, ImageInfo(tic).format, range));
         };
-        const ImageViewId src_view = view(src_id, *src_range);
-        const ImageViewId motion_view = view(motion_id, *motion_range);
-        const ImageViewId depth_view = view(depth_id, *depth_range);
+        const ImageViewId src_view = view(src_id, *src_range, src);
+        const ImageViewId motion_view = view(motion_id, *motion_range, motion_vectors);
+        const ImageViewId depth_view = view(depth_id, *depth_range, depth);
         const auto [dst_framebuffer_id, dst_view] = RenderTargetFromImage(
-            dst_id, ImageViewInfo(ImageViewType::e2D, slot_images[dst_id].info.format, *dst_range));
+            dst_id, ImageViewInfo(ImageViewType::e2D, ImageInfo(dst).format, *dst_range));
         // After the views: creating them may reallocate the framebuffer slots.
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
         return runtime.TemporalUpscale(dst_framebuffer, slot_image_views[dst_view],
