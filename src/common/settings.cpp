@@ -377,6 +377,15 @@ std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::A
 
 namespace {
 std::atomic<bool> hdr_output_active{false};
+std::atomic<const char*> active_upscaler{nullptr};
+}
+
+const char* ActiveUpscaler() {
+    return active_upscaler.load(std::memory_order_relaxed);
+}
+
+void SetActiveUpscaler(const char* name) {
+    active_upscaler.store(name, std::memory_order_relaxed);
 }
 
 bool HdrOutputActive() {

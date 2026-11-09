@@ -1030,6 +1030,11 @@ bool GpuBcnTranscodeAllowed();
 bool HdrOutputActive();
 void SetHdrOutputActive(bool active);
 
+/// The upscaler that last replaced or ran a game's DLSS upscale (a static string such as
+/// "AMD FSR 3.1"), or nullptr before any has run this boot. Shown in the status bar.
+const char* ActiveUpscaler();
+void SetActiveUpscaler(const char* name);
+
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.
 AstcRecompression EffectiveAstcRecompression();

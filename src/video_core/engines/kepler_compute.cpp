@@ -485,6 +485,7 @@ bool KeplerCompute::FinishDlssEvaluation(bool network_skipped) {
         return true;
     }
     if (!network_skipped) {
+        Settings::SetActiveUpscaler("Game's own DLSS");
         return false;
     }
     // The network didn't run this frame: keep the output fed with a plain upscale.

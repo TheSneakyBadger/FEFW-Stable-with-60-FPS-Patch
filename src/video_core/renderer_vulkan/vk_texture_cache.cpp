@@ -1379,15 +1379,21 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
     if (choice == Settings::Upscaler::Fsr4) {
         if (Fsr4Upscale(dst_framebuffer, dst, input_color, motion_vectors, depth, render_size,
                         jitter, motion_scale)) {
+            Settings::SetActiveUpscaler("AMD FSR 4");
             return true;
         }
     } else if (choice == Settings::Upscaler::NvidiaDlss &&
                NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
                                  render_size, jitter, motion_scale)) {
+        Settings::SetActiveUpscaler("NVIDIA DLSS");
         return true;
     }
-    return Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size, jitter,
-                       motion_scale);
+    if (Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size, jitter,
+                    motion_scale)) {
+        Settings::SetActiveUpscaler("AMD FSR 3.1");
+        return true;
+    }
+    return false;
 }
 
 // AMD FidelityFX Super Resolution 3.1 (externals/FidelityFX-SDK, MIT), the base replacement for
