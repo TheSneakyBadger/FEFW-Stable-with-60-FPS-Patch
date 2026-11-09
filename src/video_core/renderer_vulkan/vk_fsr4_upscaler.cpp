@@ -79,8 +79,20 @@ std::string LibraryError() {
     return error ? error : "unknown";
 #endif
 }
-// fsr4-vk's private Vulkan backend descriptor type (fsr4provider::kBackendVkDescType).
-constexpr ffxStructType_t BACKEND_VK_DESC_TYPE = 3;
+// The Vulkan backend descriptor: AMD's FSR SDK 2.4 type (FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK,
+// FFX_API_BACKEND_ID_VK | 0x03), and the deprecated 0x03 that fsr4-vk takes. Same layout.
+constexpr ffxStructType_t BACKEND_VK_DESC_TYPE = 0x01000003u;
+constexpr ffxStructType_t BACKEND_VK_DESC_TYPE_DEPRECATED = 3;
+// FSR SDK 2.1 and later: ffxCreateContextDescUpscaleVersion must be chained to the upscale
+// descriptor (FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION), else AMD's library refuses the
+// context. FFX_UPSCALER_VERSION 4.1.2 (FSR SDK 2.4).
+constexpr ffxStructType_t UPSCALE_VERSION_DESC_TYPE = 0x0001000bu;
+constexpr uint32_t UPSCALER_VERSION = (4u << 22) | (1u << 12) | 2u;
+
+struct UpscaleVersionDesc {
+    ffxCreateContextDescHeader header;
+    uint32_t version;
+};
 constexpr VkExtent2D MAX_RENDER_SIZE{3840, 2160};
 constexpr VkExtent2D MAX_UPSCALE_SIZE{3840, 2160};
 
@@ -283,17 +295,34 @@ Fsr4Upscaler::Fsr4Upscaler(const Device& device_, Scheduler& scheduler_,
         .physical_device = static_cast<VkPhysicalDevice>(device.GetPhysical()),
         .get_device_proc_addr = device.GetDispatchLoader().vkGetDeviceProcAddr,
     };
+    UpscaleVersionDesc version{
+        .header{.type = UPSCALE_VERSION_DESC_TYPE,
+                .pNext = reinterpret_cast<ffxApiHeader*>(&backend)},
+        .version = UPSCALER_VERSION,
+    };
     ffxCreateContextDescUpscale desc{};
     desc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-    desc.header.pNext = reinterpret_cast<ffxApiHeader*>(&backend);
+    desc.header.pNext = reinterpret_cast<ffxApiHeader*>(&version);
     desc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE |
                  FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
     desc.maxRenderSize = {MAX_RENDER_SIZE.width, MAX_RENDER_SIZE.height};
     desc.maxUpscaleSize = {MAX_UPSCALE_SIZE.width, MAX_UPSCALE_SIZE.height};
     desc.fpMessage = &LogProviderMessage;
 
+    // AMD's SDK 2.4 descriptors first; then the deprecated backend type with no version
+    // descriptor, as before (fsr4-vk and older providers).
     ffxContext context_handle{};
-    const auto result = GetApi().create(&context_handle, &desc.header, nullptr);
+    auto result = GetApi().create(&context_handle, &desc.header, nullptr);
+    if (result != FFX_API_RETURN_OK) {
+        LOG_WARNING(Render_Vulkan,
+                    "FSR4 context creation with the FSR SDK 2.4 descriptors failed (FidelityFX "
+                    "error {}); trying the older ones",
+                    static_cast<unsigned>(result));
+        backend.header.type = BACKEND_VK_DESC_TYPE_DEPRECATED;
+        desc.header.pNext = reinterpret_cast<ffxApiHeader*>(&backend);
+        context_handle = {};
+        result = GetApi().create(&context_handle, &desc.header, nullptr);
+    }
     if (result != FFX_API_RETURN_OK) {
         LOG_ERROR(Render_Vulkan, "FSR4 context creation failed (FidelityFX error {})",
                   static_cast<unsigned>(result));
