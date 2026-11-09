@@ -230,6 +230,19 @@ VkImageMemoryBarrier Barrier(const Fsr4Upscaler::Image& image, VkAccessFlags src
     };
 }
 
+// The provider's own error and warning text (why a context can't be created, say).
+void LogProviderMessage(uint32_t type, const wchar_t* message) {
+    std::string text;
+    for (const wchar_t* c = message; c && *c; ++c) {
+        text.push_back(*c > 0 && *c < 128 ? static_cast<char>(*c) : '?');
+    }
+    if (type == FFX_API_MESSAGE_TYPE_ERROR) {
+        LOG_ERROR(Render_Vulkan, "FSR4 provider: {}", text);
+    } else {
+        LOG_WARNING(Render_Vulkan, "FSR4 provider: {}", text);
+    }
+}
+
 constexpr VkPipelineStageFlags WRITE_STAGES =
     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
     VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -277,7 +290,7 @@ Fsr4Upscaler::Fsr4Upscaler(const Device& device_, Scheduler& scheduler_,
                  FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
     desc.maxRenderSize = {MAX_RENDER_SIZE.width, MAX_RENDER_SIZE.height};
     desc.maxUpscaleSize = {MAX_UPSCALE_SIZE.width, MAX_UPSCALE_SIZE.height};
-    desc.fpMessage = nullptr;
+    desc.fpMessage = &LogProviderMessage;
 
     ffxContext context_handle{};
     const auto result = GetApi().create(&context_handle, &desc.header, nullptr);
