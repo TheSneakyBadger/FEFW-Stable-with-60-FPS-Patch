@@ -590,7 +590,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         const auto arch = GetNvidiaArch();
         if (arch >= NvidiaArchitecture::Arch_AmpereOrNewer) {
             LOG_WARNING(Render_Vulkan, "Ampere and newer have broken float16 math");
-            features.shader_float16_int8.shaderFloat16 = false;
+            DisableShaderFloat16();
         }
 
         // Use hardware depth/stencil blits instead when available
@@ -630,7 +630,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         if (features.shader_float16_int8.shaderFloat16) {
             LOG_WARNING(Render_Vulkan,
                         "AMD drivers (2026+) have broken float16 math");
-            features.shader_float16_int8.shaderFloat16 = false;
+            DisableShaderFloat16();
         }
     }
 
@@ -647,7 +647,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     if (features.shader_float16_int8.shaderFloat16 && is_intel_windows) {
         // Intel's compiler crashes when using fp16 on Astral Chain, disable it for the time being.
         LOG_WARNING(Render_Vulkan, "Intel has broken float16 math");
-        features.shader_float16_int8.shaderFloat16 = false;
+        DisableShaderFloat16();
     }
 
     has_broken_compute =
@@ -805,6 +805,13 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     // Initialize GPU logging if enabled
     InitializeGPULogging();
+}
+
+void Device::DisableShaderFloat16() {
+    shader_float16_broken = true;
+    if (Settings::values.upscaler.GetValue() != Settings::Upscaler::Fsr4) {
+        features.shader_float16_int8.shaderFloat16 = false;
+    }
 }
 
 Device::~Device() {

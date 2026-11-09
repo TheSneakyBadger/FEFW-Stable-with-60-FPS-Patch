@@ -426,9 +426,9 @@ FN_MAX_LIMIT_LIST
         return features.features.shaderFloat64;
     }
 
-    /// Returns true if the device supports float16 natively.
+    /// Returns true if the device supports float16 natively (and the emulator's shaders may use it).
     bool IsFloat16Supported() const {
-        return features.shader_float16_int8.shaderFloat16;
+        return features.shader_float16_int8.shaderFloat16 && !shader_float16_broken;
     }
 
     /// Returns true if the device can run shaders built against the Vulkan memory model.
@@ -1151,6 +1151,11 @@ private:
     void SaveStaticPipelineCache() const;
 
 private:
+    /// Keeps the emulator's own shaders off float16. The device still enables the feature when
+    /// AMD FSR 4 is chosen: its INT8/FP8 networks need it (FSR 4 then failed to start on AMD
+    /// and NVIDIA cards with this workaround).
+    void DisableShaderFloat16();
+
     VkInstance instance;         ///< Vulkan instance.
     VmaAllocator allocator;      ///< VMA allocator.
     vk::DeviceDispatch dld;      ///< Device function pointers.
@@ -1230,6 +1235,7 @@ private:
     bool is_non_gpu{};                         ///< Is SoftwareRasterizer, FPGA, non-GPU device.
     bool has_broken_compute{};                 ///< Compute shaders can cause crashes
     bool has_broken_cube_compatibility{};      ///< Has broken cube compatibility bit
+    bool shader_float16_broken{};              ///< The driver's float16 math is broken for our shaders
     bool has_broken_descriptor_aliasing{};     ///< Miscompiles descriptors aliased on one binding
     bool has_broken_parallel_compiling{};      ///< Has broken parallel shader compiling.
     bool has_renderdoc{};                      ///< Has RenderDoc attached
