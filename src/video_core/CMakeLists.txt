@@ -536,7 +536,7 @@ if (ENABLE_NVIDIA_DLSS)
     message(STATUS "NVIDIA DLSS through Streamline: ${STREAMLINE_INCLUDE_DIR}")
 endif()
 
-# AMD FSR 4 in place of a game's own DLSS evaluation (setting amd_fsr4). The upscaler is the
+# AMD FSR 4 in place of a game's own DLSS evaluation (setting upscaler = Fsr4). The upscaler is the
 # fsr4-vk provider (externals/fsr4-vk), loaded at run time from amd_fidelityfx_upscaler_vk.dll
 # (.so on Linux): nothing of it is linked, only its FidelityFX API headers (MIT) are compiled in.
 set(FSR4_VK_API_DIR "${PROJECT_SOURCE_DIR}/externals/fsr4-vk/third_party/fidelityfx-api")
