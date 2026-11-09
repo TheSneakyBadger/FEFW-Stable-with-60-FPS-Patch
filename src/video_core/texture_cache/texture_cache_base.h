@@ -64,6 +64,13 @@ struct ImageViewInOut {
     ImageViewId id{};
 };
 
+/// A compact table's resolved bank as the feedback-loop check sees it: the stamp names exactly
+/// these view ids (see texture_bank_reuse.h).
+struct FeedbackBank {
+    u64 stamp{};
+    std::span<const ImageViewId> ids;
+};
+
 struct AsyncDecodeContext {
     ImageId image_id;
     Common::ScratchBuffer<u8> decoded_data;
@@ -180,8 +187,11 @@ public:
 
     /// As above, for the views plus more_ids (views bound without an element-by-element copy, see
     /// compact_texture_table.h). Only which ids are bound matters, not how often.
+    /// bound_views_key: names the bound views in place of hashing every id. banks: when given, the
+    /// blocks' ids (more_ids) as resolved banks, checked through a per-bank image list.
     void CheckFeedbackLoop(std::span<const ImageViewInOut> views, std::span<const ImageViewId> more_ids,
-                           const u64* bound_views_key = nullptr);
+                           const u64* bound_views_key = nullptr,
+                           std::span<const FeedbackBank> banks = {});
 
     /// Get the sampler from the graphics/compute descriptor table in the specified index
     Sampler* GetSampler(u32 index, bool compute);
@@ -500,6 +510,10 @@ private:
     u64 last_feedback_texture_serial = 0;
     u64 last_feedback_views_hash = 0;
     bool last_feedback_loop_result = false;
+    /// Per bank stamp: the bank's (image, view) pairs sorted by image, for the feedback-loop check.
+    /// Valid within one view generation (view ids keep their images until one is erased).
+    ::Common::unordered_map<u64, std::vector<std::pair<ImageId, ImageViewId>>> feedback_bank_images;
+    u64 feedback_bank_generation = 0;
     FramebufferId last_framebuffer_id{};
     u64 last_framebuffer_serial = 0;
 

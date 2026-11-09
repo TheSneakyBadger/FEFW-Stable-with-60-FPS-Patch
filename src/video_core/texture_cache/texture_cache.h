@@ -400,7 +400,8 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views) {
 template <class P>
 void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
                                         std::span<const ImageViewId> more_ids,
-                                        const u64* bound_views_key) {
+                                        const u64* bound_views_key,
+                                        std::span<const FeedbackBank> banks) {
     if (!Settings::values.barrier_feedback_loops.GetValue()) {
         return;
     }
@@ -462,11 +463,63 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
         }
         return depth_active && view_image_id == rt_depth_image_id;
     };
+    // needs_barrier is only true for a view of the depth target's image that is not the depth
+    // view itself and whose image is not also a color target.
+    const bool depth_can_feed_back = [&] {
+        if (!depth_active) {
+            return false;
+        }
+        for (size_t i = 0; i < 8; ++i) {
+            if ((rt_active_mask & (1u << i)) && rt_depth_image_id == rt_image_id[i]) {
+                return false;
+            }
+        }
+        return true;
+    }();
+    // A bank's views of the depth image, from its cached (image, view) list.
+    const auto bank_needs_barrier = [&](const FeedbackBank& bank) {
+        auto [it, is_new] = feedback_bank_images.try_emplace(bank.stamp);
+        auto& pairs = it->second;
+        if (is_new) {
+            pairs.reserve(bank.ids.size());
+            for (const ImageViewId view_id : bank.ids) {
+                if (view_id) {
+                    pairs.emplace_back(slot_image_views[view_id].image_id, view_id);
+                }
+            }
+            std::ranges::sort(pairs, [](const auto& lhs, const auto& rhs) {
+                return lhs.first.index < rhs.first.index;
+            });
+        }
+        auto first = std::ranges::lower_bound(pairs, rt_depth_image_id.index, {},
+                                              [](const auto& pair) { return pair.first.index; });
+        for (; first != pairs.end() && first->first == rt_depth_image_id; ++first) {
+            if (needs_barrier(first->second)) {
+                return true;
+            }
+        }
+        return false;
+    };
     const bool requires_barrier = [&] {
+        if (!depth_can_feed_back) {
+            return false;
+        }
         for (const auto& view : views) {
             if (needs_barrier(view.id)) {
                 return true;
             }
+        }
+        if (!banks.empty()) {
+            if (feedback_bank_generation != view_generation || feedback_bank_images.size() > 4096) {
+                feedback_bank_images.clear();
+                feedback_bank_generation = view_generation;
+            }
+            for (const FeedbackBank& bank : banks) {
+                if (bank_needs_barrier(bank)) {
+                    return true;
+                }
+            }
+            return false;
         }
         for (const ImageViewId view_id : more_ids) {
             if (needs_barrier(view_id)) {

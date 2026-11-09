@@ -947,59 +947,54 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             if (desc.has_secondary) {
                 gpu_memory->ReadBlockUnsafe(secondary, cbuf_words.data() + span, span);
             }
-            // Several decodes are kept per array, found by content: draws with one pipeline can
-            // alternate between a few materials' arrays (the Saramis hub rebuilt these tables about
-            // 9,000 times a second), and each new decode rebuilds the compact table and its
-            // descriptors. The latest one is compared first (the array usually did not change).
-            constexpr size_t max_decodes_per_array = 16;
-            BufferTextureHandles* latest{};
-            BufferTextureHandles* oldest{};
-            size_t num_decodes = 0;
-            for (auto& entry : buffer_texture_handles) {
-                if (entry.desc != &desc) {
-                    continue;
-                }
-                ++num_decodes;
-                if (latest == nullptr || entry.last_used > latest->last_used) {
-                    latest = &entry;
-                }
-                if (oldest == nullptr || entry.last_used < oldest->last_used) {
-                    oldest = &entry;
-                }
-            }
-            const auto same_array{[&](const BufferTextureHandles& entry) {
-                return entry.cacheable && entry.count == desc.count &&
-                       entry.via_header_index == via_header_index && entry.bytes == cbuf_words;
-            }};
-            BufferTextureHandles* found{};
-            if (latest != nullptr && same_array(*latest)) {
-                found = latest;
-            }
-            u64 words_hash{};
-            if (found == nullptr && num_decodes != 0) {
-                words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
-                                                cbuf_words.size());
-                for (auto& entry : buffer_texture_handles) {
-                    if (entry.desc == &desc && &entry != latest && entry.bytes_hash == words_hash &&
-                        same_array(entry)) {
-                        found = &entry;
-                        break;
-                    }
-                }
-            }
-            if (found != nullptr) {
-                found->last_used = ++handle_use_clock;
+            auto cached = std::ranges::find(buffer_texture_handles, &desc, &BufferTextureHandles::desc);
+            if (cached != buffer_texture_handles.end() && cached->cacheable &&
+                cached->count == desc.count && cached->via_header_index == via_header_index &&
+                cached->bytes == cbuf_words) {
                 if (stats) {
                     ++compact_stats.cbuf_reused;
                 }
-                return found;
-            }
-            if (num_decodes == 0) {
-                words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
-                                                cbuf_words.size());
+                return &*cached;
             }
             if (stats) {
                 ++compact_stats.cbuf_decoded;
+                // Statistics: would a cache shared between arrays and pipelines find this array?
+                // (Recent words hashes of every decoded array, by texture type, oldest dropped.)
+                static thread_local std::vector<u64> recent_words;
+                static thread_local size_t recent_next = 0;
+                const u64 words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
+                                                          cbuf_words.size()) ^
+                                       (u64{static_cast<u32>(desc.type)} << 56) ^ (desc.is_depth ? 1 : 0);
+                if (std::ranges::find(recent_words, words_hash) != recent_words.end()) {
+                    ++compact_stats.cbuf_seen_before;
+                }
+                if (recent_words.size() < 256) {
+                    recent_words.push_back(words_hash);
+                } else {
+                    recent_words[recent_next] = words_hash;
+                    recent_next = (recent_next + 1) % recent_words.size();
+                }
+                if (cached != buffer_texture_handles.end() &&
+                    cached->compact.element_tics.size() == desc.count) {
+                    // Same TIC list as the table had (another sampler or order only)?
+                    bool same = true;
+                    for (u32 index = 0; index < desc.count && same; ++index) {
+                        const u64 offset = u64{index} << desc.size_shift;
+                        u32 word;
+                        std::memcpy(&word, cbuf_words.data() + offset, sizeof(word));
+                        u32 raw = word;
+                        if (desc.has_secondary) {
+                            raw = word << desc.shift_left;
+                            std::memcpy(&word, cbuf_words.data() + span + offset, sizeof(word));
+                            raw |= word << desc.secondary_shift_left;
+                        }
+                        same = TexturePair(raw, via_header_index).first ==
+                               cached->compact.element_tics[index];
+                    }
+                    if (same) {
+                        ++compact_stats.cbuf_same_tics;
+                    }
+                }
             }
             VideoCommon::BackStats::Mark(VideoCommon::BackStats::Handles);
             const auto word_at = [&](u64 offset) {
@@ -1010,9 +1005,9 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             // Decoded in place (nothing below throws), reusing the entry's storage: these arrays may
             // change on every draw, and the table keeps its written descriptors for patching (the
             // banks usually stay the same when the array changes).
-            BufferTextureHandles& decoded = num_decodes < max_decodes_per_array
-                                                ? buffer_texture_handles.emplace_back()
-                                                : *oldest;
+            BufferTextureHandles& decoded = cached != buffer_texture_handles.end()
+                                                ? *cached
+                                                : buffer_texture_handles.emplace_back();
             decoded.desc = &desc;
             decoded.source = {};
             decoded.count = desc.count;
@@ -1033,8 +1028,6 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             }
             decoded.excluded.assign(desc.count, 0);
             decoded.bytes.assign(cbuf_words.begin(), cbuf_words.end());
-            decoded.bytes_hash = words_hash;
-            decoded.last_used = ++handle_use_clock;
             decoded.compact.Build(decoded.handles, decoded.excluded);
             VideoCommon::BackStats::Mark(VideoCommon::BackStats::TableBuild);
             return &decoded;
@@ -1325,15 +1318,25 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             mix(block.view_stamp);
             mix(block.first_view);
         }
+        static thread_local std::vector<VideoCommon::FeedbackBank> feedback_banks;
+        feedback_banks.clear();
         if (keyed) {
             mix(compact_positions.size());
             for (const size_t position : compact_positions) {
                 mix(views[position].id.index);
             }
+            for (const auto& block : compact_blocks) {
+                feedback_banks.push_back({
+                    .stamp = block.view_stamp,
+                    .ids = std::span<const VideoCommon::ImageViewId>(
+                        compact_view_ids.data() + block.view_ids, block.table->unique_tics.size()),
+                });
+            }
         }
         texture_cache.CheckFeedbackLoop(std::span<const VideoCommon::ImageViewInOut>{compact_fill.data(),
                                                                                      compact_fill.size()},
-                                        compact_view_ids, keyed ? &bound_views_key : nullptr);
+                                        compact_view_ids, keyed ? &bound_views_key : nullptr,
+                                        feedback_banks);
     }
     VideoCommon::BackStats::Mark(VideoCommon::BackStats::PostConfigure);
     if (IsBuilt() && !pipeline) {

@@ -204,12 +204,9 @@ private:
         std::vector<std::pair<u32, u32>> handles;
         std::vector<u8> excluded;
         VideoCommon::CompactTextureTable compact; ///< handles/excluded as distinct pairs
-        u64 bytes_hash{}; ///< Of bytes (constant-buffer arrays: finds an earlier decode by content)
-        u64 last_used{};  ///< handle_use_clock at the last draw that used it
     };
     /// A deque: draws keep pointers to these (compact blocks) while other arrays are added.
     std::deque<BufferTextureHandles> buffer_texture_handles;
-    u64 handle_use_clock{};
     std::array<u32, 5> enabled_uniform_buffer_masks{};
     VideoCommon::UniformBufferSizes uniform_buffer_sizes{};
     u32 num_descriptor_entries{};

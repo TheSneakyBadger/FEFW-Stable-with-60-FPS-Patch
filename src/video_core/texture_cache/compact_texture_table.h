@@ -357,6 +357,8 @@ struct CompactTextureStats {
     u64 reused{};   ///< Buffer texture arrays whose decoded handles were reused
     u64 cbuf_decoded{}; ///< Constant buffer texture arrays decoded again
     u64 cbuf_reused{};  ///< Constant buffer texture arrays whose decoded handles were reused
+    u64 cbuf_seen_before{}; ///< Decoded arrays whose words another array or draw had recently
+    u64 cbuf_same_tics{};   ///< Decoded arrays whose TIC set and order matched the table's last
     u64 table_draws{};
     u64 elements{};
     u64 pairs{};
@@ -407,7 +409,7 @@ struct CompactTextureStats {
         LOG_INFO(Render_Vulkan,
                  "Texture tables: {:.0f} draws/s, {:.0f} with tables/s; buffer arrays reused {:.1f}% of {:.0f}/s; "
                  "cbuf arrays reused {:.1f}% of {:.0f}/s; per table draw {:.0f} elements, {:.1f} pairs, "
-                 "{:.1f} unique views",
+                 "{:.1f} unique views; decoded arrays seen recently elsewhere {:.1f}%, same TIC list {:.1f}%",
                  draws / seconds, table_draws / seconds,
                  decoded + reused ? reused * 100.0 / double(decoded + reused) : 0.0,
                  (decoded + reused) / seconds,
@@ -415,7 +417,9 @@ struct CompactTextureStats {
                  (cbuf_decoded + cbuf_reused) / seconds,
                  table_draws ? double(elements) / table_draws : 0.0,
                  table_draws ? double(pairs) / table_draws : 0.0,
-                 table_draws ? double(unique_views) / table_draws : 0.0);
+                 table_draws ? double(unique_views) / table_draws : 0.0,
+                 cbuf_decoded ? cbuf_seen_before * 100.0 / double(cbuf_decoded) : 0.0,
+                 cbuf_decoded ? cbuf_same_tics * 100.0 / double(cbuf_decoded) : 0.0);
         const auto per_second = [seconds](u64 value) { return value / seconds; };
         const auto rate = [](u64 part, u64 total) { return total ? part * 100.0 / double(total) : 0.0; };
         const u64 view_lookups = view_hits + view_misses + view_stale_table + view_stale_generation +
