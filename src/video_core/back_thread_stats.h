@@ -61,13 +61,15 @@ enum Draw : u32 {
     LockWait,      ///< Acquiring buffer_cache.mutex + texture_cache.mutex
     Setup,         ///< ConfigureImpl: VPRS, SynchronizeDescriptors, uniform buffer state
     StorageBind,   ///< ConfigureImpl: binding storage buffers
-    Handles,       ///< ConfigureImpl: texture handles, compact tables
+    Handles,       ///< ConfigureImpl: texture handles (reading and comparing the arrays)
+    TableBuild,    ///< ConfigureImpl: decoding changed arrays and building their compact tables
     Resolve,       ///< ConfigureImpl: view and sampler resolution, banks
     BindStage,     ///< ConfigureImpl: texture and image buffers
     Buffers,       ///< UpdateGraphicsBuffers, BindHostGeometryBuffers, descriptor queue Acquire
     StageBuffers,  ///< BindHostStageBuffers
     PushImages,    ///< PushImageDescriptors
-    PostConfigure, ///< PostCopyBarrier, UpdateRenderTargets, CheckFeedbackLoop
+    RenderTargets, ///< PostCopyBarrier, UpdateRenderTargets
+    PostConfigure, ///< CheckFeedbackLoop
     DescCompare,   ///< ConfigureDraw: comparing the payload with the last one
     DescAllocate,  ///< DescriptorBufferRing::Allocate
     DescWrite,     ///< WriteDescriptorBuffer

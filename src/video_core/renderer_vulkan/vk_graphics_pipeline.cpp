@@ -947,18 +947,61 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             if (desc.has_secondary) {
                 gpu_memory->ReadBlockUnsafe(secondary, cbuf_words.data() + span, span);
             }
-            auto cached = std::ranges::find(buffer_texture_handles, &desc, &BufferTextureHandles::desc);
-            if (cached != buffer_texture_handles.end() && cached->cacheable &&
-                cached->count == desc.count && cached->via_header_index == via_header_index &&
-                cached->bytes == cbuf_words) {
+            // Several decodes are kept per array, found by content: draws with one pipeline can
+            // alternate between a few materials' arrays (the Saramis hub rebuilt these tables about
+            // 9,000 times a second), and each new decode rebuilds the compact table and its
+            // descriptors. The latest one is compared first (the array usually did not change).
+            constexpr size_t max_decodes_per_array = 16;
+            BufferTextureHandles* latest{};
+            BufferTextureHandles* oldest{};
+            size_t num_decodes = 0;
+            for (auto& entry : buffer_texture_handles) {
+                if (entry.desc != &desc) {
+                    continue;
+                }
+                ++num_decodes;
+                if (latest == nullptr || entry.last_used > latest->last_used) {
+                    latest = &entry;
+                }
+                if (oldest == nullptr || entry.last_used < oldest->last_used) {
+                    oldest = &entry;
+                }
+            }
+            const auto same_array{[&](const BufferTextureHandles& entry) {
+                return entry.cacheable && entry.count == desc.count &&
+                       entry.via_header_index == via_header_index && entry.bytes == cbuf_words;
+            }};
+            BufferTextureHandles* found{};
+            if (latest != nullptr && same_array(*latest)) {
+                found = latest;
+            }
+            u64 words_hash{};
+            if (found == nullptr && num_decodes != 0) {
+                words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
+                                                cbuf_words.size());
+                for (auto& entry : buffer_texture_handles) {
+                    if (entry.desc == &desc && &entry != latest && entry.bytes_hash == words_hash &&
+                        same_array(entry)) {
+                        found = &entry;
+                        break;
+                    }
+                }
+            }
+            if (found != nullptr) {
+                found->last_used = ++handle_use_clock;
                 if (stats) {
                     ++compact_stats.cbuf_reused;
                 }
-                return &*cached;
+                return found;
+            }
+            if (num_decodes == 0) {
+                words_hash = Common::CityHash64(reinterpret_cast<const char*>(cbuf_words.data()),
+                                                cbuf_words.size());
             }
             if (stats) {
                 ++compact_stats.cbuf_decoded;
             }
+            VideoCommon::BackStats::Mark(VideoCommon::BackStats::Handles);
             const auto word_at = [&](u64 offset) {
                 u32 word;
                 std::memcpy(&word, cbuf_words.data() + offset, sizeof(word));
@@ -967,9 +1010,9 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             // Decoded in place (nothing below throws), reusing the entry's storage: these arrays may
             // change on every draw, and the table keeps its written descriptors for patching (the
             // banks usually stay the same when the array changes).
-            BufferTextureHandles& decoded = cached != buffer_texture_handles.end()
-                                                ? *cached
-                                                : buffer_texture_handles.emplace_back();
+            BufferTextureHandles& decoded = num_decodes < max_decodes_per_array
+                                                ? buffer_texture_handles.emplace_back()
+                                                : *oldest;
             decoded.desc = &desc;
             decoded.source = {};
             decoded.count = desc.count;
@@ -990,7 +1033,10 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             }
             decoded.excluded.assign(desc.count, 0);
             decoded.bytes.assign(cbuf_words.begin(), cbuf_words.end());
+            decoded.bytes_hash = words_hash;
+            decoded.last_used = ++handle_use_clock;
             decoded.compact.Build(decoded.handles, decoded.excluded);
+            VideoCommon::BackStats::Mark(VideoCommon::BackStats::TableBuild);
             return &decoded;
         }};
         const auto add_image{[&](const auto& desc, bool blacklist) LAMBDA_FORCEINLINE {
@@ -1255,15 +1301,39 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         buffer_cache.any_buffer_uploaded = false;
     }
     texture_cache.UpdateRenderTargets(false);
+    VideoCommon::BackStats::Mark(VideoCommon::BackStats::RenderTargets);
     if (blocks_expanded) {
         texture_cache.CheckFeedbackLoop(std::span<const VideoCommon::ImageViewInOut>{views.data(),
                                                                                      views.size()});
     } else {
         // The views outside the blocks and the blocks' lookups (compact_fill), plus every block's
         // resolved ids (reused blocks are not in compact_fill): the same set of ids as the elements.
+        // When every block's ids are a stored bank (its stamp names exactly those ids), the bound
+        // views are named by the stamps and the ids outside the blocks, so the check is not keyed
+        // by hashing hundreds of ids on every draw.
+        u64 bound_views_key = 0x243F6A8885A308D3ULL;
+        bool keyed = true;
+        const auto mix = [&bound_views_key](u64 value) {
+            bound_views_key = (bound_views_key ^ value) * 0xFF51AFD7ED558CCDULL;
+            bound_views_key ^= bound_views_key >> 33;
+        };
+        for (const auto& block : compact_blocks) {
+            if (block.view_stamp == 0) {
+                keyed = false;
+                break;
+            }
+            mix(block.view_stamp);
+            mix(block.first_view);
+        }
+        if (keyed) {
+            mix(compact_positions.size());
+            for (const size_t position : compact_positions) {
+                mix(views[position].id.index);
+            }
+        }
         texture_cache.CheckFeedbackLoop(std::span<const VideoCommon::ImageViewInOut>{compact_fill.data(),
                                                                                      compact_fill.size()},
-                                        compact_view_ids);
+                                        compact_view_ids, keyed ? &bound_views_key : nullptr);
     }
     VideoCommon::BackStats::Mark(VideoCommon::BackStats::PostConfigure);
     if (IsBuilt() && !pipeline) {

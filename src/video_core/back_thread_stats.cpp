@@ -30,8 +30,8 @@ u64 window_stamp{};
 
 constexpr std::array<const char*, DrawCount> DRAW_NAMES{
     "flush work",     "flush caching", "pipeline",      "lock wait",      "setup",
-    "storage bind",   "handles",       "resolve",       "bind stage",     "buffers",
-    "stage buffers",  "push images",   "post configure", "desc compare",  "desc allocate",
+    "storage bind",   "handles",       "table build",   "resolve",       "bind stage",     "buffers",
+    "stage buffers",  "push images",   "render targets", "feedback loop", "desc compare",  "desc allocate",
     "desc write",     "desc assign",   "desc record",   "dynamic states", "queries",
     "draw func",      "flush storage", "tail",          "unlock",         "tick work",
 };

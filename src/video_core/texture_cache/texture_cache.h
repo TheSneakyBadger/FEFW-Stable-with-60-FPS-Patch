@@ -399,7 +399,8 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views) {
 
 template <class P>
 void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
-                                        std::span<const ImageViewId> more_ids) {
+                                        std::span<const ImageViewId> more_ids,
+                                        const u64* bound_views_key) {
     if (!Settings::values.barrier_feedback_loops.GetValue()) {
         return;
     }
@@ -412,15 +413,22 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views,
     // descriptor table: key the cached answer on the bound view ids too. The view generation
     // changes when erased view ids may name other views.
     u64 bound_views_hash = view_generation;
-    const auto hash_id = [&bound_views_hash](ImageViewId view_id) {
-        bound_views_hash = (bound_views_hash ^ view_id.index) * 0x9E3779B97F4A7C15ULL;
+    const auto hash_id = [&bound_views_hash](u64 value) {
+        bound_views_hash = (bound_views_hash ^ value) * 0x9E3779B97F4A7C15ULL;
         bound_views_hash ^= bound_views_hash >> 29;
     };
-    for (const auto& view : views) {
-        hash_id(view.id);
-    }
-    for (const ImageViewId view_id : more_ids) {
-        hash_id(view_id);
+    if (bound_views_key != nullptr) {
+        // The caller named the bound views more cheaply (the compact tables' resolved banks)
+        // instead of every id being hashed on every draw.
+        hash_id(0xFEEDB10C5EEDULL);
+        hash_id(*bound_views_key);
+    } else {
+        for (const auto& view : views) {
+            hash_id(view.id.index);
+        }
+        for (const ImageViewId view_id : more_ids) {
+            hash_id(view_id.index);
+        }
     }
     if (render_targets_serial == last_feedback_loop_serial &&
         texture_bindings_serial == last_feedback_texture_serial &&
