@@ -164,10 +164,18 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "Sharpness.\nGame's own DLSS: the game's own small network, run as compute shaders "
               "(more work for the emulator).\nNVIDIA DLSS: GeForce RTX cards, the best picture. "
               "Needs NVIDIA's Streamline and DLSS files (not included): use the download button "
-              "below.\nAMD FSR 4: AMD Radeon RX 7000/9000 cards, through fsr4-vk (a community "
-              "Vulkan port, not made or endorsed by AMD); needs amd_fidelityfx_upscaler_vk.dll next "
-              "to the emulator.\nNVIDIA DLSS and FSR 4 fall back to FSR 3.1 when they can't run. "
-              "Takes effect when a game starts."));
+              "below.\nAMD FSR 4: AMD Radeon RX 7000/9000 cards; needs AMD's "
+              "amd_fidelityfx_upscaler_vk.dll next to the emulator.\nNVIDIA DLSS and FSR 4 fall "
+              "back to FSR 3.1 when they can't run. Takes effect when a game starts."));
+    INSERT(Settings, upscaler_quality, tr("Upscaler quality:"),
+           tr("How big the game's 3D scene is drawn before the upscaler brings it to the full "
+              "picture (1440p docked at 1X).\nNative: the full size, with the upscaler only "
+              "smoothing edges (DLAA with NVIDIA DLSS); the sharpest and the heaviest.\nUltra "
+              "Quality, Quality, Balanced: 77%, 67% and 58% of the size.\nPerformance: 50%, the "
+              "game's own 720p; the lightest.\nThe menus and text are always drawn at the full "
+              "size. Applies at 1X resolution with AMD FSR 3.1, NVIDIA DLSS or AMD FSR 4; other "
+              "resolutions and the game's own DLSS use Performance. Takes effect when a game "
+              "starts."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -432,6 +440,14 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(Upscaler, GameDlss, tr("Game's own DLSS")),
                               PAIR(Upscaler, NvidiaDlss, tr("NVIDIA DLSS (GeForce RTX)")),
                               PAIR(Upscaler, Fsr4, tr("AMD FSR 4 (Radeon RX 7000/9000)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::UpscalerQuality>::Index(),
+                          {
+                              PAIR(UpscalerQuality, Native, tr("Native (DLAA with DLSS)")),
+                              PAIR(UpscalerQuality, UltraQuality, tr("Ultra Quality")),
+                              PAIR(UpscalerQuality, Quality, tr("Quality")),
+                              PAIR(UpscalerQuality, Balanced, tr("Balanced")),
+                              PAIR(UpscalerQuality, Performance, tr("Performance")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::VramUsageMode>::Index(),
                           {

@@ -803,7 +803,7 @@ void GRenderWindow::CaptureScreenshot(const QString& screenshot_path) {
         if (height == 0) {
             height = Settings::IsDockedMode() ? Layout::ScreenDocked::Height
                                               : Layout::ScreenUndocked::Height;
-            height *= Settings::values.resolution_info.up_factor;
+            height *= Settings::values.resolution_info.OutputFactor();
         }
         const u32 width =
             UISettings::CalculateWidth(height, Settings::values.aspect_ratio.GetValue());

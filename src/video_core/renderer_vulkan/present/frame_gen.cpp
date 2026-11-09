@@ -36,7 +36,7 @@ constexpr u32 LSFG_RECURRENCE_FRAMES = 2;
     }
 
     const f32 rendered_width = static_cast<f32>(guest_extent.width) *
-                               Settings::values.resolution_info.up_factor;
+                               Settings::values.resolution_info.OutputFactor();
     const f32 ratio = rendered_width / static_cast<f32>(presented_extent.width);
 
     constexpr f32 FLOW_SCALE_STEPS = 20.0f;

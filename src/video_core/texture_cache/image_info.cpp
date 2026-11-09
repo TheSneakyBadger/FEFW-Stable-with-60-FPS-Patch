@@ -137,6 +137,7 @@ ImageInfo::ImageInfo(const TICEntry& config) noexcept {
         rescaleable &= (block.depth == 0) && resources.levels == 1;
         rescaleable &= size.height > RescaleHeightThreshold ||
                            GetFormatType(format) != SurfaceType::ColorTexture;
+        rescaleable &= Settings::values.resolution_info.ScalesHeight(size.height);
         downscaleable = size.height > DownscaleHeightThreshold;
     }
 }
@@ -176,6 +177,7 @@ ImageInfo::ImageInfo(const Maxwell3D::Regs::RenderTargetConfig& ct,
     } else {
         rescaleable = block.depth == 0;
         rescaleable &= size.height > RescaleHeightThreshold;
+        rescaleable &= Settings::values.resolution_info.ScalesHeight(size.height);
         downscaleable = size.height > DownscaleHeightThreshold;
         type = ImageType::e2D;
         resources.layers = ct.depth;
@@ -212,6 +214,7 @@ ImageInfo::ImageInfo(const Maxwell3D::Regs::Zeta& zt, const Maxwell3D::Regs::Zet
         size.depth = zt_size.depth;
     } else {
         rescaleable = block.depth == 0;
+        rescaleable &= Settings::values.resolution_info.ScalesHeight(size.height);
         downscaleable = size.height > 512;
         type = ImageType::e2D;
         switch (zt_size.dim_control) {
@@ -256,6 +259,7 @@ ImageInfo::ImageInfo(const Fermi2D::Surface& config) noexcept {
             .depth = 1,
         };
         rescaleable = block.depth == 0 && size.height > RescaleHeightThreshold;
+        rescaleable &= Settings::values.resolution_info.ScalesHeight(size.height);
         downscaleable = size.height > DownscaleHeightThreshold;
     }
 }
@@ -299,6 +303,7 @@ ImageInfo::ImageInfo(const Tegra::DMA::ImageOperand& config) noexcept {
     layer_stride = CalculateLayerStride(*this);
     maybe_unaligned_layer_stride = CalculateLayerSize(*this);
     rescaleable = block.depth == 0 && size.height > RescaleHeightThreshold;
+    rescaleable &= Settings::values.resolution_info.ScalesHeight(size.height);
     downscaleable = size.height > DownscaleHeightThreshold;
 }
 

@@ -32,6 +32,23 @@ struct ResolutionScalingInfo {
     f32 down_factor{1.0f};
     bool active{};
     bool downscale{};
+    // Upscaler quality modes at 1X: only the game's 3D scene (images up to SCENE_MAX_HEIGHT tall,
+    // 720p docked and 540p handheld in Fortune's Weave) is drawn at up_scale >> down_shift; the
+    // upscaled picture, UI and everything after it stay at the game's own size.
+    bool scene_only{};
+    static constexpr u32 SCENE_MAX_HEIGHT = 720;
+
+    // Whether an image of this height follows the scale (always, unless scene_only).
+    bool ScalesHeight(u32 height) const {
+        return !scene_only || height <= SCENE_MAX_HEIGHT;
+    }
+    // The scale of the presented picture: 1 when only the scene is scaled.
+    f32 OutputFactor() const {
+        return scene_only ? 1.0f : up_factor;
+    }
+    u32 OutputScaleUp(u32 value) const {
+        return scene_only ? value : ScaleUp(value);
+    }
 
     s32 ScaleUp(s32 value) const {
         if (value == 0) {
@@ -383,6 +400,12 @@ struct Values {
     // FSR 3.1 to the game's own network, when they can't run. Takes effect when a game starts.
     SwitchableSetting<Upscaler, true> upscaler{linkage, Upscaler::Fsr3, "upscaler",
                                                Category::Renderer};
+    // The upscaler's quality mode: how big the 3D scene is drawn before it is upscaled. Native
+    // (DLAA with NVIDIA DLSS) draws it at the picture's size; Performance is the game's own 720p.
+    // Applies at 1X resolution with AMD FSR 3.1, NVIDIA DLSS or AMD FSR 4; other resolutions and
+    // the game's own DLSS stay at Performance. Takes effect when a game starts.
+    SwitchableSetting<UpscalerQuality, true> upscaler_quality{
+        linkage, UpscalerQuality::Balanced, "upscaler_quality", Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.

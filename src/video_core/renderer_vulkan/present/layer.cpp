@@ -218,8 +218,8 @@ void Layer::SetAntiAliasPass(const Device& device) {
     anti_alias_setting = filters.get_anti_aliasing();
 
     const VkExtent2D render_area{
-        .width = Settings::values.resolution_info.ScaleUp(raw_width),
-        .height = Settings::values.resolution_info.ScaleUp(raw_height),
+        .width = Settings::values.resolution_info.OutputScaleUp(raw_width),
+        .height = Settings::values.resolution_info.OutputScaleUp(raw_height),
     };
 
     switch (anti_alias_setting) {
@@ -242,8 +242,8 @@ void Layer::SetPostProcessPass(const Device& device, bool is_applet) {
         return;
     }
     const VkExtent2D render_area{
-        .width = Settings::values.resolution_info.ScaleUp(raw_width),
-        .height = Settings::values.resolution_info.ScaleUp(raw_height),
+        .width = Settings::values.resolution_info.OutputScaleUp(raw_width),
+        .height = Settings::values.resolution_info.OutputScaleUp(raw_height),
     };
 
     const u64 generation = VideoCore::FxChain::Instance().Snapshot().generation;

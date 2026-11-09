@@ -1665,7 +1665,9 @@ ImageId TextureCache<P>::FindImage(const ImageInfo& info, GPUVAddr gpu_addr,
 
 template <class P>
 bool TextureCache<P>::ImageCanRescale(ImageBase& image) {
-    if (!image.info.rescaleable) {
+    // Upscaler quality modes scale the 3D scene only (a resolve may mark a bigger image).
+    if (!image.info.rescaleable ||
+        !Settings::values.resolution_info.ScalesHeight(image.info.size.height)) {
         return false;
     }
     if (Settings::values.resolution_info.downscale && !image.info.downscaleable) {

@@ -65,6 +65,7 @@ SWITCHABLE(ScalingFilter, false);
 SWITCHABLE(SpirvOptimizeMode, true);
 SWITCHABLE(TimeZone, true);
 SWITCHABLE(Upscaler, true);
+SWITCHABLE(UpscalerQuality, true);
 SETTING(VSyncMode, true);
 SWITCHABLE(bool, false);
 SWITCHABLE(int, false);
@@ -458,6 +459,40 @@ void UpdateRescalingInfo() {
     const auto setup = values.resolution_setup.GetValue();
     auto& info = values.resolution_info;
     TranslateResolutionInfo(setup, info);
+    info.scene_only = false;
+    // Upscaler quality modes (1X only for now): the game draws its scene at half the picture's
+    // size (Performance), so draw the scene alone at 2x the mode's ratio, in 64ths: Native 2x
+    // (1440p), Ultra Quality 1.53x (1960x1102), Quality 1.33x (1700x956), Balanced 1.16x
+    // (1480x832). The upscaled picture and the UI stay at 1440p.
+    if (setup != ResolutionSetup::Res1X || values.upscaler.GetValue() == Upscaler::GameDlss) {
+        return;
+    }
+    u32 up_scale = 64;
+    switch (values.upscaler_quality.GetValue()) {
+    case UpscalerQuality::Native:
+        up_scale = 128;
+        break;
+    case UpscalerQuality::UltraQuality:
+        up_scale = 98;
+        break;
+    case UpscalerQuality::Quality:
+        up_scale = 85;
+        break;
+    case UpscalerQuality::Balanced:
+        up_scale = 74;
+        break;
+    case UpscalerQuality::Performance:
+    default:
+        return;
+    }
+    info.up_scale = up_scale;
+    info.down_shift = 6;
+    info.up_factor = static_cast<f32>(up_scale) / 64.0f;
+    info.down_factor = 64.0f / static_cast<f32>(up_scale);
+    info.active = true;
+    info.scene_only = true;
+    LOG_INFO(Common, "Upscaler quality {}: the 3D scene is drawn at {:.3f}x, the picture at 1x",
+             CanonicalizeEnum(values.upscaler_quality.GetValue()), info.up_factor);
 }
 
 u32 FrameGenMultiplier() {

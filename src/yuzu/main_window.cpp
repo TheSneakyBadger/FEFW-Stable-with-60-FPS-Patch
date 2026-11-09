@@ -4256,9 +4256,13 @@ void MainWindow::UpdateStatusBar() {
     }
 
     const auto res_info = Settings::values.resolution_info;
-    const auto res_scale = res_info.up_factor;
-    res_scale_label->setText(
-        tr("Scale: %1x", "%1 is the resolution scaling factor").arg(res_scale));
+    if (res_info.scene_only) {
+        res_scale_label->setText(tr("Scale: 1x, scene %1x", "%1 is the 3D scene's scaling factor")
+                                     .arg(res_info.up_factor, 0, 'f', 2));
+    } else {
+        res_scale_label->setText(
+            tr("Scale: %1x", "%1 is the resolution scaling factor").arg(res_info.up_factor));
+    }
 
     if (Settings::values.use_speed_limit.GetValue()) {
         emu_speed_label->setText(tr("Speed: %1% / %2%")

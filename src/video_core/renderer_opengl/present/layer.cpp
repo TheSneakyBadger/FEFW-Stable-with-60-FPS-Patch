@@ -47,8 +47,8 @@ GLuint Layer::ConfigureDraw(std::array<GLfloat, 3 * 2>& out_matrix,
     auto anti_aliasing = filters.get_anti_aliasing();
     if (anti_aliasing != Settings::AntiAliasing::None) {
         glEnablei(GL_SCISSOR_TEST, 0);
-        auto viewport_width = Settings::values.resolution_info.ScaleUp(framebuffer_texture.width);
-        auto viewport_height = Settings::values.resolution_info.ScaleUp(framebuffer_texture.height);
+        auto viewport_width = Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.width);
+        auto viewport_height = Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.height);
 
         glScissorIndexed(0, 0, 0, viewport_width, viewport_height);
         glViewportIndexedf(0, 0.0f, 0.0f, static_cast<GLfloat>(viewport_width),
@@ -213,16 +213,16 @@ void Layer::ConfigureFramebufferTexture(const Tegra::FramebufferConfig& framebuf
 void Layer::CreateFXAA() {
     if (!std::holds_alternative<FXAA>(anti_alias)) {
         anti_alias.emplace<FXAA>(
-            Settings::values.resolution_info.ScaleUp(framebuffer_texture.width),
-            Settings::values.resolution_info.ScaleUp(framebuffer_texture.height));
+            Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.width),
+            Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.height));
     }
 }
 
 void Layer::CreateSMAA() {
     if (!std::holds_alternative<SMAA>(anti_alias)) {
         anti_alias.emplace<SMAA>(
-            Settings::values.resolution_info.ScaleUp(framebuffer_texture.width),
-            Settings::values.resolution_info.ScaleUp(framebuffer_texture.height));
+            Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.width),
+            Settings::values.resolution_info.OutputScaleUp(framebuffer_texture.height));
     }
 }
 
