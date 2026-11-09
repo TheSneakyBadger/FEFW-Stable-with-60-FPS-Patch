@@ -12,6 +12,7 @@
 
 #include <QDesktopServices>
 #include <QHeaderView>
+#include <QLabel>
 #include <QMenu>
 #include <QStandardItemModel>
 #include <QStandardPaths>
@@ -66,11 +67,20 @@ ConfigurePerGameAddons::ConfigurePerGameAddons(Core::System& system_, QWidget* p
 
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
+    if (system.IsPoweredOn()) {
+        // Add-ons can be ticked while the game runs (the 60fps mod, say, for someone who starts
+        // the game from its file and so never sees this tab with the game stopped); they are
+        // loaded when the game starts, so the change applies from the next start.
+        QLabel* const restart_note = new QLabel(
+            tr("The game is running: changes here take effect the next time you start it."));
+        restart_note->setWordWrap(true);
+        restart_note->setContentsMargins(4, 4, 4, 6);
+        restart_note->setStyleSheet(QStringLiteral("color: #e0a030;"));
+        layout->addWidget(restart_note);
+    }
     layout->addWidget(tree_view);
 
     ui->scrollArea->setLayout(layout);
-
-    ui->scrollArea->setEnabled(!system.IsPoweredOn());
 
     connect(item_model, &QStandardItemModel::itemChanged, this,
             &ConfigurePerGameAddons::OnItemChanged);
