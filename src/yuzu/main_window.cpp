@@ -434,6 +434,13 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 
     show();
 
+    // Fortune's Eden's own update check (GitHub releases), off the UI thread.
+    if (UISettings::values.check_for_updates) {
+        connect(&fefw_update_watcher, &QFutureWatcher<std::optional<FefwUpdater::Release>>::finished,
+                this, &MainWindow::OnFefwUpdateChecked);
+        fefw_update_watcher.setFuture(QtConcurrent::run(&FefwUpdater::CheckForUpdate));
+    }
+
 #ifdef ENABLE_UPDATE_CHECKER
     if (UISettings::values.check_for_updates) {
         update_future = QtConcurrent::run(
@@ -2239,6 +2246,31 @@ void MainWindow::OnEmulationStopped() {
     Settings::RestoreGlobalState(QtCommon::system->IsPoweredOn());
     QtCommon::system->HIDCore().ReloadInputDevices();
     UpdateStatusButtons();
+
+    if (pending_fefw_update) {
+        // Found while the game ran: offer it now that it has stopped.
+        QTimer::singleShot(0, this, &MainWindow::OnFefwUpdateChecked);
+    }
+}
+
+void MainWindow::OnFefwUpdateChecked() {
+    std::optional<FefwUpdater::Release> release = pending_fefw_update;
+    if (!release && fefw_update_watcher.isFinished() && fefw_update_watcher.future().isValid() &&
+        fefw_update_watcher.future().resultCount() > 0) {
+        release = fefw_update_watcher.result();
+        fefw_update_watcher.setFuture({});
+    }
+    if (!release) {
+        return;
+    }
+    if (emulation_running) {
+        pending_fefw_update = std::move(release);
+        return;
+    }
+    pending_fefw_update.reset();
+    if (FefwUpdater::OfferUpdate(this, *release)) {
+        close();
+    }
 }
 
 void MainWindow::ShutdownGame() {

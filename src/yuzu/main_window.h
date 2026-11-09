@@ -22,6 +22,7 @@
 #include "frontend_common/content_manager.h"
 #include "input_common/drivers/tas_input.h"
 #include "qt_common/config/qt_config.h"
+#include "yuzu/fefw_updater.h"
 #include "qt_common/qt_common.h"
 #include "qt_common/util/game.h"
 #include "yuzu/hotkeys.h"
@@ -488,6 +489,12 @@ private:
     std::unique_ptr<DiscordRPC::DiscordInterface> discord_rpc;
     std::unique_ptr<PlayTime::PlayTimeManager> play_time_manager;
     std::shared_ptr<InputCommon::InputSubsystem> input_subsystem;
+
+    /// Fortune's Eden updater: the startup check, and a release found while a game ran (offered
+    /// once it stops).
+    QFutureWatcher<std::optional<FefwUpdater::Release>> fefw_update_watcher;
+    std::optional<FefwUpdater::Release> pending_fefw_update;
+    void OnFefwUpdateChecked();
 
 #ifdef ENABLE_UPDATE_CHECKER
     QFuture<std::optional<Common::Net::Release>> update_future;
