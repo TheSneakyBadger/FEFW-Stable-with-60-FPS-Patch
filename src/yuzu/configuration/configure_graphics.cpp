@@ -334,6 +334,7 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             NvidiaDlssPanel* panel = new NvidiaDlssPanel(group);
             group_layout->addWidget(panel);
             QComboBox* const box = widget->combobox;
+            upscaler_combobox = box;
             const auto show_panel = [box, panel] {
                 panel->setVisible(box->currentData().toUInt() ==
                                   static_cast<u32>(Settings::Upscaler::NvidiaDlss));
@@ -342,9 +343,36 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             connect(box, &QComboBox::currentIndexChanged, panel, show_panel);
             hold_graphics.emplace(setting->Id(), group);
 #endif
+        } else if (setting->Id() == Settings::values.upscaler_quality.Id() && widget->combobox) {
+            // A warning under the list when the chosen resolution or upscaler ignores it.
+            QWidget* group = new QWidget(this);
+            QVBoxLayout* group_layout = new QVBoxLayout(group);
+            group_layout->setContentsMargins(0, 0, 0, 0);
+            group_layout->setSpacing(2);
+            group_layout->addWidget(widget);
+            upscaler_quality_warning = new QLabel(group);
+            upscaler_quality_warning->setWordWrap(true);
+            upscaler_quality_warning->setStyleSheet(QStringLiteral("color: #e0a030;"));
+            group_layout->addWidget(upscaler_quality_warning);
+            hold_graphics.emplace(setting->Id(), group);
         } else {
+            if (setting->Id() == Settings::values.upscaler.Id() && widget->combobox) {
+                upscaler_combobox = widget->combobox;
+            }
             hold_graphics.emplace(setting->Id(), widget);
         }
+    }
+
+    if (upscaler_quality_warning) {
+        if (resolution_combobox) {
+            connect(resolution_combobox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                    [this](int) { UpdateUpscalerQualityWarning(); });
+        }
+        if (upscaler_combobox) {
+            connect(upscaler_combobox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                    [this](int) { UpdateUpscalerQualityWarning(); });
+        }
+        UpdateUpscalerQualityWarning();
     }
 
     for (const auto& [id, widget] : hold_graphics) {
@@ -483,6 +511,28 @@ void ConfigureGraphics::UpdateBackgroundColorButton(QColor color) {
 
     const QIcon color_icon(pixmap);
     ui->bg_button->setIcon(color_icon);
+}
+
+// Upscaler quality only applies at 1X with FSR 3.1, NVIDIA DLSS or FSR 4: say so when the chosen
+// resolution or upscaler means it won't.
+void ConfigureGraphics::UpdateUpscalerQualityWarning() {
+    if (!upscaler_quality_warning) {
+        return;
+    }
+    QString warning;
+    if (resolution_combobox &&
+        resolution_combobox->currentData().toUInt() !=
+            static_cast<u32>(Settings::ResolutionSetup::Res1X)) {
+        warning = tr("Upscaler quality only works at 1X resolution. At this resolution the 3D "
+                     "scene is drawn at Performance (half size) and the whole picture is scaled "
+                     "instead.");
+    } else if (upscaler_combobox && upscaler_combobox->currentData().toUInt() ==
+                                        static_cast<u32>(Settings::Upscaler::GameDlss)) {
+        warning = tr("Upscaler quality doesn't apply to the game's own DLSS: it always draws "
+                     "the 3D scene at Performance.");
+    }
+    upscaler_quality_warning->setText(warning);
+    upscaler_quality_warning->setVisible(!warning.isEmpty());
 }
 
 void ConfigureGraphics::UpdateAPILayout() {

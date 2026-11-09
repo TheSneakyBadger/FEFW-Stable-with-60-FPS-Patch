@@ -26,6 +26,7 @@ class QPushButton;
 class QEvent;
 class QObject;
 class QComboBox;
+class QLabel;
 
 namespace Settings {
 enum class NvdecEmulation : u32;
@@ -70,6 +71,7 @@ private:
     void UpdateVsyncSetting() const;
     void UpdateBackgroundColorButton(QColor color);
     void UpdateAPILayout();
+    void UpdateUpscalerQualityWarning();
     void UpdateDeviceSelection(int device);
 
     void RetrieveVulkanDevices();
@@ -110,4 +112,6 @@ private:
     QWidget* api_widget;
     QComboBox* aspect_ratio_combobox;
     QComboBox* resolution_combobox;
+    QComboBox* upscaler_combobox{};
+    QLabel* upscaler_quality_warning{};
 };
