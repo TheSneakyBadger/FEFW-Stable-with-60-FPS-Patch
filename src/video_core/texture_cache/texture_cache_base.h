@@ -347,7 +347,7 @@ private:
     void OnGPUASRegister(size_t map_id) final override;
 
     /// Runs the Garbage Collector.
-    void RunGarbageCollector();
+    u32 RunGarbageCollector(); ///< Returns how many images it freed
 
     /// Find or create an image view in the guest descriptor table
     ImageViewId VisitImageView(u32 index, bool compute);
@@ -572,9 +572,12 @@ private:
     static constexpr size_t TICKS_TO_DESTROY = 8;
 #endif
     DelayedDestructionRing<Image, TICKS_TO_DESTROY> sentenced_images;
-    /// Estimated bytes of the images in each slot of sentenced_images (same rotation).
-    std::array<u64, TICKS_TO_DESTROY> sentenced_bytes{};
-    size_t sentenced_bytes_index = 0;
+    u64 memory_limit = ~0ULL;        ///< Video memory the emulator may use
+    u64 collect_quiet_until = 0;     ///< No cleanup pass before this frame unless over the limit
+    u64 texture_memory_estimate = 0; ///< Bytes of the cached images (diagnostics)
+    u32 minute_passes = 0;           ///< Cleanup since the last "Video memory in use" report
+    u64 minute_freed = 0;
+    double minute_collect_ms = 0.0;
     DelayedDestructionRing<ImageView, TICKS_TO_DESTROY> sentenced_image_view;
     DelayedDestructionRing<Framebuffer, TICKS_TO_DESTROY> sentenced_framebuffers;
 

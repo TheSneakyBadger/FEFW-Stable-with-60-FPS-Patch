@@ -77,6 +77,7 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
             (std::max)((std::min)(device_local_memory - min_vacancy_critical, min_spacing_critical),
                      DEFAULT_CRITICAL_MEMORY));
         minimum_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+        memory_limit = static_cast<u64>(device_local_memory);
         // Clean up earlier on big cards: faster above 70% of the limit and hard above 85%, not
         // 2.4 GB and 0.8 GB below it. Long sessions crept towards the limit (where other
         // allocations and the driver push it over and performance drops); this keeps a margin
@@ -130,7 +131,7 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
 }
 
 template <class P>
-void TextureCache<P>::RunGarbageCollector() {
+u32 TextureCache<P>::RunGarbageCollector() {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     bool evict_old_costly = false;
@@ -269,6 +270,7 @@ void TextureCache<P>::RunGarbageCollector() {
     const auto pass_ms = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - pass_start)
                              .count();
+    minute_collect_ms += pass_ms;
     static u32 slow_passes_logged = 0;
     if (pass_ms >= 20.0 && slow_passes_logged < 200) {
         ++slow_passes_logged;
@@ -278,41 +280,47 @@ void TextureCache<P>::RunGarbageCollector() {
                  pass_ms, was_aggressive ? "hard" : (was_high_priority ? "fast" : "normal"),
                  num_deleted, num_downloaded, used_before >> 20, total_used_memory >> 20);
     }
+    return num_deleted;
 }
 
 template <class P>
 void TextureCache<P>::TickFrame() {
     // If we can obtain the memory info, use it instead of the estimate.
     if (runtime.CanReportMemoryUsage()) {
-        // The driver still counts images waiting in sentenced_images. Without taking them off,
-        // every cleanup pass looked like it had freed nothing, and the collector ran again each
-        // frame until they were destroyed (on 8 GB cards it evicted several times what it needed).
-        u64 pending_free = 0;
-        for (const u64 bytes : sentenced_bytes) {
-            pending_free += bytes;
-        }
-        // At most 1 GiB: an estimate that ran high would otherwise hold cleanup back.
-        pending_free = (std::min)(pending_free, u64{1_GiB});
-        const u64 device_usage = runtime.GetDeviceMemoryUsage();
-        total_used_memory = device_usage > pending_free ? device_usage - pending_free : 0;
+        total_used_memory = runtime.GetDeviceMemoryUsage();
     }
-    if (total_used_memory > minimum_memory) {
-        RunGarbageCollector();
+    // The driver still counts the images a pass freed until sentenced_images destroys them,
+    // TICKS_TO_DESTROY frames later, so the next passes saw no drop and evicted again (on 8 GB
+    // cards several times what was needed). Wait those frames after a pass that freed something,
+    // unless use is over the limit itself. (v1.6.2 instead took the pending frees off the measured
+    // use, which under steady eviction let real use creep past the limit on 6 GB cards.)
+    if (total_used_memory > minimum_memory &&
+        (frame_tick >= collect_quiet_until || total_used_memory >= memory_limit)) {
+        const u32 freed = RunGarbageCollector();
+        if (freed != 0) {
+            collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+        }
+        ++minute_passes;
+        minute_freed += freed;
     }
     // Diagnostics: how much video memory the game uses, about once a minute.
     static u64 peak_used_memory = 0;
     peak_used_memory = (std::max)(peak_used_memory, total_used_memory);
     if (frame_tick % 3600 == 0 && frame_tick != 0) {
-        LOG_INFO(HW_GPU, "Video memory in use: {} MiB (highest so far {} MiB)",
-                 total_used_memory >> 20, peak_used_memory >> 20);
+        LOG_INFO(HW_GPU,
+                 "Video memory in use: {} MiB (highest so far {} MiB); textures about {} MiB; "
+                 "cleanup since the last report: {} passes, {} textures freed, {:.0f} ms",
+                 total_used_memory >> 20, peak_used_memory >> 20, texture_memory_estimate >> 20,
+                 minute_passes, minute_freed, minute_collect_ms);
+        minute_passes = 0;
+        minute_freed = 0;
+        minute_collect_ms = 0.0;
     }
     for (std::shared_ptr<Image>& image : retired_images) {
         sentenced_images.Push(std::move(*image));
     }
     retired_images.clear();
     sentenced_images.Tick();
-    sentenced_bytes_index = (sentenced_bytes_index + 1) % TICKS_TO_DESTROY;
-    sentenced_bytes[sentenced_bytes_index] = 0;
     sentenced_framebuffers.Tick();
     sentenced_image_view.Tick();
     TickAsyncDecode();
@@ -1842,6 +1850,7 @@ bool TextureCache<P>::ScaleUp(Image& image) {
     const bool rescaled = image.ScaleUp();
     if (!has_copy && image.HasScaled()) {
         total_used_memory += GetScaledImageSizeBytes(image);
+        texture_memory_estimate += GetScaledImageSizeBytes(image);
     }
     if (!rescaled) {
         return false;
@@ -2522,6 +2531,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
         tentative_size = TranscodedAstcSize(tentative_size, image.info.format);
     }
     total_used_memory += Common::AlignUp(tentative_size, 1024);
+    texture_memory_estimate += Common::AlignUp(tentative_size, 1024);
     image.lru_index = lru_cache.Insert(image_id, frame_tick);
 
     ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, image_id](u64 page) {
@@ -2711,6 +2721,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     const u64 freed_bytes = ImageMemoryEstimate(image);
     total_used_memory -= (std::min)(freed_bytes, total_used_memory);
+    texture_memory_estimate -= (std::min)(freed_bytes, texture_memory_estimate);
     const GPUVAddr gpu_addr = image.gpu_addr;
     const auto alloc_it = image_allocs_table.find(gpu_addr);
     if (alloc_it == image_allocs_table.end()) {
@@ -2776,8 +2787,6 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         LOG_INFO(Render_Vulkan, "Retained image for queued download: id={}", image_id.Value());
     } else if (!immediate_delete) {
         sentenced_images.Push(std::move(slot_images[image_id]));
-        // Freed only when sentenced_images lets go of it, TICKS_TO_DESTROY frames from now.
-        sentenced_bytes[sentenced_bytes_index] += freed_bytes;
     }
     slot_images.erase(image_id);
 
