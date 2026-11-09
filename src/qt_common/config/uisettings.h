@@ -61,17 +61,13 @@ enum class Theme {
     DarkColorful,
     MidnightBlue,
     MidnightBlueColorful,
+    FortunesEden,
 };
 
-static constexpr Theme default_theme{
-#ifdef _WIN32
-    Theme::DarkColorful
-#else
-    Theme::DefaultColorful
-#endif
-};
+// Fortune's Eden's own dark theme (plum and gold) on every platform.
+static constexpr Theme default_theme{Theme::FortunesEden};
 
-using Themes = std::array<std::pair<const char*, const char*>, 6>;
+using Themes = std::array<std::pair<const char*, const char*>, 7>;
 extern const Themes themes;
 
 struct GameDir {

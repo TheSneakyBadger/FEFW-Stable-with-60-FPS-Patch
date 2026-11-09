@@ -232,6 +232,8 @@ add_executable(yuzu
     main_window.h main_window.cpp main.ui
     fefw_updater.h
     fefw_updater.cpp
+    fefw_home.h
+    fefw_home.cpp
 
     configuration/system/new_user_dialog.h configuration/system/new_user_dialog.cpp configuration/system/new_user_dialog.ui
     configuration/system/profile_avatar_dialog.h configuration/system/profile_avatar_dialog.cpp

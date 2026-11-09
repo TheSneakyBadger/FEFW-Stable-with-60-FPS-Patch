@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <string_view>
+#include <utility>
 #include <boost/algorithm/string/split.hpp>
 #include "common/fefw_version.h"
 #include "common/fs/path_util.h"
@@ -44,6 +45,7 @@
 #include "ryujinx_dialog.h"
 #include "set_play_time_dialog.h"
 #include "util/util.h"
+#include "yuzu/fefw_home.h"
 #include "yuzu/game/game_list.h"
 
 #include "applets/qt_amiibo_settings.h"
@@ -436,9 +438,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     show();
 
     // Fortune's Eden's own update check (GitHub releases), off the UI thread.
+    connect(&fefw_update_watcher, &QFutureWatcher<std::optional<FefwUpdater::Release>>::finished,
+            this, &MainWindow::OnFefwUpdateChecked);
     if (UISettings::values.check_for_updates) {
-        connect(&fefw_update_watcher, &QFutureWatcher<std::optional<FefwUpdater::Release>>::finished,
-                this, &MainWindow::OnFefwUpdateChecked);
         fefw_update_watcher.setFuture(QtConcurrent::run(&FefwUpdater::CheckForUpdate));
     }
 
@@ -931,7 +933,8 @@ void MainWindow::InitializeWidgets() {
 
     game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
                              *QtCommon::system, this);
-    ui->horizontalLayout->addWidget(game_list);
+    fefw_home = new FefwHome(game_list, this);
+    ui->horizontalLayout->addWidget(fefw_home);
 
     game_list_placeholder = new GameListPlaceholder(this);
     ui->horizontalLayout->addWidget(game_list_placeholder);
@@ -1120,6 +1123,8 @@ void MainWindow::InitializeWidgets() {
                 aa_status_button->repaint();
             });
     statusBar()->insertPermanentWidget(0, aa_status_button);
+    // Anti-aliasing is the upscaler's job in Fortune's Eden (the setting is hidden too).
+    aa_status_button->hide();
 
     // Setup Filter button
     filter_status_button = new QPushButton();
@@ -1143,6 +1148,8 @@ void MainWindow::InitializeWidgets() {
                 filter_status_button->repaint();
             });
     statusBar()->insertPermanentWidget(0, filter_status_button);
+    // The window filter is hidden with the other settings the upscaler covers.
+    filter_status_button->hide();
 
     // Setup Dock button
     dock_status_button = new QPushButton();
@@ -1469,8 +1476,19 @@ void MainWindow::ConnectWidgetEvents() {
     connect(game_list_placeholder, &GameListPlaceholder::AddDirectory, this,
             &MainWindow::OnGameListAddDirectory);
     connect(game_list, &GameList::ShowList, this, &MainWindow::OnGameListShowList);
-    connect(game_list, &GameList::PopulatingCompleted,
-            [this] { multiplayer_state->UpdateGameList(game_list->GetModel()); });
+    connect(game_list, &GameList::PopulatingCompleted, [this] {
+        multiplayer_state->UpdateGameList(game_list->GetModel());
+        fefw_home->Refresh(*game_list->GetModel());
+    });
+    connect(fefw_home, &FefwHome::PlayRequested, this,
+            [this](const QString& path) { BootGameFromList(path, StartGameType::Normal); });
+    connect(fefw_home, &FefwHome::GameSettingsRequested, this,
+            [this](u64 title_id, const QString& path) {
+                OpenPerGameConfiguration(title_id, path.toStdString());
+                fefw_home->UpdateStatusLine();
+            });
+    connect(fefw_home, &FefwHome::SettingsRequested, this, &MainWindow::OnConfigure);
+    connect(fefw_home, &FefwHome::UpdateCheckRequested, this, &MainWindow::CheckForFefwUpdateNow);
     connect(game_list, &GameList::SaveConfig, this, &MainWindow::OnSaveConfig);
 
     connect(game_list, &GameList::OpenPerGameGeneralRequested, this,
@@ -2254,6 +2272,17 @@ void MainWindow::OnEmulationStopped() {
     }
 }
 
+/// The launch screen's Check for Updates: the same check as at startup, saying so when there
+/// is nothing newer.
+void MainWindow::CheckForFefwUpdateNow() {
+    if (fefw_update_watcher.isRunning()) {
+        fefw_manual_update_check = true;
+        return;
+    }
+    fefw_manual_update_check = true;
+    fefw_update_watcher.setFuture(QtConcurrent::run(&FefwUpdater::CheckForUpdate));
+}
+
 void MainWindow::OnFefwUpdateChecked() {
     std::optional<FefwUpdater::Release> release = pending_fefw_update;
     if (!release && fefw_update_watcher.isFinished() && fefw_update_watcher.future().isValid() &&
@@ -2261,7 +2290,15 @@ void MainWindow::OnFefwUpdateChecked() {
         release = fefw_update_watcher.result();
         fefw_update_watcher.setFuture({});
     }
+    const bool manual = std::exchange(fefw_manual_update_check, false);
     if (!release) {
+        if (manual) {
+            QMessageBox::information(
+                this, tr("Check for Updates"),
+                tr("You have the newest version of Fortune's Eden (%1), or the update check "
+                   "couldn't reach GitHub.")
+                    .arg(QString::fromUtf8(Common::FefwVersion)));
+        }
         return;
     }
     if (emulation_running) {
@@ -3561,6 +3598,7 @@ void MainWindow::OnConfigure() {
     UISettings::values.configuration_applied = false;
 
     config->SaveAllValues();
+    fefw_home->UpdateStatusLine();
 
     if ((UISettings::values.hide_mouse || Settings::values.mouse_panning) && emulation_running) {
         render_window->installEventFilter(render_window);

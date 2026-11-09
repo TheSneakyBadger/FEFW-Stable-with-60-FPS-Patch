@@ -277,6 +277,13 @@ void QtConfig::ReadUIValues() {
     UISettings::values.theme = ReadStringSetting(
         std::string("theme"),
         std::string(UISettings::themes[static_cast<size_t>(UISettings::default_theme)].second));
+    // v1.6.7: the previous default theme moves to Fortune's Eden's own theme once; a theme
+    // chosen after that is kept.
+    if (!ReadBooleanSetting(std::string("fortunes_eden_theme_applied"), std::make_optional(false))) {
+        if (UISettings::values.theme == "colorful_dark" || UISettings::values.theme == "colorful") {
+            UISettings::values.theme = "fortunes_eden";
+        }
+    }
 
     ReadUIGamelistValues();
     ReadUILayoutValues();
@@ -504,6 +511,8 @@ void QtConfig::SaveUIValues() {
         std::string("theme"), UISettings::values.theme,
         std::make_optional(std::string(
             UISettings::themes[static_cast<size_t>(UISettings::default_theme)].second)));
+    WriteBooleanSetting(std::string("fortunes_eden_theme_applied"), true,
+                        std::make_optional(false));
 
     SaveUIGamelistValues();
     SaveUILayoutValues();

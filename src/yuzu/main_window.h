@@ -24,6 +24,8 @@
 #include "qt_common/config/qt_config.h"
 #include "yuzu/fefw_updater.h"
 
+class FefwHome;
+
 #include <QFuture>
 #include <QFutureWatcher>
 #include "qt_common/qt_common.h"
@@ -497,7 +499,12 @@ private:
     /// once it stops).
     QFutureWatcher<std::optional<FefwUpdater::Release>> fefw_update_watcher;
     std::optional<FefwUpdater::Release> pending_fefw_update;
+    bool fefw_manual_update_check = false;
     void OnFefwUpdateChecked();
+    void CheckForFefwUpdateNow();
+
+    /// The launch screen above the game list (it holds the list).
+    FefwHome* fefw_home = nullptr;
 
 #ifdef ENABLE_UPDATE_CHECKER
     QFuture<std::optional<Common::Net::Release>> update_future;
