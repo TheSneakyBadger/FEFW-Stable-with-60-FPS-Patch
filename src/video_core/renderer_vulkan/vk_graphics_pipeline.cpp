@@ -87,6 +87,10 @@ void NoteHandleTableBytes(GPUVAddr base, std::span<const u8> bytes) {
 /// were missed. A table that is ever found to differ is waited for from then on (for the rest of
 /// the session), so a table that changes can show the previous handles at most once: until the
 /// GPU's copy is checked (about a frame), or REFRESH at worst. Each change is logged.
+/// REFRESH is 2 s: every real download is a Finish, which on a slower GPU in a heavy scene waits
+/// out all its queued work (the Saramis hub on an RTX 3060: about 85 ms each, 6 a second at a
+/// 250 ms REFRESH, half the draw thread's time, with the game's threads blocked behind it). Each
+/// use's GPU copy is still checked about a frame later, so the refresh only backs that up.
 /// EDEN_SPECULATIVE_HANDLES=0 turns it off.
 class SpeculativeHandleTables {
 public:
@@ -165,7 +169,7 @@ public:
 
 private:
     static constexpr u32 STREAK = 32;
-    static constexpr std::chrono::milliseconds REFRESH{250};
+    static constexpr std::chrono::milliseconds REFRESH{2000};
     static constexpr size_t MAX_PENDING = 16;
     static constexpr u64 MAX_SIZE = 256 * 1024;
 
@@ -289,7 +293,7 @@ private:
         u64 size{};
     };
 
-    std::array<Table, 8> tables{};
+    std::array<Table, 16> tables{};
     std::array<VolatileTable, 128> volatile_tables{};
     u32 volatile_count{};
     u32 volatile_next{};
