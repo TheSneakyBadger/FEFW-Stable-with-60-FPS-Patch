@@ -9,6 +9,7 @@
 #endif
 
 #include <cstdlib>
+#include <string_view>
 #include <boost/algorithm/string/split.hpp>
 #include "common/fefw_version.h"
 #include "common/fs/path_util.h"
@@ -4256,13 +4257,8 @@ void MainWindow::UpdateStatusBar() {
     }
 
     const auto res_info = Settings::values.resolution_info;
-    if (res_info.scene_only) {
-        res_scale_label->setText(tr("Scale: 1x, scene %1x", "%1 is the 3D scene's scaling factor")
-                                     .arg(res_info.up_factor, 0, 'f', 2));
-    } else {
-        res_scale_label->setText(
-            tr("Scale: %1x", "%1 is the resolution scaling factor").arg(res_info.up_factor));
-    }
+    res_scale_label->setText(
+        tr("Scale: %1x", "%1 is the resolution scaling factor").arg(res_info.OutputFactor()));
 
     if (Settings::values.use_speed_limit.GetValue()) {
         emu_speed_label->setText(tr("Speed: %1% / %2%")
@@ -4281,7 +4277,34 @@ void MainWindow::UpdateStatusBar() {
     emu_frametime_label->setText(tr("Frame: %1 ms").arg(results.frametime * 1000.0, 0, 'f', 2));
 
     if (const char* upscaler = Settings::ActiveUpscaler()) {
-        upscaler_label->setText(QString::fromUtf8(upscaler));
+        // The upscaler and its quality mode: "NVIDIA DLSS - DLAA", "AMD FSR 3.1 - Balanced". The
+        // game's own DLSS always runs at Performance and has no mode to show.
+        const std::string_view name{upscaler};
+        QString mode;
+        if (name != "Game's own DLSS") {
+            switch (res_info.scene_only ? Settings::values.upscaler_quality.GetValue()
+                                        : Settings::UpscalerQuality::Performance) {
+            case Settings::UpscalerQuality::Native:
+                mode = name == "NVIDIA DLSS" ? tr("DLAA") : tr("Native");
+                break;
+            case Settings::UpscalerQuality::UltraQuality:
+                mode = tr("Ultra Quality");
+                break;
+            case Settings::UpscalerQuality::Quality:
+                mode = tr("Quality");
+                break;
+            case Settings::UpscalerQuality::Balanced:
+                mode = tr("Balanced");
+                break;
+            case Settings::UpscalerQuality::Performance:
+            default:
+                mode = tr("Performance");
+                break;
+            }
+        }
+        upscaler_label->setText(mode.isEmpty()
+                                    ? QString::fromUtf8(upscaler)
+                                    : QStringLiteral("%1 - %2").arg(QString::fromUtf8(upscaler), mode));
         upscaler_label->setVisible(true);
     } else {
         upscaler_label->setVisible(false);
