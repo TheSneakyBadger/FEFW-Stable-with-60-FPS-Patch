@@ -64,6 +64,28 @@ int Av1DecodeThreads() {
     return threads;
 }
 
+// EDEN_VIDEO_LOOKAHEAD=N (2-8; off by default) lets the game submit up to N AV1 frames before a
+// submission waits for a decoded frame. Each submission normally waits for the oldest frame
+// (when the game has an image free), so libgav1 only ever has about one frame to work on and
+// frame-parallel decoding can't help: heavy 1440p frames (~50 ms each, one tile) then set the
+// cutscene's pace. Experimental (issue #22): fetches and image hand-backs still wait as before.
+size_t VideoLookahead() {
+    static const size_t lookahead = [] {
+        size_t value = 0;
+        if (const char* const env = std::getenv("EDEN_VIDEO_LOOKAHEAD")) {
+            const int requested = std::atoi(env);
+            if (requested >= 2 && requested <= 8) {
+                value = static_cast<size_t>(requested);
+            }
+        }
+        if (value != 0) {
+            LOG_INFO(Service_AM, "Native video: submissions decode up to {} frames ahead", value);
+        }
+        return value;
+    }();
+    return lookahead;
+}
+
 // EDEN_AV1_FRAME_PARALLEL=0 decodes one frame at a time, as before.
 bool Av1FrameParallel() {
     static const bool enabled = [] {
@@ -190,7 +212,10 @@ private:
         std::chrono::steady_clock::duration decode_time{};
     };
 
-    static constexpr size_t MaximumPendingInputs = 3;
+    // 3, or EDEN_VIDEO_LOOKAHEAD when higher, so the game can keep submitting while libgav1 works.
+    static size_t MaximumPendingInputs() {
+        return (std::max)(size_t{3}, VideoLookahead());
+    }
     // AV1 frames the decode worker may hold decoded ahead of the images the game hands back.
     static constexpr size_t MaximumDecodedAhead = 2;
 
@@ -214,7 +239,7 @@ private:
                 if (input.size() <= configuration->input_capacity && (input.empty() == bool(packet[7] & 0xff))) {
                     result = Result{0x1c266f};
                     std::unique_lock lock{decode_mutex};
-                    if (pending_inputs.size() < MaximumPendingInputs &&
+                    if (pending_inputs.size() < MaximumPendingInputs() &&
                         pending_input_bytes + input.size() <= transfer_memory->GetSize()) {
                         submission_id = next_submission_id++;
                         const u64 timestamp = u64{packet[5]} | (u64{packet[6]} << 32);
@@ -223,7 +248,7 @@ private:
                         pending_inputs.push_back({std::vector<u8>{input.begin(), input.end()}, submission_id, timestamp, bool(packet[7] & 0xff)});
                         lock.unlock();
                         decode_cv.notify_all();
-                        result = PumpOutput();
+                        result = PumpOutput(/*from_submit=*/true);
                     } else {
                         lock.unlock();
                         if (submission_event) submission_event->Clear(kernel);
@@ -560,7 +585,7 @@ private:
         }
     }
 
-    Result PumpOutput() {
+    Result PumpOutput(bool from_submit = false) {
         while (true) {
             auto image = registered_images.end();
             for (auto it = registered_images.begin(); it != registered_images.end(); ++it)
@@ -580,6 +605,17 @@ private:
                 // inputs queued), wait: an image the game hands back must get its frame within this
                 // call, since the game then waits on the image's fence and may make no other call.
                 std::unique_lock lock{decode_mutex};
+                if (from_submit && VideoLookahead() != 0 && decoded_frames.empty() &&
+                    !decode_error) {
+                    // Lookahead: return to the game while fewer than N frames are submitted, so
+                    // it can hand libgav1 more to decode at once (never with an EOS queued).
+                    const bool eos_queued = std::ranges::any_of(
+                        pending_inputs, [](const PendingInput& input) { return input.eos; });
+                    if (!eos_queued &&
+                        pending_inputs.size() + av1_in_flight.size() < VideoLookahead()) {
+                        break;
+                    }
+                }
                 decode_cv.wait(lock, [&] {
                     return !decoded_frames.empty() || decode_error ||
                            (pending_inputs.empty() && av1_in_flight.empty() && !decode_busy);
@@ -748,7 +784,7 @@ private:
         }
         if (submission_event) {
             std::unique_lock lock{decode_mutex};
-            const bool room = transfer_memory && pending_inputs.size() < MaximumPendingInputs &&
+            const bool room = transfer_memory && pending_inputs.size() < MaximumPendingInputs() &&
                               pending_input_bytes < transfer_memory->GetSize();
             lock.unlock();
             if (room) submission_event->Signal(kernel);
