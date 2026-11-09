@@ -137,7 +137,7 @@ ENUM(VramUsageMode, Conservative, Aggressive);
 
 // What replaces a Switch 2 game's own DLSS upscale (Fortune's Weave).
 ENUM(Upscaler, Fsr3, GameDlss, NvidiaDlss, Fsr4);
-// The upscaler's quality mode: the 3D scene's size against the picture's (1, 0.77, 0.67, 0.58,
+// The upscaler's quality mode: the 3D scene's size against the picture's (1, 0.75, 0.66, 0.63,
 // 0.5). Fortune's Weave itself draws at Performance (720p to 1440p).
 ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
 ENUM(RendererBackend, OpenGL_GLSL, Vulkan, Null, OpenGL_GLASM, OpenGL_SPIRV);

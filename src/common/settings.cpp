@@ -461,34 +461,40 @@ void UpdateRescalingInfo() {
     TranslateResolutionInfo(setup, info);
     info.scene_only = false;
     // Upscaler quality modes (1X only for now): the game draws its scene at half the picture's
-    // size (Performance), so draw the scene alone at 2x the mode's ratio, in 64ths: Native 2x
-    // (1440p), Ultra Quality 1.53x (1960x1102), Quality 1.33x (1700x956), Balanced 1.16x
-    // (1480x832). The upscaled picture and the UI stay at 1440p.
+    // size (Performance), so draw the scene alone bigger: Native 2x (1440p), Ultra Quality 1.5x
+    // (1920x1080), Quality 1.3125x (1680x945), Balanced 1.25x (1600x900). Scales with small
+    // denominators: the emulator rounds the game's pixel-exact reads to its own pixel grid, and
+    // 1.16x (74/64) rounded unevenly enough to show. The upscaled picture and the UI stay at
+    // 1440p.
     if (setup != ResolutionSetup::Res1X || values.upscaler.GetValue() == Upscaler::GameDlss) {
         return;
     }
-    u32 up_scale = 64;
+    u32 up_scale = 1;
+    u32 down_shift = 0;
     switch (values.upscaler_quality.GetValue()) {
     case UpscalerQuality::Native:
-        up_scale = 128;
+        up_scale = 2;
         break;
     case UpscalerQuality::UltraQuality:
-        up_scale = 98;
+        up_scale = 3;
+        down_shift = 1;
         break;
     case UpscalerQuality::Quality:
-        up_scale = 85;
+        up_scale = 21;
+        down_shift = 4;
         break;
     case UpscalerQuality::Balanced:
-        up_scale = 74;
+        up_scale = 5;
+        down_shift = 2;
         break;
     case UpscalerQuality::Performance:
     default:
         return;
     }
     info.up_scale = up_scale;
-    info.down_shift = 6;
-    info.up_factor = static_cast<f32>(up_scale) / 64.0f;
-    info.down_factor = 64.0f / static_cast<f32>(up_scale);
+    info.down_shift = down_shift;
+    info.up_factor = static_cast<f32>(up_scale) / static_cast<f32>(1U << down_shift);
+    info.down_factor = static_cast<f32>(1U << down_shift) / static_cast<f32>(up_scale);
     info.active = true;
     info.scene_only = true;
     LOG_INFO(Common, "Upscaler quality {}: the 3D scene is drawn at {:.3f}x, the picture at 1x",

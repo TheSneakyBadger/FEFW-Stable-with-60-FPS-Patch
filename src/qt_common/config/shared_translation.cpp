@@ -171,7 +171,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("How big the game's 3D scene is drawn before the upscaler brings it to the full "
               "picture (1440p docked at 1X).\nNative: the full size, with the upscaler only "
               "smoothing edges (DLAA with NVIDIA DLSS); the sharpest and the heaviest.\nUltra "
-              "Quality, Quality, Balanced: 77%, 67% and 58% of the size.\nPerformance: 50%, the "
+              "Quality, Quality, Balanced: 75%, 66% and 63% of the size.\nPerformance: 50%, the "
               "game's own 720p; the lightest.\nThe menus and text are always drawn at the full "
               "size. Applies at 1X resolution with AMD FSR 3.1, NVIDIA DLSS or AMD FSR 4; other "
               "resolutions and the game's own DLSS use Performance. Takes effect when a game "
