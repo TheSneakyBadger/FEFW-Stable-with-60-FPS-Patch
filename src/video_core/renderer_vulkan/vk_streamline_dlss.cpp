@@ -35,9 +35,8 @@ sl::DLSSMode ModeFor(VkExtent2D render, VkExtent2D upscale) {
     if (ratio >= 0.99f) {
         return sl::DLSSMode::eDLAA;
     }
-    if (ratio >= 0.74f) {
-        return sl::DLSSMode::eUltraQuality;
-    }
+    // Ultra Quality (0.77) runs as Quality: DLSS turns down its own Ultra Quality mode, and every
+    // mode here uses the same preset, so only the accepted range matters.
     if (ratio >= 0.65f) {
         return sl::DLSSMode::eMaxQuality;
     }
