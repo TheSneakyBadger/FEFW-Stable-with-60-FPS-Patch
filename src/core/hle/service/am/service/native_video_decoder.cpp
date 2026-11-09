@@ -480,10 +480,12 @@ private:
             PendingInput input = std::move(pending_inputs.front());
             pending_inputs.pop_front();
             decode_busy = true;
+            eos_in_progress = true;
             lock.unlock();
             const bool reset = decoder->SignalEOS() == libgav1::kStatusOk;
             lock.lock();
             decode_busy = false;
+            eos_in_progress = false;
             av1_decoder_full = false;
             if (!reset) {
                 decode_error = Kernel::ResultInvalidState;
@@ -611,7 +613,7 @@ private:
                     // it can hand libgav1 more to decode at once (never with an EOS queued).
                     const bool eos_queued = std::ranges::any_of(
                         pending_inputs, [](const PendingInput& input) { return input.eos; });
-                    if (!eos_queued &&
+                    if (!eos_queued && !eos_in_progress &&
                         pending_inputs.size() + av1_in_flight.size() < VideoLookahead()) {
                         break;
                     }
@@ -1261,6 +1263,7 @@ private:
     // each is kept until its frame is taken out.
     std::deque<PendingInput> av1_in_flight;
     bool av1_decoder_full{}; // libgav1 said kStatusTryAgain: take a frame out before enqueuing
+    bool eos_in_progress{}; // The worker is ending the stream (between taking EOS and its frame)
 
     std::jthread decode_worker; // Last: stopped and joined first (Reset also joins it).
 };
