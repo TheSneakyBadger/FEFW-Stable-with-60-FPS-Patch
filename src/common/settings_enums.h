@@ -134,6 +134,9 @@ ENUM(AstcRecompression, Uncompressed, Bc1, Bc3, Auto);
 ENUM(FramePacingMode, Target_Auto, Target_30, Target_60, Target_90, Target_120);
 ENUM(VSyncMode, Immediate, Mailbox, Fifo, FifoRelaxed);
 ENUM(VramUsageMode, Conservative, Aggressive);
+
+// What replaces a Switch 2 game's own DLSS upscale (Fortune's Weave).
+ENUM(Upscaler, Fsr3, GameDlss, NvidiaDlss, Fsr4);
 ENUM(RendererBackend, OpenGL_GLSL, Vulkan, Null, OpenGL_GLASM, OpenGL_SPIRV);
 ENUM(GpuAccuracy, Low, High);
 ENUM(DmaAccuracy, Default, Unsafe, Safe);

@@ -730,7 +730,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     // Only AMD FSR 4 (fsr4-vk's FP8/INT8 pipelines) uses cooperative matrices and 8-bit floats:
     // leave them off the device unless it's on.
-    if (!Settings::values.amd_fsr4.GetValue()) {
+    if (Settings::values.upscaler.GetValue() != Settings::Upscaler::Fsr4) {
         RemoveExtensionFeature(extensions.cooperative_matrix, features.cooperative_matrix,
                                VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
         RemoveExtensionFeature(extensions.shader_float8, features.shader_float8,

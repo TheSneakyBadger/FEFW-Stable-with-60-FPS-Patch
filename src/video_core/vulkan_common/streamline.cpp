@@ -291,7 +291,7 @@ bool Start() {
     if (state.started) {
         return true;
     }
-    if (!Settings::values.nvidia_dlss.GetValue()) {
+    if (Settings::values.upscaler.GetValue() != Settings::Upscaler::NvidiaDlss) {
         return false;
     }
     if (!state.module) {

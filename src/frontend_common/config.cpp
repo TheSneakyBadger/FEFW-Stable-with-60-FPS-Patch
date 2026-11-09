@@ -480,6 +480,26 @@ void Config::ReadRendererValues() {
     ReadCategory(Settings::Category::RendererExtensions);
     ReadCategory(Settings::Category::RendererDebug);
 
+    // v1.6.2 and earlier had a tick box per upscaler. Keep a player's choice when there is no
+    // upscaler entry yet: NVIDIA DLSS or AMD FSR 4 when ticked, else the game's own DLSS, which
+    // was their default. New and reset configs get AMD FSR 3.1.
+    if (global && config->GetValue(GetSection().c_str(), GetFullKey("upscaler", false).c_str(),
+                                   nullptr) == nullptr &&
+        config->GetValue(GetSection().c_str(), GetFullKey("nvidia_dlss", false).c_str(),
+                         nullptr) != nullptr) {
+        Settings::Upscaler migrated = Settings::Upscaler::GameDlss;
+        if (ReadBooleanSetting(std::string("nvidia_dlss"), std::make_optional(false))) {
+            migrated = Settings::Upscaler::NvidiaDlss;
+        } else if (ReadBooleanSetting(std::string("amd_fsr4"), std::make_optional(false))) {
+            migrated = Settings::Upscaler::Fsr4;
+        } else if (ReadBooleanSetting(std::string("amd_fsr3"), std::make_optional(false))) {
+            migrated = Settings::Upscaler::Fsr3;
+        }
+        Settings::values.upscaler.SetValue(migrated);
+        LOG_INFO(Config, "Upscaler set from the old tick boxes: {}",
+                 Settings::CanonicalizeEnum(migrated));
+    }
+
     EndGroup();
 }
 

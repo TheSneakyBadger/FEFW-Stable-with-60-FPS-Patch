@@ -158,22 +158,16 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "Display > Use HDR).\nFire Emblem: Fortune's Weave then makes its own HDR picture: "
               "set its Brightness and UI Brightness in the game's options.\nWithout Windows HDR "
               "the picture stays SDR. Takes effect when a game starts."));
-    INSERT(Settings, nvidia_dlss, tr("Use NVIDIA DLSS in place of the game's DLSS"),
-           tr("Uses NVIDIA DLSS on GeForce RTX cards in place of a Switch 2 game's own DLSS "
-              "(Fire Emblem: Fortune's Weave).\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS "
-              "unless the NVIDIA app has downloaded it; this build does not ship NVIDIA's files. "
-              "Use the download button below.\nTakes effect when a game starts."));
-    INSERT(Settings, amd_fsr3, tr("Use AMD FSR 3.1 in place of the game's DLSS"),
-           tr("Uses AMD FSR 3.1 (runs on any GPU) in place of a Switch 2 game's own DLSS "
-              "(Fire Emblem: Fortune's Weave). The game's own DLSS usually looks better.\nNVIDIA "
-              "DLSS or AMD FSR 4, when ticked, are used first, "
-              "and this is used if they can't run.\nTakes effect when a game starts."));
-    INSERT(Settings, amd_fsr4, tr("Use AMD FSR 4 in place of the game's DLSS"),
-           tr("Uses AMD FSR 4 (through fsr4-vk, a community Vulkan port, not made or endorsed by "
-              "AMD) in place of a Switch 2 game's own DLSS (Fire Emblem: Fortune's Weave).\nMade "
-              "for AMD Radeon RX 7000/9000 cards; needs amd_fidelityfx_upscaler_vk.dll next to "
-              "the emulator. If it can't run, AMD FSR 3.1 is used when ticked, else the game's "
-              "own DLSS.\nTakes effect when a game starts."));
+    INSERT(Settings, upscaler, tr("Upscaler:"),
+           tr("What upscales the 3D picture of a Switch 2 game that uses DLSS (Fire Emblem: "
+              "Fortune's Weave).\nAMD FSR 3.1: any graphics card; its sharpening follows FSR "
+              "Sharpness.\nGame's own DLSS: the game's own small network, run as compute shaders "
+              "(more work for the emulator).\nNVIDIA DLSS: GeForce RTX cards, the best picture. "
+              "Needs NVIDIA's Streamline and DLSS files (not included): use the download button "
+              "below.\nAMD FSR 4: AMD Radeon RX 7000/9000 cards, through fsr4-vk (a community "
+              "Vulkan port, not made or endorsed by AMD); needs amd_fidelityfx_upscaler_vk.dll next "
+              "to the emulator.\nNVIDIA DLSS and FSR 4 fall back to FSR 3.1 when they can't run. "
+              "Takes effect when a game starts."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -431,6 +425,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(FramePacingMode, Target_60, tr("60 FPS")),
                               PAIR(FramePacingMode, Target_90, tr("90 FPS")),
                               PAIR(FramePacingMode, Target_120, tr("120 FPS")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::Upscaler>::Index(),
+                          {
+                              PAIR(Upscaler, Fsr3, tr("AMD FSR 3.1 (any card)")),
+                              PAIR(Upscaler, GameDlss, tr("Game's own DLSS")),
+                              PAIR(Upscaler, NvidiaDlss, tr("NVIDIA DLSS (GeForce RTX)")),
+                              PAIR(Upscaler, Fsr4, tr("AMD FSR 4 (Radeon RX 7000/9000)")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::VramUsageMode>::Index(),
                           {

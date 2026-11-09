@@ -314,7 +314,7 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
     if (!launch_description.block_dim_x || !launch_description.block_dim_y || !launch_description.block_dim_z)
         return false;
     // NVIDIA DLSS, AMD FSR 4 or AMD FSR 3.1 in place of Fortune's Weave's own DLSS network
-    // (settings nvidia_dlss, amd_fsr4 and amd_fsr3, all off by default; FSR 3.1 and DLSS from
+    // (setting upscaler, FSR 3.1 by default; FSR 3.1 and DLSS from
     // Eglantine, by Duck912; FSR 4 through fsr4-vk). An evaluation runs from its first pass, which
     // holds the colour, motion vectors, depth and jitter, to the pass that writes the upscaled image. Its programs are learnt from the
     // evaluations that run in full; after that they are skipped while the replacement upscaler
@@ -348,7 +348,7 @@ bool KeplerCompute::DispatchNativeCompute(const NativeQmdScheduler::Descriptor& 
         // AMD FSR 4 skips the whole network from the first evaluation, as the build it comes
         // from does (the network hangs RADV on RDNA 4); NVIDIA DLSS skips the programs it has
         // seen run.
-        const bool skip_all = Settings::values.amd_fsr4.GetValue();
+        const bool skip_all = Settings::values.upscaler.GetValue() == Settings::Upscaler::Fsr4;
         if (dlss_depth && rasterizer->UsesReplacementUpscaler() &&
             (skip_all || dlss_chain.programs.contains(program))) {
             if (output_pass) {

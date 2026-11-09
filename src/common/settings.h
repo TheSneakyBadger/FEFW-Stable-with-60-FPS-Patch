@@ -377,8 +377,12 @@ struct Values {
                                                            Specialization::Percentage,
                                                        true,
                                                        true};
-    // NVIDIA DLSS (through NVIDIA Streamline) in place of a game's own DLSS.
-    SwitchableSetting<bool> nvidia_dlss{linkage, false, "nvidia_dlss", Category::Renderer};
+    // What runs in place of a Switch 2 game's own DLSS upscale: AMD FSR 3.1 (the default, any
+    // GPU), the game's own DLSS network (translated), NVIDIA DLSS (through NVIDIA Streamline) or
+    // AMD FSR 4 (through the fsr4-vk provider). NVIDIA DLSS and FSR 4 fall back to FSR 3.1, and
+    // FSR 3.1 to the game's own network, when they can't run. Takes effect when a game starts.
+    SwitchableSetting<Upscaler, true> upscaler{linkage, Upscaler::Fsr3, "upscaler",
+                                               Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.
@@ -386,11 +390,6 @@ struct Values {
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};
-    // AMD FSR 3.1 in place of a game's own DLSS network (translated), which stays the default;
-    // also the fallback when NVIDIA DLSS or AMD FSR 4 is ticked but can't run.
-    SwitchableSetting<bool> amd_fsr3{linkage, false, "amd_fsr3", Category::Renderer};
-    // AMD FSR 4 (through the fsr4-vk provider) in place of a game's own DLSS.
-    SwitchableSetting<bool> amd_fsr4{linkage, false, "amd_fsr4", Category::Renderer};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",

@@ -255,7 +255,7 @@ public:
 private:
     bool DispatchNativeCompute(const NativeQmdScheduler::Descriptor& descriptor);
 
-    /// NVIDIA DLSS in place of Fortune's Weave's own DLSS network (setting nvidia_dlss; from
+    /// NVIDIA DLSS in place of Fortune's Weave's own DLSS network (setting upscaler; from
     /// Eglantine, by Duck912). See DispatchNativeCompute.
     bool RememberDlssInputs();
     bool IsDlssOutputPass();

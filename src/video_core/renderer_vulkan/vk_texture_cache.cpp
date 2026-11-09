@@ -1308,18 +1308,21 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
 }
 
 bool TextureCacheRuntime::UsesReplacementUpscaler() const {
-    if (Settings::values.amd_fsr4.GetValue()) {
-        if (!fsr4_unsupported && Fsr4Upscaler::IsAvailable()) {
-            return true;
-        }
+    const Settings::Upscaler choice = Settings::values.upscaler.GetValue();
+    if (choice == Settings::Upscaler::GameDlss) {
+        return false;
+    }
+    if (choice == Settings::Upscaler::Fsr4 && !fsr4_unsupported && Fsr4Upscaler::IsAvailable()) {
+        return true;
     }
 #ifdef EGLANTINE_STREAMLINE
-    else if (!dlss_unsupported && Streamline::IsDlssAvailable()) {
+    if (choice == Settings::Upscaler::NvidiaDlss && !dlss_unsupported &&
+        Streamline::IsDlssAvailable()) {
         return true;
     }
 #endif
-    // AMD FSR 3.1 when ticked; otherwise the game's own network runs.
-    return Settings::values.amd_fsr3.GetValue() && !fsr3_unsupported;
+    // AMD FSR 3.1: chosen, or the fallback for NVIDIA DLSS and FSR 4.
+    return !fsr3_unsupported;
 }
 
 void TextureCacheRuntime::DrawUpscaledOutput(Framebuffer* dst_framebuffer, VkImageView view,
@@ -1371,14 +1374,16 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
         return false;
     }
-    // AMD FSR 4 when ticked, else NVIDIA DLSS when ticked; AMD FSR 3.1 (when ticked) if neither runs.
-    if (Settings::values.amd_fsr4.GetValue()) {
+    // The chosen upscaler; AMD FSR 3.1 when NVIDIA DLSS or FSR 4 can't run.
+    const Settings::Upscaler choice = Settings::values.upscaler.GetValue();
+    if (choice == Settings::Upscaler::Fsr4) {
         if (Fsr4Upscale(dst_framebuffer, dst, input_color, motion_vectors, depth, render_size,
                         jitter, motion_scale)) {
             return true;
         }
-    } else if (NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
-                          render_size, jitter, motion_scale)) {
+    } else if (choice == Settings::Upscaler::NvidiaDlss &&
+               NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
+                                 render_size, jitter, motion_scale)) {
         return true;
     }
     return Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size, jitter,
@@ -1392,7 +1397,7 @@ bool TextureCacheRuntime::Fsr3Upscale(Framebuffer* dst_framebuffer, ImageView& i
                                       ImageView& motion_vectors, ImageView& depth,
                                       std::array<u32, 2> render_size, std::array<f32, 2> jitter,
                                       std::array<f32, 2> motion_scale) {
-    if (!Settings::values.amd_fsr3.GetValue() || fsr3_unsupported) {
+    if (Settings::values.upscaler.GetValue() == Settings::Upscaler::GameDlss || fsr3_unsupported) {
         return false;
     }
     if (!fsr3_upscaler) {
