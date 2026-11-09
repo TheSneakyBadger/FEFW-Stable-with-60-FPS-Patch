@@ -39,7 +39,19 @@ void RomFSFactory::SetPackedUpdate(VirtualFile update_raw_file) {
 
 VirtualFile RomFSFactory::OpenCurrentProcess(u64 current_process_title_id) const {
     if (!updatable) {
-        return file;
+        // NUP RomFS may already contain merged updates, but LayeredFS still needs applying.
+        // Cache the patched VFS once rather than rebuilding it for each open.
+        std::scoped_lock lock{layered_mutex};
+        if (!layered_file) {
+            const PatchManager patch_manager{current_process_title_id, filesystem_controller,
+                                             content_provider};
+            layered_file = patch_manager.PatchRomFS(nullptr, file, ContentRecordType::Program,
+                                                    nullptr);
+            if (!layered_file) {
+                layered_file = file;
+            }
+        }
+        return layered_file;
     }
 
     const auto type = ContentRecordType::Program;
