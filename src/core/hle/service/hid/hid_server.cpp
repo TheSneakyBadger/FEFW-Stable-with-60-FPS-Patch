@@ -14,6 +14,7 @@
 
 #include "common/common_types.h"
 #include "common/logging.h"
+#include "common/fefw_mouse_input.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -1788,6 +1789,7 @@ void IHidServer::UpdateNmouse() {
                 registration.nmouse_published = false;
             }
             registration.nmouse_has_last = false;
+            (void)FefwMouseInput::Take(); // Nothing builds up while off
             continue;
         }
         if (!registration.nmouse_published) {
@@ -1807,33 +1809,24 @@ void IHidServer::UpdateNmouse() {
 
         const s32 width = registration.parameters[1] ? static_cast<s32>(registration.parameters[1]) : 1920;
         const s32 height = registration.parameters[2] ? static_cast<s32>(registration.parameters[2]) : 1080;
-        const auto position = devices->GetMousePosition();
-        const auto wheel = devices->GetMouseWheel();
-        s32 delta_x = 0;
-        s32 delta_y = 0;
-        s32 wheel_x = 0;
-        s32 wheel_y = 0;
-        if (registration.nmouse_has_last) {
-            const f32 speed = static_cast<f32>(Settings::values.fefw_mouse_speed.GetValue()) / 100.0f;
-            registration.nmouse_frac_x += (position.x - registration.nmouse_last_x) * width * speed;
-            registration.nmouse_frac_y += (position.y - registration.nmouse_last_y) * height * speed;
-            delta_x = static_cast<s32>(registration.nmouse_frac_x);
-            delta_y = static_cast<s32>(registration.nmouse_frac_y);
-            registration.nmouse_frac_x -= static_cast<f32>(delta_x);
-            registration.nmouse_frac_y -= static_cast<f32>(delta_y);
-            // Qt reports 120 per wheel notch; the game counts notches.
-            registration.nmouse_wheel_rest_x += wheel.x - registration.nmouse_last_wheel_x;
-            registration.nmouse_wheel_rest_y += wheel.y - registration.nmouse_last_wheel_y;
-            wheel_x = registration.nmouse_wheel_rest_x / 120;
-            wheel_y = registration.nmouse_wheel_rest_y / 120;
-            registration.nmouse_wheel_rest_x -= wheel_x * 120;
-            registration.nmouse_wheel_rest_y -= wheel_y * 120;
-        }
-        registration.nmouse_has_last = true;
-        registration.nmouse_last_x = position.x;
-        registration.nmouse_last_y = position.y;
-        registration.nmouse_last_wheel_x = wheel.x;
-        registration.nmouse_last_wheel_y = wheel.y;
+        // Movement and wheel from the frontend, which locks the PC cursor in the game window.
+        const auto input = FefwMouseInput::Take();
+        const f32 speed = static_cast<f32>(Settings::values.fefw_mouse_speed.GetValue()) / 100.0f;
+        registration.nmouse_frac_x += input.dx * static_cast<f32>(width) * speed;
+        registration.nmouse_frac_y += input.dy * static_cast<f32>(height) * speed;
+        const s32 delta_x = static_cast<s32>(registration.nmouse_frac_x);
+        const s32 delta_y = static_cast<s32>(registration.nmouse_frac_y);
+        registration.nmouse_frac_x -= static_cast<f32>(delta_x);
+        registration.nmouse_frac_y -= static_cast<f32>(delta_y);
+        // Qt reports 120 per wheel notch; the game counts notches.
+        registration.nmouse_wheel_rest_x += input.wheel_x;
+        registration.nmouse_wheel_rest_y += input.wheel_y;
+        const s32 wheel_x = registration.nmouse_wheel_rest_x / 120;
+        const s32 wheel_y = registration.nmouse_wheel_rest_y / 120;
+        registration.nmouse_wheel_rest_x -= wheel_x * 120;
+        registration.nmouse_wheel_rest_y -= wheel_y * 120;
+        registration.nmouse_last_wheel_x += wheel_x; // Notches in this log window
+        registration.nmouse_last_wheel_y += wheel_y;
         registration.nmouse_x = std::clamp(registration.nmouse_x + delta_x, 0, width - 1);
         registration.nmouse_y = std::clamp(registration.nmouse_y + delta_y, 0, height - 1);
         registration.nmouse_moved += std::abs(delta_x) + std::abs(delta_y);
@@ -1874,16 +1867,19 @@ void IHidServer::UpdateNmouse() {
         if (sampling - registration.nmouse_logged_at >= 250) { // Every 2 s at 125 Hz
             registration.nmouse_logged_at = sampling;
             LOG_INFO(Service_HID,
-                     "Joy-Con mouse, last 2 s: PC mouse at {:.3f}, {:.3f}, moved {} px; pointer {}, "
-                     "{}; buttons {:#x}; wheel {}, {}; game re-centred it {} times (last to {}, {}); ring tail "
+                     "Joy-Con mouse, last 2 s: moved {} px; pointer {}, "
+                     "{}; buttons {:#x}; wheel notches {}, {}; game re-centred it {} times (last to {}, {}); ring tail "
                      "{}, count {}, handle valid {}",
-                     position.x, position.y, registration.nmouse_moved, registration.nmouse_x,
-                     registration.nmouse_y, buttons, wheel.x, wheel.y, registration.nmouse_resets,
+                     registration.nmouse_moved, registration.nmouse_x, registration.nmouse_y,
+                     buttons, registration.nmouse_last_wheel_x, registration.nmouse_last_wheel_y,
+                     registration.nmouse_resets,
                      registration.nmouse_reset_x, registration.nmouse_reset_y,
                      memory.Read64(ring + 0x10), memory.Read64(ring + 0x18),
                      memory.Read8(base + 0x8));
             registration.nmouse_moved = 0;
             registration.nmouse_resets = 0;
+            registration.nmouse_last_wheel_x = 0;
+            registration.nmouse_last_wheel_y = 0;
         }
     }
 }

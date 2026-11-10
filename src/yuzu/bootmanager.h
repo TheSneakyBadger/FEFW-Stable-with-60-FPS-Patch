@@ -145,6 +145,9 @@ private:
     void TouchEndEvent();
     void ConstrainMouse();
     void UpdateMouse();
+    /// Fortune's Eden mouse mode: hides the PC cursor, keeps it in the middle of the game
+    /// window and hands its movement to the Joy-Con mouse.
+    void PollFefwMouse();
 
     void RequestCameraCapture();
     void OnCameraCapture(int requestId, const QImage& img);
@@ -186,6 +189,8 @@ private:
 
     QTimer mouse_constrain_timer;
     QTimer mouse_update_timer;
+    QTimer fefw_mouse_timer;
+    bool fefw_mouse_locked = false;
 
 protected:
     void showEvent(QShowEvent* event) override;

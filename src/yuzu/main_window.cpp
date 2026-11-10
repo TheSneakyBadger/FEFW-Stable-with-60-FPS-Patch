@@ -83,6 +83,11 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMenu>
+#include <QSlider>
+#include <QWidgetAction>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -1180,15 +1185,17 @@ void MainWindow::InitializeWidgets() {
             });
     statusBar()->insertPermanentWidget(0, dock_status_button);
 
-    // Fortune's Eden: mouse emulation (Fortune's Weave's mouse controls) on/off; right-click for
-    // the mouse speed.
+    // Fortune's Eden: mouse mode (the PC mouse as a Joy-Con mouse in Fortune's Weave) on/off;
+    // right-click for the mouse speed.
     mouse_status_button = new QPushButton();
     mouse_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
     mouse_status_button->setFocusPolicy(Qt::NoFocus);
     mouse_status_button->setCheckable(true);
+    mouse_status_button->setCursor(Qt::PointingHandCursor);
     mouse_status_button->setToolTip(
-        tr("Mouse emulation: your mouse works as a Joy-Con mouse in Fortune's Weave (turn on Mouse "
-           "Controls in the game's options). Switches Player 1 between the normal and the mouse "
+        tr("Mouse mode: your mouse works as a Joy-Con mouse in Fortune's Weave (turn on Mouse "
+           "Controls in the game's options). The PC cursor is hidden and kept in the game window; "
+           "press Ctrl + Enter to turn it off. Switches Player 1 between the normal and the mouse "
            "controls. Right-click for the mouse speed."));
     connect(mouse_status_button, &QPushButton::clicked, this, &MainWindow::OnToggleMouseMode);
     mouse_status_button->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1196,27 +1203,47 @@ void MainWindow::InitializeWidgets() {
             [this](const QPoint& menu_location) {
                 QMenu context_menu;
                 context_menu.addAction(Settings::values.mouse_enabled.GetValue()
-                                           ? tr("Turn mouse emulation off")
-                                           : tr("Turn mouse emulation on"),
+                                           ? tr("Turn mouse mode off")
+                                           : tr("Turn mouse mode on"),
                                        this, &MainWindow::OnToggleMouseMode);
                 context_menu.addSeparator();
-                QMenu* speed_menu = context_menu.addMenu(tr("Mouse speed"));
-                const int current = Settings::values.fefw_mouse_speed.GetValue();
-                for (const int speed : {50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 800}) {
-                    QAction* action = speed_menu->addAction(QStringLiteral("%1%").arg(speed));
-                    action->setCheckable(true);
-                    action->setChecked(speed == current);
-                    connect(action, &QAction::triggered, this, [this, speed] {
-                        Settings::values.fefw_mouse_speed.SetValue(speed);
-                        config->SaveAllValues();
-                        UpdateMouseButton();
-                    });
-                }
+                // Mouse speed slider
+                auto* speed_widget = new QWidget(&context_menu);
+                auto* speed_layout = new QHBoxLayout(speed_widget);
+                speed_layout->setContentsMargins(12, 6, 12, 6);
+                auto* speed_label = new QLabel(speed_widget);
+                auto* speed_slider = new QSlider(Qt::Horizontal, speed_widget);
+                speed_slider->setRange(25, 800);
+                speed_slider->setSingleStep(5);
+                speed_slider->setPageStep(25);
+                speed_slider->setMinimumWidth(220);
+                speed_slider->setValue(Settings::values.fefw_mouse_speed.GetValue());
+                const auto show_speed = [speed_label](int value) {
+                    speed_label->setText(tr("Mouse speed: %1%").arg(value));
+                };
+                show_speed(speed_slider->value());
+                connect(speed_slider, &QSlider::valueChanged, this, [this, show_speed](int value) {
+                    show_speed(value);
+                    Settings::values.fefw_mouse_speed.SetValue(value);
+                    UpdateMouseButton();
+                });
+                connect(speed_slider, &QSlider::sliderReleased, this,
+                        [this] { config->SaveAllValues(); });
+                speed_layout->addWidget(speed_label);
+                speed_layout->addWidget(speed_slider);
+                auto* speed_action = new QWidgetAction(&context_menu);
+                speed_action->setDefaultWidget(speed_widget);
+                context_menu.addAction(speed_action);
                 context_menu.exec(mouse_status_button->mapToGlobal(menu_location));
+                config->SaveAllValues();
                 mouse_status_button->repaint();
             });
-    UpdateMouseButton();
+    mouse_hint_label = new QLabel();
+    mouse_hint_label->setText(tr("Press Ctrl + Enter to turn off"));
+    mouse_hint_label->setContentsMargins(4, 0, 4, 0);
     statusBar()->insertPermanentWidget(0, mouse_status_button);
+    statusBar()->insertPermanentWidget(1, mouse_hint_label);
+    UpdateMouseButton();
 
     // Setup GPU Accuracy button
     gpu_accuracy_button = new QPushButton();
@@ -1415,6 +1442,7 @@ void MainWindow::InitializeHotkeys() {
             QtCommon::system->GetRenderdocAPI().ToggleCapture();
         }
     });
+    connect_shortcut(QStringLiteral("Toggle Mouse Mode"), &MainWindow::OnToggleMouseMode);
     connect_shortcut(QStringLiteral("Toggle Mouse Panning"), [&] {
         Settings::values.mouse_panning = !Settings::values.mouse_panning;
         if (Settings::values.mouse_panning) {
@@ -4483,8 +4511,10 @@ void MainWindow::UpdateMouseButton() {
     }
     const bool enabled = Settings::values.mouse_enabled.GetValue();
     mouse_status_button->setChecked(enabled);
-    mouse_status_button->setText(
-        enabled ? tr("MOUSE %1%").arg(Settings::values.fefw_mouse_speed.GetValue()) : tr("MOUSE"));
+    mouse_status_button->setText(enabled ? tr("Turn mouse mode off") : tr("Turn mouse mode on"));
+    if (mouse_hint_label != nullptr) {
+        mouse_hint_label->setVisible(enabled);
+    }
 }
 
 void MainWindow::UpdateDockedButton() {

@@ -155,8 +155,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "when the game starts."));
     INSERT(Settings, fefw_mouse_speed, tr("Mouse speed (Joy-Con mouse mode):"),
            tr("How fast the PC mouse moves the cursor in Fortune's Weave's mouse controls "
-              "(Options > Controls > Mouse Controls). Needs Emulate mouse on "
-              "(Controls > Advanced). 100% follows the PC pointer across the game picture."));
+              "(Options > Controls > Mouse Controls). Turn mouse mode on with the button at the "
+              "bottom of the window (Ctrl + Enter turns it off). 100%: moving the mouse across the "
+              "game window moves the cursor across the game picture."));
     INSERT(Settings, hdr_output, tr("HDR output (HDR10)"),
            tr("Shows the game in HDR on an HDR display. Turn on HDR in Windows first (Settings > "
               "Display > Use HDR).\nFire Emblem: Fortune's Weave then makes its own HDR picture: "

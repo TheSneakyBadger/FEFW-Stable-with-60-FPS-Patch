@@ -49,6 +49,7 @@
 #endif
 
 #include "common/scm_rev.h"
+#include "common/fefw_mouse_input.h"
 #include "common/settings.h"
 #include "common/settings_input.h"
 #include "core/core.h"
@@ -141,6 +142,37 @@ GRenderWindow::GRenderWindow(MainWindow* parent,
     mouse_update_timer.setInterval(default_mouse_update_timeout);
     connect(&mouse_update_timer, &QTimer::timeout, this, &GRenderWindow::UpdateMouse);
     mouse_update_timer.start();
+
+    fefw_mouse_timer.setInterval(4);
+    connect(&fefw_mouse_timer, &QTimer::timeout, this, &GRenderWindow::PollFefwMouse);
+    fefw_mouse_timer.start();
+}
+
+void GRenderWindow::PollFefwMouse() {
+    const bool lock = Settings::values.mouse_enabled.GetValue() && QtCommon::emu_thread != nullptr &&
+                      isVisible() && isActiveWindow() && width() > 0 && height() > 0;
+    if (!lock) {
+        if (fefw_mouse_locked) {
+            fefw_mouse_locked = false;
+            unsetCursor();
+        }
+        return;
+    }
+    const QPoint center = mapToGlobal(QPoint{width() / 2, height() / 2});
+    if (cursor().shape() != Qt::BlankCursor) {
+        setCursor(QCursor(Qt::BlankCursor));
+    }
+    if (!fefw_mouse_locked) {
+        fefw_mouse_locked = true;
+        QCursor::setPos(center);
+        return;
+    }
+    const QPoint delta = QCursor::pos() - center;
+    if (!delta.isNull()) {
+        FefwMouseInput::AddMotion(static_cast<float>(delta.x()) / static_cast<float>(width()),
+                                  static_cast<float>(delta.y()) / static_cast<float>(height()));
+        QCursor::setPos(center);
+    }
 }
 
 void GRenderWindow::ExecuteProgram(std::size_t program_index) {
@@ -499,6 +531,9 @@ void GRenderWindow::mouseMoveEvent(QMouseEvent* event) {
     if (event->source() == Qt::MouseEventSynthesizedBySystem) {
         return;
     }
+    if (fefw_mouse_locked) {
+        return; // Mouse mode: PollFefwMouse reads the movement
+    }
     // Qt sometimes returns the parent coordinates. To avoid this we read the global mouse
     // coordinates and map them to the current render area
     const auto pos = mapFromGlobal(QCursor::pos());
@@ -561,6 +596,9 @@ void GRenderWindow::UpdateMouse() {
 void GRenderWindow::wheelEvent(QWheelEvent* event) {
     const int x = event->angleDelta().x();
     const int y = event->angleDelta().y();
+    if (fefw_mouse_locked) {
+        FefwMouseInput::AddWheel(x, y);
+    }
     input_subsystem->GetMouse()->MouseWheelChange(x, y);
 }
 
