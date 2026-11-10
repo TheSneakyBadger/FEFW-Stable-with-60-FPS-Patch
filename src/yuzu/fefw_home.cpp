@@ -5,9 +5,11 @@
 
 #include <QBoxLayout>
 #include <QEvent>
+#include <QIcon>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 #include <QPushButton>
 #include <QStandardItemModel>
 
@@ -30,6 +32,25 @@ QPixmap Rounded(const QPixmap& source, int size, int radius) {
     painter.drawPixmap(0, 0, source.scaled(size, size, Qt::KeepAspectRatioByExpanding,
                                            Qt::SmoothTransformation));
     return result;
+}
+
+/// The Play button's triangle, drawn rather than a "▶" character: that glyph comes from a
+/// fallback font whose taller metrics push the text down and clip "Play" at Windows scaling.
+QIcon PlayIcon() {
+    QIcon icon;
+    for (const qreal ratio : {1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0}) {
+        QPixmap pixmap(QSize(14, 14) * ratio);
+        pixmap.setDevicePixelRatio(ratio);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0x1b, 0x18, 0x24));
+        painter.drawPolygon(QPolygonF{{QPointF(2.5, 1.0), QPointF(13.0, 7.0), QPointF(2.5, 13.0)}});
+        painter.end();
+        icon.addPixmap(pixmap);
+    }
+    return icon;
 }
 
 QString UpscalerName(Settings::Upscaler upscaler) {
@@ -112,8 +133,10 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     status_label = new QLabel(card);
     status_label->setObjectName(QStringLiteral("fefwHomeStatus"));
 
-    play_button = new QPushButton(tr("▶  Play"), card);
+    play_button = new QPushButton(tr("Play"), card);
     play_button->setObjectName(QStringLiteral("fefwHomePlay"));
+    play_button->setIcon(PlayIcon());
+    play_button->setIconSize(QSize(14, 14));
     play_button->setCursor(Qt::PointingHandCursor);
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), card);
     QPushButton* const settings = new QPushButton(tr("Settings"), card);
