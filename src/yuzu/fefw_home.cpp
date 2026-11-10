@@ -145,7 +145,13 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     play_font.setPointSize(12);
     play_font.setBold(true);
     play_button->setFont(play_font);
-    play_button->setMinimumHeight(QFontMetrics(play_font).height() + 16);
+    // The theme's "QPushButton { min-height: 13px }" replaces a setMinimumHeight() when the style
+    // sheet is applied, so the height goes in the button's own style sheet: the text's full
+    // height (descenders included) plus room above and below, in the padding's logical pixels.
+    const int play_text_height = QFontMetrics(play_font).height();
+    play_button->setStyleSheet(
+        QStringLiteral("min-height: %1px;").arg(play_text_height + 8));
+    play_button->setMinimumHeight(play_text_height + 18);
     play_button->setCursor(Qt::PointingHandCursor);
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), card);
     QPushButton* const settings = new QPushButton(tr("Settings"), card);
