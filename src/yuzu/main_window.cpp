@@ -4483,16 +4483,8 @@ void MainWindow::OnMouseActivity() {
 }
 
 void MainWindow::OnCheckFirmwareDecryption() {
-    if (!ContentManager::AreKeysPresent()) {
-        const auto res = QtCommon::Frontend::Warning(
-            tr("Derivation Components Missing"),
-            tr("Decryption keys are missing. Install them now?"),
-            QtCommon::Frontend::StandardButton::Yes | QtCommon::Frontend::StandardButton::No);
-
-        if (res == QtCommon::Frontend::StandardButton::Yes)
-            OnInstallDecryptionKeys();
-    }
-
+    // Fortune's Eden doesn't ask for decryption keys at startup: setting up the game is the
+    // player's own business (Tools -> Install Decryption Keys is still there).
     SetFirmwareVersion();
     UpdateMenuState();
 }
