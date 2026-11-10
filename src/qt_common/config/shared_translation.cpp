@@ -153,6 +153,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "the HUD, menus and movies centred at 16:9, and stretches the picture to the window. "
               "For 21:9 monitors only; play fullscreen.\nOnly for game version 1.1.0. Takes effect "
               "when the game starts."));
+    INSERT(Settings, fefw_mouse_speed, tr("Mouse speed (Joy-Con mouse mode):"),
+           tr("How fast the PC mouse moves the cursor in Fortune's Weave's mouse controls "
+              "(Options > Controls > Mouse Controls). Needs Emulate mouse on "
+              "(Controls > Advanced). 100% follows the PC pointer across the game picture."));
     INSERT(Settings, hdr_output, tr("HDR output (HDR10)"),
            tr("Shows the game in HDR on an HDR display. Turn on HDR in Windows first (Settings > "
               "Display > Use HDR).\nFire Emblem: Fortune's Weave then makes its own HDR picture: "

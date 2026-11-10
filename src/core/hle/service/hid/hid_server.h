@@ -320,8 +320,14 @@ private:
         u64 nmouse_sampling{};
         f32 nmouse_last_x{};
         f32 nmouse_last_y{};
+        f32 nmouse_frac_x{};
+        f32 nmouse_frac_y{};
+        s32 nmouse_published_x{};
+        s32 nmouse_published_y{};
         s32 nmouse_last_wheel_x{};
         s32 nmouse_last_wheel_y{};
+        s32 nmouse_wheel_rest_x{};
+        s32 nmouse_wheel_rest_y{};
         // Diagnostics (logged every 2 s while the PC mouse is presented)
         u32 nmouse_resets{};
         s32 nmouse_reset_x{};
