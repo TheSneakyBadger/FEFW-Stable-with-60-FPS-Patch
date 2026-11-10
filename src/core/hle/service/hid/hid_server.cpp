@@ -1876,7 +1876,7 @@ void IHidServer::UpdateNmouse() {
 
         if (sampling - registration.nmouse_logged_at >= 250) { // Every 2 s at 125 Hz
             registration.nmouse_logged_at = sampling;
-            LOG_INFO(Service_HID,
+            LOG_DEBUG(Service_HID,
                      "Joy-Con mouse, last 2 s: moved {} px; pointer {}, "
                      "{}; buttons {:#x}; wheel notches {}, {}; game re-centred it {} times (last to {}, {}); ring tail "
                      "{}, count {}, handle valid {}",
