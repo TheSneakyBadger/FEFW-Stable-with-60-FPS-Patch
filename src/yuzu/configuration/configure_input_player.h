@@ -59,6 +59,9 @@ public:
     /// Save all button configurations to settings file.
     void ApplyConfiguration();
 
+    /// Load configuration settings (also used to show the other set of Player 1 controls).
+    void LoadConfiguration();
+
     /// Set the connection state checkbox (used to sync state).
     void ConnectPlayer(bool connected);
 
@@ -99,8 +102,6 @@ private:
     void changeEvent(QEvent* event) override;
     void RetranslateUI();
 
-    /// Load configuration settings.
-    void LoadConfiguration();
 
     /// Called when the button was pressed.
     void HandleClick(QPushButton* button, std::size_t button_id,
