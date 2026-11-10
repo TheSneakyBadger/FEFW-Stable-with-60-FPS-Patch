@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "yuzu/configuration/shared_widget.h"
+#include "common/fefw_hidden_settings.h"
 
 #include <algorithm>
 #include <array>
@@ -784,42 +785,10 @@ static bool IsAndroidOnly(const Settings::BasicSetting& setting) {
     return label.starts_with("frame_gen") || label == "emulate_bgr565";
 }
 
-// Fortune's Eden runs one game: settings that don't apply to Fortune's Weave, duplicate another
-// one, or only tune the emulator's internals aren't shown. Their values (the defaults, or what
-// was set before) still apply, from the config file as always.
+// Fortune's Eden: settings that don't apply to Fortune's Weave aren't shown (the list is in
+// common/fefw_hidden_settings.h; their values are reset to the defaults when the config is read).
 static bool IsHiddenInFortunesEden(const Settings::BasicSetting& setting) {
-    static constexpr std::array<std::string_view, 50> hidden{
-        // Library applets: the game uses none of these settings
-        "cabinet_applet_mode", "controller_applet_mode", "data_erase_applet_mode",
-        "error_applet_mode", "net_connect_applet_mode", "player_select_applet_mode",
-        "swkbd_applet_mode", "mii_edit_applet_mode", "web_applet_mode", "shop_applet_mode",
-        "photo_viewer_applet_mode", "offline_web_applet_mode", "login_share_applet_mode",
-        "wifi_web_auth_applet_mode", "my_page_applet_mode",
-        // Picture: the upscaler and Upscaler quality do these jobs
-        "scaling_filter", "anti_aliasing",
-        // Pacing: "60 FPS" here doesn't unlock 60 FPS (the 60fps add-on does), which confused
-        // players; Auto paces to the game
-        "frame_pacing_mode",
-        // GPU emulation internals, tuned for this game
-        "use_disk_shader_cache", "use_asynchronous_gpu_emulation", "skip_cpu_inner_invalidation",
-        "sync_memory_operations", "gpu_fence_behavior", "dma_accuracy", "gpu_clock",
-        "gpu_unswizzle_enabled", "gpu_unswizzle_texture_size", "gpu_unswizzle_stream_size",
-        "gpu_unswizzle_chunk_size", "use_vulkan_driver_pipeline_cache", "use_video_framerate",
-        "barrier_feedback_loops", "enable_buffer_history", "fix_bloom_effects",
-        // CPU timing internals
-        "cpu_clock", "use_custom_cpu_ticks", "cpu_ticks",
-        // System: Fortune's Weave needs 12 GB and every core; the rest doesn't affect it
-        "memory_layout_mode", "use_multi_core", "sync_core_speed", "enable_overlay",
-        "current_speed_mode", "turbo_speed_limit", "slow_speed_limit", "time_zone_index",
-        "program_args",
-        // Video decoding and texture decoding: set for this game (ASTC recompression stays)
-        "nvdec_emulation", "accelerate_astc",
-        // Always Fast GPU mode and Auto ASTC recompression (forced when the config is read)
-        "gpu_accuracy", "astc_recompression",
-    };
-    const std::string& label = setting.GetLabel();
-    return std::ranges::find(hidden, label) != hidden.end() ||
-           label == "rng_seed" || label == "rng_seed_enabled" || label == "dump_audio_commands";
+    return Common::IsFefwHiddenSetting(setting.GetLabel());
 }
 
 Widget* Builder::BuildWidget(Settings::BasicSetting* setting,

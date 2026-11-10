@@ -374,7 +374,7 @@ struct Values {
                                                   true};
 
     SwitchableSetting<ScalingFilter> scaling_filter{linkage,
-                                                    ScalingFilter::NearestNeighbor,
+                                                    ScalingFilter::Bilinear,
                                                     "scaling_filter",
                                                     Category::Renderer,
                                                     Specialization::Default,

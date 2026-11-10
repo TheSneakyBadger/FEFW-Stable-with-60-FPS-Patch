@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <optional>
+#include "common/fefw_hidden_settings.h"
 #include "common/fs/fs.h"
 #include "common/fs/fs_paths.h"
 #include "common/fs/path_util.h"
@@ -567,9 +568,16 @@ void Config::ReadValues() {
     // Fortune's Eden: settings no longer shown that have one right value for Fortune's Weave.
     // Always those, whatever an older config file or a game's own config says.
     if (global) {
-        Settings::values.gpu_accuracy.SetValue(Settings::GpuAccuracy::Low);
-        Settings::values.astc_recompression.SetValue(Settings::AstcRecompression::Auto);
-        Settings::values.memory_layout_mode.SetValue(Settings::MemoryLayout::Memory_12Gb);
+        // Settings that aren't shown go back to their defaults (Vulkan, multi-core, 16:9, no
+        // anti-aliasing, Bilinear, Auto pacing, 12 GB, GPU mode Fast, ASTC recompression Auto...):
+        // a value set in an older version can't stay stuck where nobody can change it.
+        for (const auto& [category, settings] : Settings::values.linkage.by_category) {
+            for (Settings::BasicSetting* const setting : settings) {
+                if (Common::IsFefwResetSetting(setting->GetLabel())) {
+                    setting->LoadString(setting->DefaultToString());
+                }
+            }
+        }
     } else if (type != ConfigType::InputProfile) {
         // One game, one set of settings: a game's own config (an older version's Game Settings)
         // can't override Settings any more, except its controls (input profiles).
