@@ -211,6 +211,21 @@ QList<QStandardItem*> MakeGameListEntry(const std::string& path, const std::stri
         fmt::format("{:016X}", patch.GetTitleID()), "pv.txt", [&patch, &loader] {
             return FormatPatchNameVersions(patch, loader, loader.IsRomFSUpdatable());
         });
+    // A .nup or loose game files carry their update inside, so no "Update (x)" line is listed and
+    // the tooltip fell back to "Version: 1.0.0". Use the game's own display version instead
+    // (from a55uka's Eglantine change for .nup).
+    if (!patch_versions.contains(QStringLiteral("Update ("))) {
+        FileSys::NACP nacp{};
+        if (loader.ReadControlData(nacp) == Loader::ResultStatus::Success) {
+            const std::string version_string = nacp.GetVersionString();
+            if (!version_string.empty()) {
+                if (!patch_versions.isEmpty()) {
+                    patch_versions += QLatin1Char('\n');
+                }
+                patch_versions += QStringLiteral("Update (%1)").arg(QString::fromStdString(version_string));
+            }
+        }
+    }
 
     u64 play_time = play_time_manager.GetPlayTime(program_id);
     return QList<QStandardItem*>{
