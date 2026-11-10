@@ -328,6 +328,8 @@ private:
         s32 nmouse_last_wheel_y{};
         s32 nmouse_wheel_rest_x{};
         s32 nmouse_wheel_rest_y{};
+        s32 nmouse_wheel_unread_x{};
+        s32 nmouse_wheel_unread_y{};
         // Diagnostics (logged every 2 s while the PC mouse is presented)
         u32 nmouse_resets{};
         s32 nmouse_reset_x{};

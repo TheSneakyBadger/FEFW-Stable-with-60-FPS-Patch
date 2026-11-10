@@ -1674,6 +1674,8 @@ Result IHidServer::SetNativeInputValues3140(u32 first, u32 second, AppletResourc
                                     registration.nmouse_published_y;
             registration.nmouse_published_x = static_cast<s32>(first);
             registration.nmouse_published_y = static_cast<s32>(second);
+            registration.nmouse_wheel_unread_x = 0;
+            registration.nmouse_wheel_unread_y = 0;
             ++registration.nmouse_resets;
             registration.nmouse_reset_x = static_cast<s32>(first);
             registration.nmouse_reset_y = static_cast<s32>(second);
@@ -1811,7 +1813,7 @@ void IHidServer::UpdateNmouse() {
         const s32 height = registration.parameters[2] ? static_cast<s32>(registration.parameters[2]) : 1080;
         // Movement and wheel from the frontend, which locks the PC cursor in the game window.
         const auto input = FefwMouseInput::Take();
-        const f32 speed = static_cast<f32>(Settings::values.fefw_mouse_speed.GetValue()) / 100.0f;
+        const f32 speed = static_cast<f32>(Settings::values.fefw_mouse_sensitivity.GetValue());
         registration.nmouse_frac_x += input.dx * static_cast<f32>(width) * speed;
         registration.nmouse_frac_y += input.dy * static_cast<f32>(height) * speed;
         const s32 delta_x = static_cast<s32>(registration.nmouse_frac_x);
@@ -1827,6 +1829,12 @@ void IHidServer::UpdateNmouse() {
         registration.nmouse_wheel_rest_y -= wheel_y * 120;
         registration.nmouse_last_wheel_x += wheel_x; // Notches in this log window
         registration.nmouse_last_wheel_y += wheel_y;
+        // The game reads only the newest sample each frame, then re-centres the pointer (3140):
+        // report the notches since that until it does, so none fall between its reads.
+        registration.nmouse_wheel_unread_x += wheel_x;
+        registration.nmouse_wheel_unread_y += wheel_y;
+        const s32 wheel_report_x = registration.nmouse_wheel_unread_x;
+        const s32 wheel_report_y = registration.nmouse_wheel_unread_y;
         registration.nmouse_x = std::clamp(registration.nmouse_x + delta_x, 0, width - 1);
         registration.nmouse_y = std::clamp(registration.nmouse_y + delta_y, 0, height - 1);
         registration.nmouse_moved += std::abs(delta_x) + std::abs(delta_y);
@@ -1840,13 +1848,13 @@ void IHidServer::UpdateNmouse() {
         std::memcpy(state.data() + 0x14, &registration.nmouse_y, sizeof(s32));
         std::memcpy(state.data() + 0x18, &delta_x, sizeof(s32));
         std::memcpy(state.data() + 0x1c, &delta_y, sizeof(s32));
-        std::memcpy(state.data() + 0x20, &wheel_y, sizeof(s32)); // Vertical wheel
+        std::memcpy(state.data() + 0x20, &wheel_report_y, sizeof(s32)); // Vertical wheel
 
         std::memcpy(state.data() + 0x28, &buttons, sizeof(u32));
         std::memcpy(state.data() + 0x2c, &attributes, sizeof(u32));
         registration.nmouse_published_x = registration.nmouse_x;
         registration.nmouse_published_y = registration.nmouse_y;
-        std::memcpy(state.data() + 0x30, &wheel_x, sizeof(s32)); // Horizontal wheel
+        std::memcpy(state.data() + 0x30, &wheel_report_x, sizeof(s32)); // Horizontal wheel
 
         // Ring write: the reader retries an entry whose sequence is odd or changes under it.
         const auto ring = base + NmouseLayout::RingBase;

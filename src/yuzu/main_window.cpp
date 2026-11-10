@@ -1196,7 +1196,7 @@ void MainWindow::InitializeWidgets() {
         tr("Mouse mode: your mouse works as a Joy-Con mouse in Fortune's Weave (turn on Mouse "
            "Controls in the game's options). The PC cursor is hidden and kept in the game window; "
            "press Ctrl + Enter to turn it off. Switches Player 1 between the normal and the mouse "
-           "controls. Right-click for the mouse speed."));
+           "controls. Right-click for the mouse sensitivity."));
     connect(mouse_status_button, &QPushButton::clicked, this, &MainWindow::OnToggleMouseMode);
     mouse_status_button->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(mouse_status_button, &QPushButton::customContextMenuRequested,
@@ -1213,18 +1213,20 @@ void MainWindow::InitializeWidgets() {
                 speed_layout->setContentsMargins(12, 6, 12, 6);
                 auto* speed_label = new QLabel(speed_widget);
                 auto* speed_slider = new QSlider(Qt::Horizontal, speed_widget);
-                speed_slider->setRange(25, 800);
-                speed_slider->setSingleStep(5);
-                speed_slider->setPageStep(25);
+                speed_slider->setRange(1, 20);
+                speed_slider->setSingleStep(1);
+                speed_slider->setPageStep(2);
+                speed_slider->setTickPosition(QSlider::TicksBelow);
+                speed_slider->setTickInterval(1);
                 speed_slider->setMinimumWidth(220);
-                speed_slider->setValue(Settings::values.fefw_mouse_speed.GetValue());
+                speed_slider->setValue(Settings::values.fefw_mouse_sensitivity.GetValue());
                 const auto show_speed = [speed_label](int value) {
-                    speed_label->setText(tr("Mouse speed: %1%").arg(value));
+                    speed_label->setText(tr("Mouse sensitivity: %1").arg(value));
                 };
                 show_speed(speed_slider->value());
                 connect(speed_slider, &QSlider::valueChanged, this, [this, show_speed](int value) {
                     show_speed(value);
-                    Settings::values.fefw_mouse_speed.SetValue(value);
+                    Settings::values.fefw_mouse_sensitivity.SetValue(value);
                     UpdateMouseButton();
                 });
                 connect(speed_slider, &QSlider::sliderReleased, this,

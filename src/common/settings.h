@@ -413,18 +413,18 @@ struct Values {
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};
-    // Speed of the PC mouse when presented as a Joy-Con mouse (Fortune's Weave's mouse controls),
-    // in percent of the PC pointer's movement across the game picture.
-    SwitchableSetting<int, true> fefw_mouse_speed{linkage,
-                                                  200,
-                                                  25,
-                                                  800,
-                                                  "fefw_mouse_speed",
-                                                  Category::System,
-                                                  Specialization::Scalar |
-                                                      Specialization::Percentage,
-                                                  true,
-                                                  true};
+    // Sensitivity of the PC mouse when presented as a Joy-Con mouse (Fortune's Weave's mouse
+    // controls), 1-20: 1 moves the cursor across the game picture as far as the PC pointer moves
+    // across the game window, 20 twenty times as far.
+    SwitchableSetting<int, true> fefw_mouse_sensitivity{linkage,
+                                                        4,
+                                                        1,
+                                                        20,
+                                                        "fefw_mouse_sensitivity",
+                                                        Category::System,
+                                                        Specialization::Scalar,
+                                                        true,
+                                                        true};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",
