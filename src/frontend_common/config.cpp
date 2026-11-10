@@ -563,6 +563,19 @@ void Config::ReadValues() {
     ReadRendererValues();
     ReadAudioValues();
     ReadSystemValues();
+
+    // Fortune's Eden: settings no longer shown that have one right value for Fortune's Weave.
+    // Always those, whatever an older config file or a game's own config says.
+    const auto force = [this](auto& setting, auto value) {
+        if (global) {
+            setting.SetValue(value);
+        } else {
+            setting.SetGlobal(true);
+        }
+    };
+    force(Settings::values.gpu_accuracy, Settings::GpuAccuracy::Low);
+    force(Settings::values.astc_recompression, Settings::AstcRecompression::Auto);
+    force(Settings::values.memory_layout_mode, Settings::MemoryLayout::Memory_12Gb);
 }
 
 void Config::SavePlayerValues(const std::size_t player_index) {

@@ -1197,6 +1197,8 @@ void MainWindow::InitializeWidgets() {
                 gpu_accuracy_button->repaint();
             });
     statusBar()->insertPermanentWidget(0, gpu_accuracy_button);
+    // GPU mode is always Fast in Fortune's Eden (the setting is hidden).
+    gpu_accuracy_button->hide();
 
     // Setup Renderer API button
     renderer_status_button = new QPushButton();

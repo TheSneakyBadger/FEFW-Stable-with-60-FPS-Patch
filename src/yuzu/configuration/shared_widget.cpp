@@ -788,7 +788,7 @@ static bool IsAndroidOnly(const Settings::BasicSetting& setting) {
 // one, or only tune the emulator's internals aren't shown. Their values (the defaults, or what
 // was set before) still apply, from the config file as always.
 static bool IsHiddenInFortunesEden(const Settings::BasicSetting& setting) {
-    static constexpr std::array<std::string_view, 48> hidden{
+    static constexpr std::array<std::string_view, 50> hidden{
         // Library applets: the game uses none of these settings
         "cabinet_applet_mode", "controller_applet_mode", "data_erase_applet_mode",
         "error_applet_mode", "net_connect_applet_mode", "player_select_applet_mode",
@@ -814,6 +814,8 @@ static bool IsHiddenInFortunesEden(const Settings::BasicSetting& setting) {
         "program_args",
         // Video decoding and texture decoding: set for this game (ASTC recompression stays)
         "nvdec_emulation", "accelerate_astc",
+        // Always Fast GPU mode and Auto ASTC recompression (forced when the config is read)
+        "gpu_accuracy", "astc_recompression",
     };
     const std::string& label = setting.GetLabel();
     return std::ranges::find(hidden, label) != hidden.end() ||
