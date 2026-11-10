@@ -245,6 +245,11 @@ add_executable(yuzu
     game/carousel.h game/carousel.cpp
 )
 
+# The resource compiler doesn't record the icon as a dependency: without this a new
+# dist/eden.ico never reaches the .exe until yuzu.rc itself changes.
+set_source_files_properties(yuzu.rc PROPERTIES OBJECT_DEPENDS
+    "${PROJECT_SOURCE_DIR}/dist/eden.ico")
+
 set_target_properties(yuzu PROPERTIES OUTPUT_NAME "eden")
 
 if (YUZU_CRASH_DUMPS)
