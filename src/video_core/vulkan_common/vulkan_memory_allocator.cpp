@@ -250,8 +250,29 @@ MemoryAllocator::~MemoryAllocator() = default;
 
 vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci) const
 {
+    // Large images get their own memory allocation, so freeing one returns its memory to the
+    // driver at once. Shared blocks only go back when every image in them is gone: after a
+    // texture cleanup, blocks were left part-used and new textures that didn't fit the holes
+    // took new blocks, so video memory crept up (2.5 GB held in part-used blocks after ten
+    // minutes of Fortune's Weave, even with 64 MiB blocks). Only while the number of driver
+    // allocations stays well inside the device's limit.
+    static constexpr u64 DedicatedFromTexels = 2048ULL * 1024ULL;
+    const u64 texels = u64{ci.extent.width} * ci.extent.height * ci.extent.depth * ci.arrayLayers;
+    bool dedicated = false;
+    if (texels >= DedicatedFromTexels) {
+        VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+        vmaGetHeapBudgets(allocator, budgets);
+        u64 blocks = 0;
+        for (u32 heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+            blocks += budgets[heap].statistics.blockCount;
+        }
+        const u64 limit =
+            device.GetPhysical().GetProperties().limits.maxMemoryAllocationCount;
+        dedicated = blocks + 1024 < limit;
+    }
     const VmaAllocationCreateInfo alloc_ci = {
-            .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT,
+            .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT |
+                     (dedicated ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0u),
             .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
             .requiredFlags = 0,
             .preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
