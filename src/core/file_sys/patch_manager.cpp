@@ -21,6 +21,8 @@
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
+#include "core/file_sys/fefw_60fps_patch.h"
+#include "core/file_sys/fefw_romfs_tweaks.h"
 #include "core/fefw_frame_rate.h"
 #include "core/file_sys/fefw_ultrawide.h"
 #include "core/file_sys/ips_layer.h"
@@ -492,6 +494,18 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         } else {
             LOG_ERROR(Loader, "    - The built-in mouse patch could not be applied");
         }
+        if (FefwSixtyEnabled()) {
+            LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60fps add-on)");
+            const auto sixty = std::make_shared<VectorVfsFile>(
+                std::vector<u8>(FefwSixtyPatch::Ips.begin(), FefwSixtyPatch::Ips.end()),
+                "60fps.ips");
+            const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), sixty);
+            if (patched != nullptr) {
+                out = patched->ReadAllBytes();
+            } else {
+                LOG_ERROR(Loader, "    - The built-in 60 FPS patch could not be applied");
+            }
+        }
     }
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
@@ -541,6 +555,24 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
     return !CollectPatches(patch_dirs, build_id).empty();
 }
 
+bool PatchManager::FefwSixtyEnabled() const {
+    if (title_id != FefwRomfsTweaks::TitleId) {
+        return false;
+    }
+    const auto load_dir = GetModificationLoadRoot();
+    if (load_dir == nullptr) {
+        return false;
+    }
+    const auto disabled = GetDisabledAddons();
+    for (const auto& subdir : load_dir->GetSubdirectories()) {
+        if (Common::ToLower(subdir->GetName()) == "60fps" &&
+            std::find(disabled.cbegin(), disabled.cend(), subdir->GetName()) == disabled.cend()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildID& build_id_) const {
     const auto load_dir = GetModificationLoadRoot();
     if (load_dir == nullptr) {
@@ -556,14 +588,13 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
     // running its cheat (a fixed rate of 60 made everything slow motion below 60 FPS).
     const bool fefw_main =
         Common::HexToString(build_id_).starts_with(FefwFrameRate::MainBuildId);
-    bool fefw_60fps = false;
+    const bool fefw_60fps = fefw_main && FefwSixtyEnabled();
 
     // <mod dir> / <folder> / cheats / <build id>.txt
     std::vector<Core::Memory::CheatEntry> out;
     for (const auto& subdir : patch_dirs) {
         if (std::find(disabled.cbegin(), disabled.cend(), subdir->GetName()) == disabled.cend()) {
             if (fefw_main && Common::ToLower(subdir->GetName()) == "60fps") {
-                fefw_60fps = true;
                 continue;
             }
             if (auto cheats_dir = FindSubdirectoryCaseless(subdir, "cheats"); cheats_dir != nullptr) {
@@ -604,9 +635,13 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
 void PatchManager::ApplyLayeredFS(VirtualFile& romfs, ContentRecordType type) const {
     const auto load_dir = GetModificationLoadRoot();
     const auto sdmc_load_dir = GetModificationLoadRoot(true);
+    // Fortune's Eden's performance settings for Fortune's Weave change some of its graphics
+    // settings files (fefw_romfs_tweaks.cpp), on top of any mods.
+    const bool fefw_tweaks = type == ContentRecordType::Program &&
+                             title_id == FefwRomfsTweaks::TitleId && FefwRomfsTweaks::Any();
     if ((type != ContentRecordType::Program && type != ContentRecordType::Data &&
          type != ContentRecordType::HtmlDocument) ||
-        (load_dir == nullptr && sdmc_load_dir == nullptr)) {
+        (load_dir == nullptr && sdmc_load_dir == nullptr && !fefw_tweaks)) {
         return;
     }
 
@@ -652,7 +687,7 @@ void PatchManager::ApplyLayeredFS(VirtualFile& romfs, ContentRecordType type) co
     }
 
     // When there are no layers to apply, return early as there is no need to rebuild the RomFS
-    if (layers.empty() && layers_ext.empty()) {
+    if (layers.empty() && layers_ext.empty() && !fefw_tweaks) {
         return;
     }
 
@@ -664,6 +699,11 @@ void PatchManager::ApplyLayeredFS(VirtualFile& romfs, ContentRecordType type) co
     layers.emplace_back(std::move(extracted));
 
     auto layered = LayeredVfsDirectory::MakeLayeredDirectory(std::move(layers));
+    if (fefw_tweaks && layered != nullptr) {
+        if (auto tweaked = FefwRomfsTweaks::Build(layered); tweaked != nullptr) {
+            layered = LayeredVfsDirectory::MakeLayeredDirectory({std::move(tweaked), layered});
+        }
+    }
     auto layered_ext = LayeredVfsDirectory::MakeLayeredDirectory(std::move(layers_ext));
     if (layered == nullptr && layered_ext == nullptr) {
         return;

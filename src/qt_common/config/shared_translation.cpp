@@ -153,6 +153,16 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "the HUD, menus and movies centred at 16:9, and stretches the picture to the window. "
               "For 21:9 monitors only; play fullscreen.\nOnly for game version 1.1.0. Takes effect "
               "when the game starts."));
+    INSERT(Settings, fefw_reflections, tr("Reflections (Fortune's Weave):"),
+           tr("Screen-space reflections in the hubs, which trace 32 rays per pixel. Reduced traces "
+              "8 (a little grainier), Off removes them. Can raise FPS in the hubs on slower GPUs.\n"
+              "Takes effect when the game starts."));
+    INSERT(Settings, fefw_ambient_occlusion, tr("Ambient occlusion (Fortune's Weave)"),
+           tr("The soft shading in corners and creases (SSAO). Turning it off saves some GPU time "
+              "everywhere, with flatter lighting. Takes effect when the game starts."));
+    INSERT(Settings, fefw_reduced_crowd_detail, tr("Reduced crowd detail (Fortune's Weave)"),
+           tr("Crowd characters switch to their simpler models twice as soon, which lightens busy "
+              "towns and battles. Takes effect when the game starts."));
     INSERT(Settings, fefw_mouse_sensitivity, tr("Mouse sensitivity (mouse mode):"),
            tr("How fast the mouse moves the cursor in Fortune's Weave's mouse controls "
               "(Options > Controls > Mouse Controls), from 1 to 20. Turn mouse mode on with the "
@@ -452,6 +462,12 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(UpscalerQuality, Quality, tr("Quality")),
                               PAIR(UpscalerQuality, Balanced, tr("Balanced")),
                               PAIR(UpscalerQuality, Performance, tr("Performance")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::FefwReflections>::Index(),
+                          {
+                              PAIR(FefwReflections, Full, tr("Full (the game's own)")),
+                              PAIR(FefwReflections, Reduced, tr("Reduced (8 rays)")),
+                              PAIR(FefwReflections, Off, tr("Off")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::VramUsageMode>::Index(),
                           {

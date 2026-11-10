@@ -4,6 +4,7 @@
 #include "core/fefw_frame_rate.h"
 
 #include <algorithm>
+#include <bit>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -21,7 +22,10 @@ constexpr u64 AppObjectPointer = 0x21E60D8; // main-relative: pointer to the app
 constexpr u64 RateOffset = 0x1DC;            // int: the frames per second the game steps for
 constexpr int MinRate = 30;                  // the game's own rate; below it, it slows as on Switch
 constexpr int MaxRate = 60;
-constexpr int SnapTo60From = 57;             // vsync jitter around 60 shouldn't wobble the rate
+constexpr int SnapTo60From = 59;             // vsync jitter around 60 shouldn't wobble the rate
+// The 60 FPS game patch's table (bss tail, main-relative; layout in tools/fefw/make_60fps_patch.py):
+// the value every patched site uses at the current rate.
+constexpr u64 TableOffset = 0x22B3E00;
 
 std::atomic<u64> main_base{0};
 std::atomic<bool> enabled{false};
@@ -39,6 +43,40 @@ struct Measure {
     double rate_sum = 0.0;
 };
 Measure measure;
+float Bits(u32 bits) {
+    return std::bit_cast<float>(bits);
+}
+
+u32 F(double value) {
+    return std::bit_cast<u32>(static_cast<float>(value));
+}
+
+// s = 30 / rate. Per-frame amounts scale by s, per-frame factors become powers of s, and frame
+// counts scale by 1 / s, so each system keeps its 30 FPS speed at any rate.
+void WriteTable(Core::Memory::Memory& memory, u64 table, int rate) {
+    const double s = 30.0 / rate;
+    const auto put = [&](u64 slot, u32 value) { memory.Write32(table + slot, value); };
+    const auto times = [&](u32 bits) { return F(Bits(bits) * s); };
+    put(0x04, F(s));
+    put(0x08, static_cast<u32>(std::lround(4096.0 * s)));          // 30 Hz step, 1/4096 units
+    put(0x0C, times(0x3D08AB86));                                 // clock fallback dt
+    put(0x10, times(0x3D08AB85));                                 // shader time per frame
+    put(0x14, times(0x3D088889));                                 // PhysX step (1/30 -> 1/T)
+    put(0x18, F(std::pow(Bits(0x3F733333), s)));                  // x0.95 per frame
+    put(0x1C, F(Bits(0x3F4CCCCD) / s));                           // hold frames x T/30
+    put(0x20, F(3.0 * s));                                        // map UI angle per frame
+    put(0x24, F(1.0 - std::pow(1.0 - Bits(0x3ECCCCCD), s)));      // marker glide lerp 0.4
+    put(0x28, F(1.0 - std::pow(0.5, s)));                         // marker height ease 0.5
+    put(0x2C, times(0x3DCCCCCD));                                 // +0.1 per frame
+    put(0x30, times(0x41855555));                                 // +16.667 ms per frame
+    put(0x34, F(1.0 - std::pow(31.0 / 32.0, s)));                 // marquee lerp 1/32
+    put(0x38, times(0xBF19999A));                                 // turntable acceleration
+    put(0x3C, F(1.0 / (1.0 - std::pow(5.0 / 6.0, s))));           // turntable release (/6)
+    put(0x40, static_cast<u32>(std::max(1L, std::lround(2.0 * s)))); // PhysX substeps (2)
+    put(0x44, static_cast<u32>(std::max(1L, std::lround(4.0 * s)))); // PhysX substeps (4)
+    put(0x48, rate == 30 ? 0U : F(s - 1.0));                      // turntable angle: v x (s - 1)
+    put(0x00, static_cast<u32>(rate));                            // last: the table is complete
+}
 } // Anonymous namespace
 
 void OnMainLoaded(const std::array<u8, 32>& build_id, u64 base) {
@@ -97,6 +135,11 @@ void OnPresent(Core::Memory::Memory& memory) {
     }
     if (static_cast<int>(memory.Read32(object + RateOffset)) != rate) {
         memory.Write32(object + RateOffset, static_cast<u32>(rate));
+    }
+    const u64 table = main_base + TableOffset;
+    if (memory.IsValidVirtualAddress(table) &&
+        static_cast<int>(memory.Read32(table)) != rate) {
+        WriteTable(memory, table, rate);
     }
     measure.written = rate;
 

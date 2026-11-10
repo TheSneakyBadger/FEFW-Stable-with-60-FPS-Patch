@@ -78,6 +78,9 @@ public:
     // Used to prevent expensive copies in NSO loader.
     [[nodiscard]] bool HasNSOPatch(const BuildID& build_id, std::string_view name) const;
 
+    // Fortune's Weave: whether the "60fps" add-on is enabled (Fortune's Eden's 60 FPS mode).
+    [[nodiscard]] bool FefwSixtyEnabled() const;
+
     // Creates a CheatList object with all
     [[nodiscard]] std::vector<Core::Memory::CheatEntry> CreateCheatList(
         const BuildID& build_id) const;

@@ -66,6 +66,7 @@ SWITCHABLE(SpirvOptimizeMode, true);
 SWITCHABLE(TimeZone, true);
 SWITCHABLE(Upscaler, true);
 SWITCHABLE(UpscalerQuality, true);
+SWITCHABLE(FefwReflections, true);
 SETTING(VSyncMode, true);
 SWITCHABLE(bool, false);
 SWITCHABLE(int, false);

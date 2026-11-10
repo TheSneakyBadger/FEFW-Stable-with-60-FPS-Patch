@@ -413,6 +413,16 @@ struct Values {
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};
+    // Fortune's Weave's own graphics settings files (romfs Graphics/Settings), changed as the game
+    // loads them (file_sys/fefw_romfs_tweaks.cpp; nothing is written to disk): screen-space
+    // reflections (the hubs: 32 rays per pixel), ambient occlusion (SSAO), and how soon crowd
+    // characters switch to simpler models. Take effect when the game starts.
+    SwitchableSetting<FefwReflections, true> fefw_reflections{
+        linkage, FefwReflections::Full, "fefw_reflections", Category::Renderer};
+    SwitchableSetting<bool> fefw_ambient_occlusion{linkage, true, "fefw_ambient_occlusion",
+                                                   Category::Renderer};
+    SwitchableSetting<bool> fefw_reduced_crowd_detail{linkage, false, "fefw_reduced_crowd_detail",
+                                                      Category::Renderer};
     // Sensitivity of the PC mouse when presented as a Joy-Con mouse (Fortune's Weave's mouse
     // controls), 1-20: 1 moves the cursor across the game picture as far as the PC pointer moves
     // across the game window, 20 twenty times as far.
