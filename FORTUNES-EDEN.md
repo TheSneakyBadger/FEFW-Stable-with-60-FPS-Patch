@@ -5,8 +5,8 @@ Fire Emblem: Fortune's Weave. Releases, the changelog and the build script are o
 branch of this repository: https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch
 
 The tip of this branch is the current development state, which can be ahead of the latest
-release. Releases from v1.6.7.2 on are tagged `source-v<version>` (for example
-`source-v1.6.7.2`), and every release package also carries its source as `source.zip`.
+release. Each release from v1.6.7.2 on also has a branch `source-v<version>` with exactly its
+source (for example `source-v1.6.7.2`), and every release package carries it as `source.zip`.
 
 ## Based on
 
