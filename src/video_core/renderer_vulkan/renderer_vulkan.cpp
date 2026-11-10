@@ -262,9 +262,10 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     scheduler.Flush(*frame->render_ready);
 
     present_manager.Present(frame);
-#ifdef HAS_LSFG
+    // With asynchronous presentation the hand-over to the present thread is a recorded command:
+    // send it to the worker now, not with whatever is recorded next. (Was only done with frame
+    // generation built in; found missing on Linux by a player's investigation.)
     scheduler.DispatchWork();
-#endif
 
     gpu.RendererFrameEndNotify();
     rasterizer.TickFrame();

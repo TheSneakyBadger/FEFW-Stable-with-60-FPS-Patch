@@ -37,7 +37,22 @@ IR::U32 Offset(TranslatorVisitor& v, u64 insn) {
 }
 
 std::pair<IR::U32, IR::U32> WordOffset(TranslatorVisitor& v, u64 insn) {
-    const IR::U32 offset{Offset(v, insn)};
+    IR::U32 offset{Offset(v, insn)};
+    // Switch 2 compute shaders address their stack in the top of the 16 MiB local-memory window
+    // (the stack pointer starts at 0x1000000 - size), but the translated shader keeps only `size`
+    // bytes: an address in the top `size` bytes maps to its start. Without this the access runs
+    // far past the array (a GPU fault on RADV; reported for Fortune's Weave on Linux by a player
+    // with Codex, shader 0xa9d5e6a0c99d4a33, 592 bytes, stack at 0xfffdc0).
+    if (v.env.HasNativeRegisterCopies() && v.env.ShaderStage() == Stage::Compute) {
+        constexpr u32 window_size = 1U << 24;
+        const u32 local_size = v.env.LocalMemorySize();
+        if (local_size > 0 && local_size < window_size) {
+            const IR::U32 address{v.ir.BitwiseAnd(offset, v.ir.Imm32(window_size - 1))};
+            const IR::U32 base{v.ir.Imm32(window_size - local_size)};
+            const IR::U1 high{v.ir.IGreaterThanEqual(address, base, false)};
+            offset = IR::U32{v.ir.Select(high, v.ir.ISub(address, base), offset)};
+        }
+    }
     if (offset.IsImmediate()) {
         return {v.ir.Imm32(offset.U32() / 4), offset};
     } else {
