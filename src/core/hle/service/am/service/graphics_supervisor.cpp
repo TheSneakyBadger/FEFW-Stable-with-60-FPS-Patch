@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <limits>
+#include <optional>
+#include <utility>
 #include "core/hle/service/am/service/native_video_layout.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
 #include <algorithm>
@@ -47,6 +49,31 @@
 #include "core/hle/service/vi/vi_types.h"
 
 namespace Service::AM {
+
+// Statistics with EDEN_BACK_THREAD_STATS (the "Start with full stats" launcher): where the game
+// waits on the GPU and the display. Measured to see whether letting the game run further ahead of
+// the GPU (Eglantine's "run ahead") would help: with two presentation slots it can only start a
+// frame after one of the two queued frames retired, i.e. was composited at a 60 Hz refresh.
+namespace PresentStats {
+using Clock = std::chrono::steady_clock;
+inline bool Enabled() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_BACK_THREAD_STATS");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    return enabled;
+}
+inline double Ms(Clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+// Game waits on GPU syncpoints (ISyncpointSupervisor::ArmWait): count, and the time from arming
+// to signalling, in microseconds. Shared between the services, so atomic.
+inline std::atomic<u64> sync_waits{};
+inline std::atomic<u64> sync_waits_immediate{};
+inline std::atomic<u64> sync_wait_us{};
+inline std::atomic<u64> sync_wait_worst_us{};
+} // namespace PresentStats
+
 struct NativeImageRegistry {
     struct Image {
         u32 id;
@@ -225,6 +252,16 @@ private:
             if (!current || GraphicsSupervisorProtocol::IsSyncpointWaitSatisfied(*current, wait->threshold, wait->wide)) {
                 m_events[slot]->Signal(kernel);
                 wait.reset();
+                if (PresentStats::Enabled()) {
+                    const auto us = static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
+                        PresentStats::Clock::now() - m_armed_at[slot]).count());
+                    ++PresentStats::sync_waits;
+                    if (us < 50) ++PresentStats::sync_waits_immediate;
+                    PresentStats::sync_wait_us += us;
+                    u64 worst = PresentStats::sync_wait_worst_us.load(std::memory_order_relaxed);
+                    while (us > worst && !PresentStats::sync_wait_worst_us.compare_exchange_weak(worst, us)) {
+                    }
+                }
             }
         }
     }
@@ -248,6 +285,7 @@ private:
                     } else {
                         event->Clear(kernel);
                         m_waits[request->slot] = *request;
+                        m_armed_at[request->slot] = PresentStats::Clock::now();
                         PollWaits();
                         if (!m_wait_poll) {
                             const std::weak_ptr<ISyncpointSupervisor> weak =
@@ -308,6 +346,7 @@ private:
     std::shared_ptr<Nvidia::Module> m_module;
     u32 m_event_count{};
     std::array<std::optional<GraphicsSupervisorProtocol::SyncpointWait>, MaximumEventCount> m_waits{};
+    std::array<PresentStats::Clock::time_point, MaximumEventCount> m_armed_at{};
     std::shared_ptr<Core::Timing::EventType> m_wait_poll;
     KernelHelpers::ServiceContext m_context;
     std::array<Kernel::KEvent*, MaximumEventCount> m_events{};
@@ -562,6 +601,12 @@ class IVi2Session final : public ServiceFramework<IVi2Session> {
         std::shared_ptr<android::BufferQueueProducer> producer;
         std::array<std::optional<s32>, 15> queued{};
         std::optional<size_t> player_display;
+        // Statistics (PresentStats): per queued slot, when it was presented, its GPU fence, and
+        // when that fence was first seen passed; when the game last found both slots in use.
+        std::array<PresentStats::Clock::time_point, 15> queued_at{};
+        std::array<PresentStats::Clock::time_point, 15> drawn_at{};
+        std::array<std::pair<u32, u32>, 15> queued_fence{};
+        PresentStats::Clock::time_point full_since{};
     };
 
     // Presentations not yet retired (queued, or held by the compositor).
@@ -857,13 +902,61 @@ private:
         rb.Push(available);
         for (u32 i = 0; i < 4; ++i) rb.Push<u32>(0);
     }
+    // With EDEN_BACK_THREAD_STATS, one line about every 10 seconds: presentations, how many left
+    // both slots in use, how long until a slot came free again (time the game may have waited),
+    // and how a frame's queue time splits into its GPU work and waiting to be shown afterwards.
+    // Also the game's own GPU waits (syncpoints): how many, and how long from arming to release.
+    struct PresentStatsWindow {
+        PresentStats::Clock::time_point start{};
+        u32 presents{};
+        u32 full{};
+        u32 retired{};
+        double stall_ms{};
+        double stall_worst_ms{};
+        double gpu_ms{};
+        double display_ms{};
+    };
+    PresentStatsWindow m_present_stats{};
+    void LogPresentStats() {
+        auto& w = m_present_stats;
+        const auto now = PresentStats::Clock::now();
+        if (w.start == PresentStats::Clock::time_point{}) {
+            w = {};
+            w.start = now;
+            return;
+        }
+        const double seconds = std::chrono::duration<double>(now - w.start).count();
+        if (seconds < 10.0) return;
+        const u64 waits = PresentStats::sync_waits.exchange(0);
+        const u64 immediate = PresentStats::sync_waits_immediate.exchange(0);
+        const u64 wait_us = PresentStats::sync_wait_us.exchange(0);
+        const u64 worst_us = PresentStats::sync_wait_worst_us.exchange(0);
+        const double retired = (std::max)(1.0, static_cast<double>(w.retired));
+        LOG_INFO(Service_AM,
+                 "Presentation, last {:.0f} s: {} frames, {} left both slots in use; a slot came free "
+                 "{:.1f} ms later on average (worst {:.0f} ms, {:.0f} ms in total); a frame took "
+                 "{:.1f} ms on the GPU after presenting, then {:.1f} ms until shown and released. "
+                 "GPU waits by the game: {} ({} already done), {:.0f} ms in total, worst {:.1f} ms",
+                 seconds, w.presents, w.full, w.full ? w.stall_ms / w.full : 0.0, w.stall_worst_ms,
+                 w.stall_ms, w.gpu_ms / retired, w.display_ms / retired, waits, immediate,
+                 static_cast<double>(wait_us) / 1000.0, static_cast<double>(worst_us) / 1000.0);
+        w = {};
+        w.start = now;
+    }
     void RefreshReleasedBuffers() {
         const std::scoped_lock images_lock{m_images->mutex};
         for (auto& state : m_client_states) {
             if (!state.producer || !m_images->module) continue;
             bool changed{};
+            const auto now = PresentStats::Clock::now();
             for (size_t slot = 0; slot < state.queued.size(); ++slot) {
                 if (!state.queued[slot]) continue;
+                if (PresentStats::Enabled() && state.drawn_at[slot] == PresentStats::Clock::time_point{}) {
+                    const auto [fence_id, fence_value] = state.queued_fence[slot];
+                    const auto counter = fence_id == ~u32{0} ? std::optional<u32>{fence_value}
+                        : m_images->module->GetContainer().GetSyncpointManager().ReadAllocatedSyncpoint(fence_id);
+                    if (!counter || static_cast<s32>(*counter - fence_value) >= 0) state.drawn_at[slot] = now;
+                }
                 const auto fence = state.producer->GetReleasedBufferFence(*state.queued[slot]);
                 if (!fence) continue;
                 bool complete = true;
@@ -880,6 +973,18 @@ private:
                 if (state.producer->DetachReleasedBuffer(*state.queued[slot]) != android::Status::NoError) continue;
                 state.queued[slot].reset();
                 state.available |= u64{1} << slot;
+                if (PresentStats::Enabled()) {
+                    const auto drawn = state.drawn_at[slot] == PresentStats::Clock::time_point{} ? now : state.drawn_at[slot];
+                    m_present_stats.retired += 1;
+                    m_present_stats.gpu_ms += PresentStats::Ms(drawn - state.queued_at[slot]);
+                    m_present_stats.display_ms += PresentStats::Ms(now - drawn);
+                    if (state.full_since != PresentStats::Clock::time_point{}) {
+                        const double stall = PresentStats::Ms(now - state.full_since);
+                        m_present_stats.stall_ms += stall;
+                        m_present_stats.stall_worst_ms = (std::max)(m_present_stats.stall_worst_ms, stall);
+                        state.full_since = {};
+                    }
+                }
                 LOG_DEBUG(Service_AM, "Native display buffer retired: slot={}, mask={:#x}", slot, state.available);
                 changed = true;
             }
@@ -1017,6 +1122,11 @@ private:
         }
         state.queued[slot] = queue_slot;
         state.available &= ~(u64{1} << slot);
+        if (PresentStats::Enabled()) {
+            state.queued_at[slot] = PresentStats::Clock::now();
+            state.drawn_at[slot] = {};
+            state.queued_fence[slot] = {fence_id, packet[24]};
+        }
         if (!m_release_poll) {
             m_release_poll = Core::Timing::CreateEvent("NativeViBufferRelease", [this](s64, std::chrono::nanoseconds) -> std::optional<std::chrono::nanoseconds> {
                 const auto guard = LockService();
@@ -1054,6 +1164,14 @@ private:
             if (token && state != m_client_states.end()) {
                 result = QueueNativeImage(*state, packet);
                 available = ReportedAvailability(*state);
+                if (PresentStats::Enabled() && result.IsSuccess()) {
+                    ++m_present_stats.presents;
+                    if (available == 0) {
+                        ++m_present_stats.full;
+                        state->full_since = PresentStats::Clock::now();
+                    }
+                    LogPresentStats();
+                }
             }
         }
         LOG_DEBUG(Service_AM, "VI2 present token={:#x}, image={}, slot={}, mask={:#x}, result={:#x}", token, packet[5], packet[4], available, result.raw);
