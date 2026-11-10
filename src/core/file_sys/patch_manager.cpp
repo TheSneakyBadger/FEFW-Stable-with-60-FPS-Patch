@@ -41,8 +41,8 @@ namespace FileSys {
 namespace {
 // Fortune's Weave 1.1.0 moves its Joy-Con mouse cursor only after the right Joy-Con has lain flat
 // (a motion value of -0.8 or less) for a while (30.0), or after one very fast movement (110 px in
-// a frame), and stops when the Joy-Con tilts. A PC mouse has no such motion, so with "Emulate
-// mouse" on, the input object's constructor stores 0.0 for the settle time (main+0x65008c, low
+// a frame), and stops when the Joy-Con tilts. A PC mouse has no such motion, so the input
+// object's constructor stores 0.0 for the settle time (main+0x65008c, low
 // half of +0x390; 12000.0 at +0x394 is kept) and 10.0 for the flatness threshold (main+0x6500c0,
 // +0x398; 20.0 at +0x39c is kept). IPS32, offsets include the 0x100-byte NSO header.
 constexpr std::array<u8, 33> FefwMouseIps{
@@ -479,7 +479,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             LOG_ERROR(Loader, "    - The built-in ultrawide patch could not be applied");
         }
     }
-    if (Settings::values.mouse_enabled.GetValue() && build_id == FefwUltrawide::MainBuildId) {
+    // Always applied (mouse emulation can be turned on while the game runs); without a mouse
+    // the game never reaches this code.
+    if (build_id == FefwUltrawide::MainBuildId) {
         LOG_INFO(Loader, "    - Applying the built-in mouse patch (cursor without Joy-Con motion)");
         const auto patch = std::make_shared<VectorVfsFile>(
             std::vector<u8>(FefwMouseIps.begin(), FefwMouseIps.end()), "mouse.ips");
@@ -521,8 +523,7 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
 
     LOG_INFO(Loader, "Querying NSO patch existence for build_id={}, name={}", build_id, name);
 
-    if ((Settings::values.fefw_ultrawide.GetValue() || Settings::values.mouse_enabled.GetValue()) &&
-        build_id == FefwUltrawide::MainBuildId) {
+    if (build_id == FefwUltrawide::MainBuildId) {
         return true;
     }
 

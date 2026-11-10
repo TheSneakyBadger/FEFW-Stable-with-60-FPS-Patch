@@ -50,6 +50,7 @@
 #include "set_play_time_dialog.h"
 #include "util/util.h"
 #include "yuzu/fefw_home.h"
+#include "yuzu/fefw_mouse_mode.h"
 #include "yuzu/game/game_list.h"
 
 #include "applets/qt_amiibo_settings.h"
@@ -1179,6 +1180,44 @@ void MainWindow::InitializeWidgets() {
             });
     statusBar()->insertPermanentWidget(0, dock_status_button);
 
+    // Fortune's Eden: mouse emulation (Fortune's Weave's mouse controls) on/off; right-click for
+    // the mouse speed.
+    mouse_status_button = new QPushButton();
+    mouse_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    mouse_status_button->setFocusPolicy(Qt::NoFocus);
+    mouse_status_button->setCheckable(true);
+    mouse_status_button->setToolTip(
+        tr("Mouse emulation: your mouse works as a Joy-Con mouse in Fortune's Weave (turn on Mouse "
+           "Controls in the game's options). Switches Player 1 between the normal and the mouse "
+           "controls. Right-click for the mouse speed."));
+    connect(mouse_status_button, &QPushButton::clicked, this, &MainWindow::OnToggleMouseMode);
+    mouse_status_button->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mouse_status_button, &QPushButton::customContextMenuRequested,
+            [this](const QPoint& menu_location) {
+                QMenu context_menu;
+                context_menu.addAction(Settings::values.mouse_enabled.GetValue()
+                                           ? tr("Turn mouse emulation off")
+                                           : tr("Turn mouse emulation on"),
+                                       this, &MainWindow::OnToggleMouseMode);
+                context_menu.addSeparator();
+                QMenu* speed_menu = context_menu.addMenu(tr("Mouse speed"));
+                const int current = Settings::values.fefw_mouse_speed.GetValue();
+                for (const int speed : {50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 800}) {
+                    QAction* action = speed_menu->addAction(QStringLiteral("%1%").arg(speed));
+                    action->setCheckable(true);
+                    action->setChecked(speed == current);
+                    connect(action, &QAction::triggered, this, [this, speed] {
+                        Settings::values.fefw_mouse_speed.SetValue(speed);
+                        config->SaveAllValues();
+                        UpdateMouseButton();
+                    });
+                }
+                context_menu.exec(mouse_status_button->mapToGlobal(menu_location));
+                mouse_status_button->repaint();
+            });
+    UpdateMouseButton();
+    statusBar()->insertPermanentWidget(0, mouse_status_button);
+
     // Setup GPU Accuracy button
     gpu_accuracy_button = new QPushButton();
     gpu_accuracy_button->setObjectName(QStringLiteral("GPUStatusBarButton"));
@@ -2050,10 +2089,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     refresh_button->setDisabled(true);
     SetFPSSuffix();
 
-    if (UISettings::values.hide_mouse || Settings::values.mouse_panning) {
-        render_window->installEventFilter(render_window);
-        render_window->setAttribute(Qt::WA_Hover, true);
-    }
+    // Always: mouse emulation can be turned on while the game runs (the filter checks it).
+    render_window->installEventFilter(render_window);
+    render_window->setAttribute(Qt::WA_Hover, true);
 
     if (UISettings::values.hide_mouse) {
         mouse_hide_timer.start();
@@ -3669,7 +3707,7 @@ void MainWindow::OnConfigure() {
     config->SaveAllValues();
     fefw_home->UpdateStatusLine();
 
-    if ((UISettings::values.hide_mouse || Settings::values.mouse_panning) && emulation_running) {
+    if (emulation_running) {
         render_window->installEventFilter(render_window);
         render_window->setAttribute(Qt::WA_Hover, true);
     } else {
@@ -4431,6 +4469,24 @@ void MainWindow::UpdateGPUAccuracyButton() {
     gpu_accuracy_button->setChecked(gpu_accuracy != Settings::GpuAccuracy::Low);
 }
 
+void MainWindow::OnToggleMouseMode() {
+    FefwMouseMode::SetEnabled(!Settings::values.mouse_enabled.GetValue(),
+                              QtCommon::system->HIDCore());
+    config->SaveAllValues();
+    controller_dialog->refreshConfiguration();
+    UpdateMouseButton();
+}
+
+void MainWindow::UpdateMouseButton() {
+    if (mouse_status_button == nullptr) {
+        return;
+    }
+    const bool enabled = Settings::values.mouse_enabled.GetValue();
+    mouse_status_button->setChecked(enabled);
+    mouse_status_button->setText(
+        enabled ? tr("MOUSE %1%").arg(Settings::values.fefw_mouse_speed.GetValue()) : tr("MOUSE"));
+}
+
 void MainWindow::UpdateDockedButton() {
     const auto console_mode = Settings::values.use_docked_mode.GetValue();
     dock_status_button->setChecked(Settings::IsDockedMode());
@@ -4497,6 +4553,7 @@ void MainWindow::UpdateStatusButtons() {
     UpdateAPIText();
     UpdateGPUAccuracyButton();
     UpdateDockedButton();
+    UpdateMouseButton();
     UpdateFilterText();
     UpdateAAText();
     UpdateVolumeUI();

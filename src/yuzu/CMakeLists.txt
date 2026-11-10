@@ -234,6 +234,8 @@ add_executable(yuzu
     fefw_updater.cpp
     fefw_home.h
     fefw_home.cpp
+    fefw_mouse_mode.h
+    fefw_mouse_mode.cpp
 
     configuration/system/new_user_dialog.h configuration/system/new_user_dialog.cpp configuration/system/new_user_dialog.ui
     configuration/system/profile_avatar_dialog.h configuration/system/profile_avatar_dialog.cpp

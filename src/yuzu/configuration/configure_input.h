@@ -18,6 +18,7 @@ class System;
 }
 
 class QCheckBox;
+class QComboBox;
 class QString;
 class QTimer;
 
@@ -70,6 +71,11 @@ private:
     /// Restore all buttons to their default values.
     void RestoreDefaults();
 
+    /// Fortune's Eden: shows Player 1's normal or mouse controls for editing.
+    void ShowControlSet(bool mouse);
+    /// Stores the shown set and puts the set that matches mouse emulation back on Player 1.
+    void FinishControlSets(bool keep_edits);
+
     std::unique_ptr<Ui::ConfigureInput> ui;
 
     std::unique_ptr<InputProfiles> profiles;
@@ -79,6 +85,11 @@ private:
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};
     ConfigureInputAdvanced* advanced = nullptr;
+
+    // Fortune's Eden: which of Player 1's two sets of controls (normal or mouse) is shown.
+    QComboBox* control_set_combo = nullptr;
+    bool showing_mouse_set = false;
+    bool control_sets_finished = false;
 
     Core::System& system;
 };

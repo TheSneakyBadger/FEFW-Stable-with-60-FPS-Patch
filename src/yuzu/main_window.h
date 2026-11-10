@@ -381,6 +381,7 @@ private slots:
     void OnTasReset();
     void OnToggleGraphicsAPI();
     void OnToggleDockedMode();
+    void OnToggleMouseMode();
     void OnToggleGpuAccuracy();
     void OnToggleAdaptingFilter();
     void OnConfigurePerGame();
@@ -451,6 +452,7 @@ private:
                            std::string_view gpu_vendor = {});
     void OnApplicationChanged(u64 program_id);
     void UpdateDockedButton();
+    void UpdateMouseButton();
     void UpdateAPIText();
     void UpdateFilterText();
     void UpdateAAText();
@@ -541,6 +543,7 @@ private:
     QPushButton* renderer_status_button = nullptr;
     QPushButton* refresh_button = nullptr;
     QPushButton* dock_status_button = nullptr;
+    QPushButton* mouse_status_button = nullptr;
     QPushButton* filter_status_button = nullptr;
     QPushButton* aa_status_button = nullptr;
     QPushButton* post_shader_status_button = nullptr;

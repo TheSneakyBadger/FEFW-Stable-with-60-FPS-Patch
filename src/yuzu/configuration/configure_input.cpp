@@ -29,6 +29,12 @@
 #include "yuzu/configuration/configure_touchscreen_advanced.h"
 #include "yuzu/configuration/configure_vibration.h"
 #include "yuzu/configuration/input_profiles.h"
+#include "yuzu/fefw_mouse_mode.h"
+
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QSignalBlocker>
 
 namespace {
 template <typename Dialog, typename... Args>
@@ -60,7 +66,10 @@ ConfigureInput::ConfigureInput(Core::System& system_, QWidget* parent)
     ui->setupUi(this);
 }
 
-ConfigureInput::~ConfigureInput() = default;
+ConfigureInput::~ConfigureInput() {
+    // Closed without applying: Player 1 gets back the set that matches mouse emulation.
+    FinishControlSets(false);
+}
 
 void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                                 std::size_t max_players) {
@@ -178,6 +187,60 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
 
     RetranslateUI();
     LoadConfiguration();
+
+    // Fortune's Eden: Player 1 has normal and mouse controls; turning mouse emulation on or off
+    // (the MOUSE button at the bottom of the window) swaps between them.
+    showing_mouse_set = Settings::values.mouse_enabled.GetValue();
+    auto* control_set_row = new QHBoxLayout();
+    auto* control_set_label = new QLabel(tr("Player 1 controls:"), this);
+    control_set_combo = new QComboBox(this);
+    control_set_combo->addItem(tr("Normal controls"));
+    control_set_combo->addItem(tr("Mouse controls (used while mouse emulation is on)"));
+    control_set_combo->setCurrentIndex(showing_mouse_set ? 1 : 0);
+    control_set_combo->setToolTip(
+        tr("Fortune's Eden keeps two sets of controls for Player 1 and switches to the mouse set "
+           "when you turn mouse emulation on (the MOUSE button at the bottom of the window)."));
+    control_set_row->addWidget(control_set_label);
+    control_set_row->addWidget(control_set_combo, 1);
+    ui->verticalLayout_5->insertLayout(0, control_set_row);
+    connect(control_set_combo, &QComboBox::currentIndexChanged, this,
+            [this](int index) { ShowControlSet(index == 1); });
+}
+
+void ConfigureInput::ShowControlSet(bool mouse) {
+    if (mouse == showing_mouse_set) {
+        return;
+    }
+    auto& hid_core = system.HIDCore();
+    const auto index = FefwMouseMode::BindingIndex(hid_core);
+    player_controllers[0]->ApplyConfiguration();
+    FefwMouseMode::StoreSet(*profiles, showing_mouse_set, index);
+    if (!FefwMouseMode::LoadSet(*profiles, mouse, index)) {
+        // Not made yet: it starts as a copy of the other set.
+        FefwMouseMode::StoreSet(*profiles, mouse, index);
+    }
+    showing_mouse_set = mouse;
+    player_controllers[0]->LoadConfiguration();
+}
+
+void ConfigureInput::FinishControlSets(bool keep_edits) {
+    if (control_set_combo == nullptr || control_sets_finished) {
+        return;
+    }
+    const bool active_mouse = Settings::values.mouse_enabled.GetValue();
+    if (!keep_edits && showing_mouse_set == active_mouse) {
+        return; // Nothing swapped: the normal dialog cancel applies
+    }
+    auto& hid_core = system.HIDCore();
+    const auto index = FefwMouseMode::BindingIndex(hid_core);
+    if (keep_edits) {
+        FefwMouseMode::StoreSet(*profiles, showing_mouse_set, index);
+    }
+    if (showing_mouse_set != active_mouse) {
+        FefwMouseMode::LoadSet(*profiles, active_mouse, index);
+        FefwMouseMode::ReloadPlayer1(hid_core);
+    }
+    control_sets_finished = true;
 }
 
 void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool checked,
@@ -225,6 +288,20 @@ void ConfigureInput::ApplyConfiguration() {
 
     Settings::values.vibration_enabled.SetValue(ui->vibrationGroup->isChecked());
     Settings::values.motion_enabled.SetValue(ui->motionGroup->isChecked());
+
+    // Keep the shown set's edits, and leave Player 1 on the set mouse emulation calls for.
+    if (control_set_combo != nullptr) {
+        control_sets_finished = false;
+        FinishControlSets(true);
+        control_sets_finished = false;
+        const bool active_mouse = Settings::values.mouse_enabled.GetValue();
+        if (showing_mouse_set != active_mouse) {
+            showing_mouse_set = active_mouse;
+            const QSignalBlocker blocker(control_set_combo);
+            control_set_combo->setCurrentIndex(active_mouse ? 1 : 0);
+            player_controllers[0]->LoadConfiguration();
+        }
+    }
     Settings::values.players.SetGlobal(was_global);
 }
 
