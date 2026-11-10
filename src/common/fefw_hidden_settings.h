@@ -12,7 +12,7 @@ namespace Common {
 // Fortune's Eden runs one game: settings that don't apply to Fortune's Weave, duplicate another
 // one, or only tune the emulator's internals aren't shown in Settings. These are the settings'
 // labels (the config file keys), not their C++ names.
-inline constexpr std::array<std::string_view, 54> FefwHiddenSettings{
+inline constexpr std::array<std::string_view, 55> FefwHiddenSettings{
     "cabinet_applet_mode",
     "controller_applet_mode",
     "data_erase_applet_mode",
@@ -67,6 +67,7 @@ inline constexpr std::array<std::string_view, 54> FefwHiddenSettings{
     "rng_seed",
     "rng_seed_enabled",
     "dump_audio_commands",
+    "volume", // Always 100%: use the PC's own volume
 };
 
 // Shown nowhere either, but their widgets are still built (other settings' code uses them).

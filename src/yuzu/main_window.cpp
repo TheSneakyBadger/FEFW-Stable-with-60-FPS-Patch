@@ -1067,6 +1067,8 @@ void MainWindow::InitializeWidgets() {
     connect(volume_button, &VolumeButton::VolumeChanged, this, &MainWindow::UpdateVolumeUI);
 
     statusBar()->insertPermanentWidget(0, volume_button);
+    // Fortune's Eden: the volume is always 100% (use the PC's own volume).
+    volume_button->hide();
 
 #ifdef HAS_RESHADE
     post_shader_status_button = new QPushButton();
@@ -1421,8 +1423,7 @@ void MainWindow::InitializeHotkeys() {
     connect_shortcut(QStringLiteral("Change Docked Mode"), &MainWindow::OnToggleDockedMode);
     connect_shortcut(QStringLiteral("Change GPU Mode"), &MainWindow::OnToggleGpuAccuracy);
     connect_shortcut(QStringLiteral("Audio Mute/Unmute"), &MainWindow::OnMute);
-    connect_shortcut(QStringLiteral("Audio Volume Down"), &MainWindow::OnDecreaseVolume);
-    connect_shortcut(QStringLiteral("Audio Volume Up"), &MainWindow::OnIncreaseVolume);
+    // Fortune's Eden: no volume hotkeys (the volume is always 100%); mute still works.
 
     connect_shortcut(QStringLiteral("Toggle Framerate Limit"), [this] {
         Settings::ToggleStandardMode();
