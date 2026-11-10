@@ -39,13 +39,16 @@
 namespace FileSys {
 
 namespace {
-// Fortune's Weave 1.1.0 turns its Joy-Con mouse cursor on only while the right Joy-Con lies flat
-// (a motion value of -0.8 or less) or after one very fast movement (110 px in a frame), and turns
-// it off when the Joy-Con tilts. A PC mouse has no such motion, so with "Emulate mouse" on the
-// threshold becomes 10.0 (main+0x6500c0: the constructor's mov/movk that store -0.8 at +0x398;
-// the next float, 20.0, is unchanged). IPS32, offsets include the 0x100-byte NSO header.
-constexpr std::array<u8, 23> FefwMouseIps{
+// Fortune's Weave 1.1.0 moves its Joy-Con mouse cursor only after the right Joy-Con has lain flat
+// (a motion value of -0.8 or less) for a while (30.0), or after one very fast movement (110 px in
+// a frame), and stops when the Joy-Con tilts. A PC mouse has no such motion, so with "Emulate
+// mouse" on, the input object's constructor stores 0.0 for the settle time (main+0x65008c, low
+// half of +0x390; 12000.0 at +0x394 is kept) and 10.0 for the flatness threshold (main+0x6500c0,
+// +0x398; 20.0 at +0x39c is kept). IPS32, offsets include the 0x100-byte NSO header.
+constexpr std::array<u8, 33> FefwMouseIps{
     'I', 'P', 'S', '3', '2',
+    0x00, 0x65, 0x01, 0x8C, 0x00, 0x04,
+    0x08, 0x00, 0x80, 0xD2, // mov x8, #0 (0.0f, then movk adds 12000.0f above)
     0x00, 0x65, 0x01, 0xC0, 0x00, 0x08,
     0x08, 0x00, 0x80, 0xD2, // mov x8, #0
     0x08, 0x24, 0xA8, 0xF2, // movk x8, #0x4120, lsl #16 (10.0f)
