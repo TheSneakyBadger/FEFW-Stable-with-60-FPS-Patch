@@ -37,6 +37,7 @@
 #include "video_core/engines/fermi_2d.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/descriptor_table.h"
+#include "video_core/texture_cache/dependency_cache.h"
 #include "video_core/texture_cache/image_base.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view_base.h"
@@ -95,8 +96,7 @@ public:
     DescriptorTable<TICEntry> compute_image_table;
     DescriptorTable<TSCEntry> compute_sampler_table;
 
-    // TODO: still relies on bad iterators :(
-    std::unordered_map<TICEntry, ImageViewId> image_views;
+    DependencyCache<TICEntry, ImageViewId, ImageViewId, 1> image_views;
     std::unordered_map<TSCEntry, SamplerId> samplers;
 
     ::Common::unordered_map<u32, SamplerId> sampler_ids;
@@ -517,7 +517,7 @@ private:
     FramebufferId last_framebuffer_id{};
     u64 last_framebuffer_serial = 0;
 
-    ::Common::unordered_map<RenderTargets, FramebufferId> framebuffers;
+    DependencyCache<RenderTargets, FramebufferId, ImageViewId, NUM_RT + 1> framebuffers;
     ::Common::unordered_map<u64, std::vector<ImageMapId>, Common::IdentityHash<u64>> page_table;
     ::Common::unordered_map<ImageId, boost::container::small_vector<ImageViewId, 16>> sparse_views;
 

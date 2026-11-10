@@ -786,12 +786,17 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
     if (is_new) {
         if (IsValidEntry(*gpu_memory, descriptor)) {
             // Is new (registered view) on the texture cache side?
-            const auto [pair, is_new_tc] = channel_state->image_views.try_emplace(descriptor);
-            if (is_new_tc)
-                pair->second = CreateImageView(descriptor);
-            PrepareImageView(pair->second, false, false);
-            channel_state->image_view_ids.insert_or_assign(map_index, pair->second);
-            return pair->second;
+            // TryFind, not Find: a descriptor cached as the null view stays cached, as before.
+            ImageViewId view_id;
+            if (const ImageViewId* const cached = channel_state->image_views.TryFind(descriptor)) {
+                view_id = *cached;
+            } else {
+                view_id = CreateImageView(descriptor);
+                channel_state->image_views.Insert(descriptor, view_id, std::span{&view_id, 1});
+            }
+            PrepareImageView(view_id, false, false);
+            channel_state->image_view_ids.insert_or_assign(map_index, view_id);
+            return view_id;
         }
         channel_state->image_view_ids.insert_or_assign(map_index, NULL_IMAGE_VIEW_ID);
         return NULL_IMAGE_VIEW_ID;
@@ -804,9 +809,7 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
 
 template <class P>
 FramebufferId TextureCache<P>::GetFramebufferId(const RenderTargets& key) {
-    const auto [pair, is_new] = framebuffers.try_emplace(key);
-    FramebufferId& framebuffer_id = pair->second;
-    if (!is_new) {
+    if (const FramebufferId framebuffer_id = framebuffers.Find(key); framebuffer_id) {
         return framebuffer_id;
     }
     std::array<ImageView*, NUM_RT> color_buffers;
@@ -815,7 +818,11 @@ FramebufferId TextureCache<P>::GetFramebufferId(const RenderTargets& key) {
     });
     ImageView* const depth_buffer = key.depth_buffer_id ? &slot_image_views[key.depth_buffer_id] : nullptr;
     runtime.FlushDeferredClear();
-    framebuffer_id = slot_framebuffers.insert(runtime, color_buffers, depth_buffer, key);
+    const FramebufferId framebuffer_id = slot_framebuffers.insert(runtime, color_buffers, depth_buffer, key);
+    std::array<ImageViewId, NUM_RT + 1> views;
+    std::ranges::copy(key.color_buffer_ids, views.begin());
+    views.back() = key.depth_buffer_id;
+    framebuffers.Insert(key, framebuffer_id, views);
     return framebuffer_id;
 }
 
@@ -2861,6 +2868,9 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     alloc_images.erase(alloc_image_it);
     if (alloc_images.empty()) {
         image_allocs_table.erase(alloc_it);
+        // The address no longer owns images. Recycle its bookkeeping slot as well as the map
+        // entry, otherwise every later allocation leaves an empty vector behind for the session.
+        slot_image_allocs.erase(alloc_id);
     }
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
@@ -2880,36 +2890,24 @@ template <class P>
 void TextureCache<P>::RemoveImageViewReferences(std::span<const ImageViewId> removed_views) {
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
-        auto it = channel_info.image_views.begin();
-        while (it != channel_info.image_views.end()) {
-            const auto found = std::ranges::find(removed_views, it->second);
-            if (found != removed_views.end()) {
-                it = channel_info.image_views.erase(it);
-            } else {
-                ++it;
-            }
-        }
+        channel_info.image_views.EraseDependencies(removed_views, [](ImageViewId) {});
     }
 }
 
 template <class P>
 void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_views) {
     runtime.FlushDeferredClear();
-    auto it = framebuffers.begin();
-    while (it != framebuffers.end()) {
-        if (it->first.Contains(removed_views)) {
-            auto framebuffer_id = it->second;
-            ASSERT(framebuffer_id);
-            if (framebuffer_id == last_framebuffer_id) {
-                last_framebuffer_id = {};
-                last_framebuffer_serial = 0;
-            }
-            sentenced_framebuffers.Push(std::move(slot_framebuffers[framebuffer_id]));
-            it = framebuffers.erase(it);
-        } else {
-            ++it;
+    framebuffers.EraseDependencies(removed_views, [this](FramebufferId framebuffer_id) {
+        ASSERT(framebuffer_id);
+        if (framebuffer_id == last_framebuffer_id) {
+            last_framebuffer_id = {};
+            last_framebuffer_serial = 0;
         }
-    }
+        sentenced_framebuffers.Push(std::move(slot_framebuffers[framebuffer_id]));
+        // The GPU object stays in the retirement ring for the same number of frames. Only its
+        // moved-from slot is freed now, so repeated scene changes do not grow the slot array.
+        slot_framebuffers.erase(framebuffer_id);
+    });
 }
 
 template <class P>
