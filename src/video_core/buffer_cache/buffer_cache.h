@@ -66,6 +66,29 @@ BufferCache<P>::BufferCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, R
     critical_memory = static_cast<u64>(
         (std::max)((std::min)(device_local_memory - min_vacancy_critical, min_spacing_critical),
                  DEFAULT_CRITICAL_MEMORY));
+    // Fortune's Eden: below minimum_memory (15.7 GB on a 24 GB card) buffers were never freed,
+    // so they grew all session (1.0 to 1.3 GB in ten minutes of Fortune's Weave). From where the
+    // texture cache starts collecting, buffers unused for 30 s are freed a few per frame.
+    stale_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+}
+
+template <class P>
+void BufferCache<P>::RunStaleCollector() {
+    static constexpr u64 StaleTicks = 1800;
+    if (frame_tick < StaleTicks) {
+        return;
+    }
+    int num_iterations = 4;
+    lru_cache.ForEachItemBelow(frame_tick - StaleTicks, [this, &num_iterations](BufferId id) {
+        if (num_iterations == 0) {
+            return true;
+        }
+        --num_iterations;
+        auto& buffer = slot_buffers[id];
+        DownloadBufferMemory(buffer);
+        DeleteBuffer(id);
+        return false;
+    });
 }
 
 template <class P>
@@ -120,6 +143,8 @@ void BufferCache<P>::TickFrame() {
     }
     if (total_used_memory >= minimum_memory) {
         RunGarbageCollector();
+    } else if (total_used_memory >= stale_memory) {
+        RunStaleCollector();
     }
     ++frame_tick;
     delayed_destruction_ring.Tick();

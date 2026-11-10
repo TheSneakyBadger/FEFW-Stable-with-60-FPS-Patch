@@ -413,6 +413,7 @@ private:
     }
 
     void RunGarbageCollector();
+    void RunStaleCollector();
 
     void BindHostIndexBuffer();
 
@@ -603,6 +604,7 @@ private:
     u64 frame_tick = 0;
     u64 total_used_memory = 0;
     u64 minimum_memory = 0;
+    u64 stale_memory = ~0ULL;
     u64 critical_memory = 0;
     BufferId inline_buffer_id;
 #ifdef YUZU_LEGACY
