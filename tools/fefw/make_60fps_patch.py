@@ -19,7 +19,7 @@ TB = 0x22B3E00          # table (main-relative); see fefw_frame_rate.cpp for the
 TBP, TBO = TB & ~0xFFF, TB & 0xFFF
 SLOT = dict(T=0x00, S=0x04, STEP=0x08, DTF=0x0C, DTR=0x10, PDT=0x14, C95=0x18, B08=0x1C,
             A3=0x20, M1=0x24, M2=0x28, P01=0x2C, U16=0x30, BG5=0x34, UMA=0x38, UMD=0x3C,
-            SUB2=0x40, SUB4=0x44, SM1=0x48, STATE=0x80)
+            SUB2=0x40, SUB4=0x44, SM1=0x48, CG=0x4C, S2=0x50, STATE=0x80)
 CAVE_START, CAVE_END = 0x1A457A8, 0x1A46000
 FRAME_COUNTER = 0x22A5D28
 
@@ -53,6 +53,7 @@ MOVK = [
     ('BG4', 0x16A8F40, 'w8',  0xCCCD, 0x3DCC, 'P01'),
     ('UA1', 0x17CF378, 'w10', 0x999A, 0xBF19, 'UMA'),   # avatar turntable acceleration
     ('UA2', 0x17CF474, 'w10', 0x999A, 0xBF19, 'UMA'),
+    ('CG',  0xA687E4,  'w8',  0x8889, 0xBC88, 'CG'),    # cloth gravity per step (x s^2)
 ]
 
 def movk_routine(name, site, reg, lo, hi, slot):
@@ -98,17 +99,69 @@ TICK30 = f'''
     ldp x14, x15, [sp], #16
 '''
 
+# s16 = q (0..1) -> q^s for s = 30/T in [0.5, 1]: sqrt(q) + (2s - 1)(q - sqrt(q)), exact at 30 and
+# 60 FPS (within 0.1% between). Uses x16, s17, s18.
+POWQ = f'''
+    adrp x16, {TBP:#x}
+    ldr w16, [x16, #{L('S'):#x}]
+    fmov s17, #1.0
+    cbz w16, 8f
+    fmov s17, w16
+8:  movi d18, #0
+    fmaxnm s16, s16, s18
+    fsqrt s18, s16
+    fadd s17, s17, s17
+    fmov s19, #1.0
+    fsub s17, s17, s19
+    fsub s16, s16, s18
+    fmadd s16, s17, s16, s18
+'''
+
 SPECIAL = f'''
-// CL: wld::ClothModule step (fn 0xA6BC20). Per cloth piece it simulates one step with no dt
-// (bl 0xA68640, made for 30 FPS) and then writes the shown result (0xA69700), which has to
-// happen every frame (the result is double-buffered: skipping it showed the older buffer, and
-// hair and capes flickered). So only the simulation is held to 30 Hz steps; the stabilise path
-// (0xA6BE04, 10-100 steps after a teleport) is left as it is.
-r_CL:
-{TICK30}
-    cbz w16, 5f
-    b 0xa68640
-5:  ret
+// Cloth (wld::ClothModule, capes and hair): the Verlet step 0xA68640 runs once per frame and
+// was made for 1/30 s steps. It runs every frame here, with its per-step amounts made per time:
+// gravity and wind are accelerations (x s^2), the velocity kept per step, the pull towards the
+// parent bone's direction and towards the animation are per-step factors (q -> q^s), and the
+// wind phase advances x s. Positional constraints and collisions need nothing. a68640 uses no
+// x16/x17 and no v16-v31, so these routines use them freely; none touches the flags.
+r_CP:
+    fdiv s0, s0, s1
+    adrp x16, {TBP:#x}
+    ldr w16, [x16, #{L('S'):#x}]
+    cbz w16, 1f
+    fmov s16, w16
+    fmul s0, s0, s16
+1:  b 0xa686ec
+
+r_CB:
+    fsub s16, s14, s1
+{POWQ}
+    fsub s17, s14, s16
+    str s17, [sp, #0x50]
+    fmov s1, s16
+    b 0xa68738
+
+r_CD:
+    fsub s16, s14, s2
+{POWQ}
+    fmov s2, s16
+    b 0xa687f4
+
+r_CW:
+    fadd v0.4s, v1.4s, v0.4s
+    adrp x16, {TBP:#x}
+    ldr w16, [x16, #{L('S2'):#x}]
+    cbz w16, 1f
+    fmov s16, w16
+    fmul v0.4s, v0.4s, v16.s[0]
+1:  b 0xa68994
+
+r_CK:
+    fsub s16, s14, s5
+{POWQ}
+    fmov s2, s16
+    fsub s5, s14, s16
+    b 0xa68a9c
 
 // Q: evt::demo::Seq quake block (fn 0x11E9B50): run on 30 Hz steps, otherwise hold it and
 // continue where the block ends (0x11EB084), as when it has nothing to do.
@@ -285,15 +338,18 @@ r_UG{i}:
 
 # Site -> routine label. Entered with b (no link register is used), except CALL_SITES, which
 # replace a bl and return to its caller.
-CALL_SITES = {'CL'}
+CALL_SITES = set()
 SITES = [(s, n) for n, s, *_ in MOVK] + [
-    (0xA6BD3C, 'CL'), (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
+    (0xA686E8, 'CP'), (0xA68734, 'CB'), (0xA687F0, 'CD'), (0xA68990, 'CW'), (0xA68A98, 'CK'),
+    (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
     (0x133FEB4, 'M2'), (0x14CF5D4, 'P34'), (0x16A8D68, 'BG1'), (0x16A8D74, 'BG2'),
     (0x16A8EF4, 'BG5')] + [(s, f'UD{i}') for i, s in enumerate(UMD_SITES)] + \
     [(s, f'UG{i}') for i, s in enumerate(UMA_SITES)]
 
 # The original instruction at every site (checked against main before patching).
 EXPECT = {
+    0xA686E8: 'fdiv\ts0, s0, s1', 0xA68734: 'fsub\ts1, s14, s1', 0xA687F0: 'fsub\ts2, s14, s2',
+    0xA68990: 'fadd\tv0.4s, v1.4s, v0.4s', 0xA68A98: 'fsub\ts2, s14, s5',
     0x11EA5CC: 'ldrb\tw8, [x19, #0xc8]',
     0x112291C: 'sdiv\tw10, w10, w12', 0x10D7320: 'ldr\ts2, [x0, #0xa4]',
     0x133FB90: 'fmov\ts1, #3.00000000', 0x133FEB4: 'fmul\ts0, s0, s2',
@@ -362,8 +418,6 @@ def main():
         assert set(image[CAVE_START:CAVE_START + len(cave_bytes)]) == {0}, 'cave not empty'
         dis = run(['llvm-objdump', '-d', '--no-show-raw-insn', '--triple=aarch64', '-b', 'binary',
                    '-m', 'aarch64', sys.argv[1]] if False else ['true'])
-        word = struct.unpack_from('<I', image, 0xA6BD3C)[0]
-        assert word == 0x94000000 | (((0xA68640 - 0xA6BD3C) >> 2) & 0x3FFFFFF), 'CL: no bl 0xA68640'
         with tempfile.TemporaryDirectory() as work:
             for site, want in EXPECT.items():
                 open(f'{work}/w.bin', 'wb').write(image[site:site + 4])

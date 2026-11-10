@@ -80,6 +80,8 @@ void WriteTable(Core::Memory::Memory& memory, u64 table, int rate) {
     put(0x40, static_cast<u32>(std::max(1L, std::lround(2.0 * s)))); // PhysX substeps (2)
     put(0x44, static_cast<u32>(std::max(1L, std::lround(4.0 * s)))); // PhysX substeps (4)
     put(0x48, rate == 30 ? 0U : F(s - 1.0));                      // turntable angle: v x (s - 1)
+    put(0x4C, F(Bits(0xBC888889) * s * s));                       // cloth gravity per step
+    put(0x50, F(s * s));                                          // cloth wind per step
     put(0x00, static_cast<u32>(rate));                            // last: the table is complete
 }
 } // Anonymous namespace
