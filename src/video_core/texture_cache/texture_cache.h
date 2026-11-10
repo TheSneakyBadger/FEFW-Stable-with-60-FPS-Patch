@@ -248,10 +248,14 @@ u32 TextureCache<P>::RunGarbageCollector() {
     // collected in the hard mode near the limit: the cache filled up to it with earlier scenes'
     // textures and then collected in bursts (uncompressed at 1x with the ultrawide patch on a 7 GB
     // limit ran at 35 FPS doing so). Over the expected use, first collect costly images unused for
-    // EDEN_TC_OLD_AGE frames (1800, 30 s at 60 FPS; 0 turns it off). From Eglantine a407703f6d.
+    // EDEN_TC_OLD_AGE frames (600, 10 s at 60 FPS; 0 turns it off). From Eglantine a407703f6d.
+    // Fortune's Eden: 30 s (1800) protected every texture a busy scene had touched in the last
+    // half minute, so in battles use climbed past the expected level all the way to the hard
+    // limit (15.4 GB on a 24 GB card) and was then held there by hard-mode bursts. With ASTC
+    // re-compressed on the GPU a texture is cheap enough to load again after 10 s unused.
     static const u64 old_age = [] {
         const char* value = std::getenv("EDEN_TC_OLD_AGE");
-        return value != nullptr ? std::strtoull(value, nullptr, 10) : 1800ULL;
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 600ULL;
     }();
     if (high_priority_mode && old_age != 0 && frame_tick > old_age) {
         evict_old_costly = true;
