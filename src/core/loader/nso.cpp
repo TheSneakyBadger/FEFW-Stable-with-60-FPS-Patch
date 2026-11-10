@@ -17,6 +17,7 @@
 #include "common/zbic_compression.h"
 #include "common/settings.h"
 #include "common/swap.h"
+#include "core/fefw_frame_rate.h"
 #include "core/core.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/hle/kernel/code_set.h"
@@ -237,8 +238,10 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     // Apply cheats if they exist and the program has a valid title ID
     if (pm) {
         // TODO(Maufeat): Check if there is a better way to check
-        if (name == "main")
+        if (name == "main") {
             system.SetApplicationProcessBuildID(nso_header.build_id);
+            FefwFrameRate::OnMainLoaded(nso_header.build_id, load_base);
+        }
 
         const auto cheats = pm->CreateCheatList(nso_header.build_id);
         if (!cheats.empty()) {

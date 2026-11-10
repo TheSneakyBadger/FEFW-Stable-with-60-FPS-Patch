@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include "core/fefw_frame_rate.h"
 #include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/hle/service/am/service/native_video_layout.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
@@ -1107,7 +1108,11 @@ private:
         // Word 12 is (swap interval << 16) | refresh rate (0x1003c, then 0x2003c once the game
         // is past its boot logos). Fortune's Weave runs at interval 2 (30 fps); forcing 1 made
         // it run at double speed.
-        const u32 swap_interval = std::clamp<u32>(packet[12] >> 16, 1, 4);
+        // Fortune's Weave's 60 FPS mode: present every vsync. The game derives its interval from
+        // its timing rate (60 / rate), which this mode sets from the real frame rate, so a PC at
+        // 30 FPS would otherwise be held at interval 2 and never measure anything faster.
+        const u32 swap_interval =
+            FefwFrameRate::Enabled() ? 1U : std::clamp<u32>(packet[12] >> 16, 1, 4);
         if (static u32 last_interval{}; swap_interval != std::exchange(last_interval, swap_interval)) {
             LOG_INFO(Service_AM, "Native present swap interval {} (word 12 = {:#x})", swap_interval, packet[12]);
         }
@@ -1137,6 +1142,7 @@ private:
             system.CoreTiming().ScheduleLoopingEvent(std::chrono::milliseconds{1}, std::chrono::milliseconds{1}, m_release_poll);
         }
         LogFramePacing();
+        FefwFrameRate::OnPresent(system.ApplicationMemory());
         // Every frame (60 a second): at Info only the first few and when the size changes, so a long
         // session's log stays small enough to send. All of them at Debug.
         static u32 queued_logged{};

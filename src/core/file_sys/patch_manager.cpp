@@ -21,6 +21,7 @@
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
+#include "core/fefw_frame_rate.h"
 #include "core/file_sys/fefw_ultrawide.h"
 #include "core/file_sys/ips_layer.h"
 #include "core/file_sys/patch_manager.h"
@@ -551,10 +552,20 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
     auto patch_dirs = load_dir->GetSubdirectories();
     std::sort(patch_dirs.begin(), patch_dirs.end(), [](auto const& l, auto const& r) { return l->GetName() < r->GetName(); });
 
+    // Fortune's Weave 1.1.0: the "60fps" add-on turns on Fortune's Eden's 60 FPS mode instead of
+    // running its cheat (a fixed rate of 60 made everything slow motion below 60 FPS).
+    const bool fefw_main =
+        Common::HexToString(build_id_).starts_with(FefwFrameRate::MainBuildId);
+    bool fefw_60fps = false;
+
     // <mod dir> / <folder> / cheats / <build id>.txt
     std::vector<Core::Memory::CheatEntry> out;
     for (const auto& subdir : patch_dirs) {
         if (std::find(disabled.cbegin(), disabled.cend(), subdir->GetName()) == disabled.cend()) {
+            if (fefw_main && Common::ToLower(subdir->GetName()) == "60fps") {
+                fefw_60fps = true;
+                continue;
+            }
             if (auto cheats_dir = FindSubdirectoryCaseless(subdir, "cheats"); cheats_dir != nullptr) {
                 // Upper-case name first, then lower-case, but not both: Windows finds the same
                 // file either way, and loading it twice ran every cheat twice per frame (button
@@ -583,6 +594,9 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
                 LOG_INFO(Common_Filesystem, "Failed to read cheats file for title_id={:016X}", title_id);
             }
         }
+    }
+    if (fefw_main) {
+        FefwFrameRate::SetEnabled(fefw_60fps);
     }
     return out;
 }
