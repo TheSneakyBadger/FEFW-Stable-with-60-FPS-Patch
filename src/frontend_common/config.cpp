@@ -482,13 +482,15 @@ void Config::ReadRendererValues() {
     ReadCategory(Settings::Category::RendererDebug);
 
     // v1.6.2 and earlier had a tick box per upscaler. Keep a player's choice when there is no
-    // upscaler entry yet: NVIDIA DLSS or AMD FSR 4 when ticked, else the game's own DLSS, which
-    // was their default. New and reset configs get AMD FSR 3.1.
+    // upscaler entry yet: NVIDIA DLSS, AMD FSR 4 or AMD FSR 3.1 when ticked, else AMD FSR 3.1,
+    // the default since v1.6.3.
+    const bool from_tick_boxes =
+        config->GetValue(GetSection().c_str(), GetFullKey("nvidia_dlss", false).c_str(),
+                         nullptr) != nullptr;
     if (global && config->GetValue(GetSection().c_str(), GetFullKey("upscaler", false).c_str(),
                                    nullptr) == nullptr &&
-        config->GetValue(GetSection().c_str(), GetFullKey("nvidia_dlss", false).c_str(),
-                         nullptr) != nullptr) {
-        Settings::Upscaler migrated = Settings::Upscaler::GameDlss;
+        from_tick_boxes) {
+        Settings::Upscaler migrated = Settings::Upscaler::Fsr3;
         if (ReadBooleanSetting(std::string("nvidia_dlss"), std::make_optional(false))) {
             migrated = Settings::Upscaler::NvidiaDlss;
         } else if (ReadBooleanSetting(std::string("amd_fsr4"), std::make_optional(false))) {
@@ -499,6 +501,18 @@ void Config::ReadRendererValues() {
         Settings::values.upscaler.SetValue(migrated);
         LOG_INFO(Config, "Upscaler set from the old tick boxes: {}",
                  Settings::CanonicalizeEnum(migrated));
+    }
+
+    // v1.6.3 to v1.6.7.1 turned no ticked box into the game's own DLSS (the old default), so
+    // everyone who updated from v1.6.2 or earlier was left on it instead of AMD FSR 3.1. Move
+    // them to AMD FSR 3.1 once; choosing the game's own DLSS again after that is kept.
+    if (global && from_tick_boxes &&
+        !ReadBooleanSetting(std::string("fefw_upscaler_fsr3_applied"),
+                            std::make_optional(false)) &&
+        Settings::values.upscaler.GetValue() == Settings::Upscaler::GameDlss) {
+        Settings::values.upscaler.SetValue(Settings::Upscaler::Fsr3);
+        LOG_INFO(Config, "Upscaler moved from the game's own DLSS (set by an old migration) to "
+                         "AMD FSR 3.1");
     }
 
     EndGroup();
@@ -833,6 +847,10 @@ void Config::SaveRendererValues() {
     WriteCategory(Settings::Category::RendererHacks);
     WriteCategory(Settings::Category::RendererExtensions);
     WriteCategory(Settings::Category::RendererDebug);
+    if (global) {
+        WriteBooleanSetting(std::string("fefw_upscaler_fsr3_applied"), true,
+                            std::make_optional(false));
+    }
 
     EndGroup();
 }
