@@ -5,6 +5,8 @@
 
 #include <QBoxLayout>
 #include <QEvent>
+#include <QFont>
+#include <QFontMetrics>
 #include <QIcon>
 #include <QLabel>
 #include <QPainter>
@@ -117,7 +119,7 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         "#fefwHomeVersion { font-size: 10pt; color: #a79fb8; background: transparent; }"
         "#fefwHomeStatus { font-size: 10pt; color: #e0b04a; background: transparent; }"
         "#fefwHomeIcon { background: transparent; }"
-        "#fefwHomePlay { font-size: 12pt; font-weight: bold; padding: 8px 28px;"
+        "#fefwHomePlay { padding: 4px 28px;"
         " color: #1b1824; background-color: #e0b04a; border: 1px solid #e0b04a; border-radius: 9px; }"
         "#fefwHomePlay:hover { background-color: #f0c463; }"
         "#fefwHomePlay:pressed { background-color: #c39232; }"));
@@ -137,6 +139,13 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     play_button->setObjectName(QStringLiteral("fefwHomePlay"));
     play_button->setIcon(PlayIcon());
     play_button->setIconSize(QSize(14, 14));
+    // The font is set on the button, not in the style sheet: Qt sizes a button from its own
+    // font, so a bigger style sheet font overflowed the bottom of it at Windows display scaling.
+    QFont play_font = play_button->font();
+    play_font.setPointSize(12);
+    play_font.setBold(true);
+    play_button->setFont(play_font);
+    play_button->setMinimumHeight(QFontMetrics(play_font).height() + 16);
     play_button->setCursor(Qt::PointingHandCursor);
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), card);
     QPushButton* const settings = new QPushButton(tr("Settings"), card);
