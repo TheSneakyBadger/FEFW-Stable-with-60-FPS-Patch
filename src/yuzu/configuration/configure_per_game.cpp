@@ -77,7 +77,6 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
 
     ui->tabWidget->addTab(addons_tab.get(), tr("Add-Ons"));
     ui->tabWidget->addTab(system_tab.get(), tr("System"));
-    ui->tabWidget->addTab(cpu_tab.get(), tr("CPU"));
     ui->tabWidget->addTab(graphics_tab.get(), tr("Graphics"));
     ui->tabWidget->addTab(graphics_advanced_tab.get(), tr("Adv. Graphics"));
     ui->tabWidget->addTab(audio_tab.get(), tr("Audio"));
@@ -87,6 +86,7 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
     // (empty) tabs out of the dialog. They still apply their settings as before.
     graphics_extensions_tab->hide();
     applets_tab->hide();
+    cpu_tab->hide();
 
     setFocusPolicy(Qt::ClickFocus);
     setWindowTitle(tr("Properties"));

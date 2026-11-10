@@ -168,6 +168,15 @@ void ConfigureSystem::Setup(const ConfigurationShared::Builder& builder) {
             date_rtc_offset = widget->spinbox;
         }
 
+        // Fortune's Eden: the console region and a custom clock don't matter to Fortune's
+        // Weave. Built (the checks above use them) but not shown.
+        if (setting->Id() == Settings::values.region_index.Id() ||
+            setting->Id() == Settings::values.custom_rtc.Id() ||
+            setting->Id() == Settings::values.custom_rtc_enabled.Id() ||
+            setting->Id() == Settings::values.custom_rtc_offset.Id()) {
+            widget->setHidden(true);
+        }
+
         switch (setting->GetCategory()) {
         case Settings::Category::Core:
             core_hold.emplace(setting->Id(), widget);
