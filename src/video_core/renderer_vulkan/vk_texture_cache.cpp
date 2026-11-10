@@ -2285,6 +2285,14 @@ void TextureCacheRuntime::TickFrame() {
         vmaCalculateStatistics(device.GetAllocator(), &stats);
         const auto& total = stats.total.statistics;
         const u64 reported = device.GetDeviceMemoryUsage();
+        const auto held = staging_buffer_pool.HeldBytes();
+        LOG_INFO(Render_Vulkan,
+                 "Video memory by kind: images {} MiB in {}, buffers {} MiB in {}; staging "
+                 "buffers kept for reuse {} entries: device-local {} MiB, upload {} MiB, "
+                 "download {} MiB",
+                 vk::live_image_bytes.load() >> 20, vk::live_image_count.load(),
+                 vk::live_buffer_bytes.load() >> 20, vk::live_buffer_count.load(), held.count,
+                 held.device_local >> 20, held.upload >> 20, held.download >> 20);
         LOG_INFO(Render_Vulkan,
                  "Video memory breakdown: driver reports {} MiB; VMA {} blocks {} MiB, {} "
                  "allocations {} MiB (largest {} MiB); outside VMA about {} MiB; ASTC scratch "

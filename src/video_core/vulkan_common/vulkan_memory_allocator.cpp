@@ -277,6 +277,8 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci) const
         );
     }
 
+    vk::live_image_bytes.fetch_add(alloc_info.size, std::memory_order_relaxed);
+    vk::live_image_count.fetch_add(1, std::memory_order_relaxed);
     return vk::Image(handle, ci.usage, *device.GetLogical(), allocator, allocation,
                         device.GetDispatchLoader());
 }
@@ -332,6 +334,8 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         .offset = alloc_info.offset,
         .memory_type = alloc_info.memoryType,
     };
+    vk::live_buffer_bytes.fetch_add(alloc_info.size, std::memory_order_relaxed);
+    vk::live_buffer_count.fetch_add(1, std::memory_order_relaxed);
     return vk::Buffer(handle, *device.GetLogical(), allocator, allocation, mapped_data, is_coherent,
                       location, device.GetDispatchLoader());
 }
@@ -385,6 +389,8 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         .offset = alloc_info.offset,
         .memory_type = alloc_info.memoryType,
     };
+    vk::live_buffer_bytes.fetch_add(alloc_info.size, std::memory_order_relaxed);
+    vk::live_buffer_count.fetch_add(1, std::memory_order_relaxed);
     return vk::Buffer(handle, *device.GetLogical(), allocator, allocation, mapped_data, is_coherent,
                       location, device.GetDispatchLoader());
 }

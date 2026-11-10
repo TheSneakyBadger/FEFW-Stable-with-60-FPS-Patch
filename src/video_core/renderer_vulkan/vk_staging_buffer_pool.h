@@ -46,6 +46,13 @@ public:
 
     void TickFrame();
 
+    /// Fortune's Eden diagnostics: buffers kept for reuse, per kind (bytes, count).
+    struct Held {
+        u64 device_local = 0, upload = 0, download = 0;
+        u64 count = 0;
+    };
+    [[nodiscard]] Held HeldBytes() const;
+
 private:
     struct StreamBufferCommit {
         size_t upper_bound;

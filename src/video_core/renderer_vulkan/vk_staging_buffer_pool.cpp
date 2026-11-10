@@ -119,6 +119,22 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
     it->deferred = false;
 }
 
+StagingBufferPool::Held StagingBufferPool::HeldBytes() const {
+    Held held;
+    const auto sum = [&held](const StagingBuffersCache& cache, u64& bytes) {
+        for (const StagingBuffers& level : cache) {
+            for (const StagingBuffer& entry : level.entries) {
+                bytes += u64{1} << entry.log2_level;
+                ++held.count;
+            }
+        }
+    };
+    sum(device_local_cache, held.device_local);
+    sum(upload_cache, held.upload);
+    sum(download_cache, held.download);
+    return held;
+}
+
 void StagingBufferPool::TickFrame() {
     current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
 

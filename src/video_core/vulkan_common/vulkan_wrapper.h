@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -680,6 +681,13 @@ public:
         return *dld;
     }
 };
+
+/// Fortune's Eden diagnostics: bytes held by live images and buffers from the VMA allocator
+/// (added by MemoryAllocator when it creates them, taken off when they are destroyed).
+extern std::atomic<u64> live_image_bytes;
+extern std::atomic<u64> live_buffer_bytes;
+extern std::atomic<u64> live_image_count;
+extern std::atomic<u64> live_buffer_count;
 
 class Image {
 public:

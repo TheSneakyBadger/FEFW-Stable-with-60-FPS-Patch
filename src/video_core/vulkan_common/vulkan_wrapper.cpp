@@ -519,8 +519,19 @@ void Image::SetObjectNameEXT(const char* name) const {
     SetObjectName(dld, owner, handle, VK_OBJECT_TYPE_IMAGE, name);
 }
 
+std::atomic<u64> live_image_bytes{0};
+std::atomic<u64> live_buffer_bytes{0};
+std::atomic<u64> live_image_count{0};
+std::atomic<u64> live_buffer_count{0};
+
 void Image::Release() const noexcept {
     if (handle) {
+        if (allocation) {
+            VmaAllocationInfo info{};
+            vmaGetAllocationInfo(allocator, allocation, &info);
+            live_image_bytes.fetch_sub(info.size, std::memory_order_relaxed);
+            live_image_count.fetch_sub(1, std::memory_order_relaxed);
+        }
         vmaDestroyImage(allocator, handle, allocation);
     }
 }
@@ -543,6 +554,12 @@ void Buffer::SetObjectNameEXT(const char* name) const {
 
 void Buffer::Release() const noexcept {
     if (handle) {
+        if (allocation) {
+            VmaAllocationInfo info{};
+            vmaGetAllocationInfo(allocator, allocation, &info);
+            live_buffer_bytes.fetch_sub(info.size, std::memory_order_relaxed);
+            live_buffer_count.fetch_sub(1, std::memory_order_relaxed);
+        }
         vmaDestroyBuffer(allocator, handle, allocation);
     }
 }
