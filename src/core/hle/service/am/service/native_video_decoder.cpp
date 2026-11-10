@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include <array>
 #include <algorithm>
@@ -952,6 +953,7 @@ private:
     }
 
     void GetOutputProperties(HLERequestContext& ctx) {
+        FefwWaitStats::MarkThread(FefwWaitStats::Role::Video, &ctx.GetThread());
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         std::array<u32, 16> properties{};

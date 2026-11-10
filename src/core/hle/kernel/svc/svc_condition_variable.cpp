@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_hardware_timer.h"
 #include "core/hle/kernel/k_memory_layout.h"
@@ -57,6 +58,7 @@ void SignalProcessWideKey(Core::System& system, u64 cv_key, s32 count) {
 
 Result WaitProcessWideKeyAtomic64(Core::System& system, uint64_t address, uint64_t cv_key,
                                   uint32_t tag, int64_t timeout_ns) {
+    const FefwWaitStats::Scope stats{GetCurrentThreadPointer(system.Kernel()), "condition variable"};
     R_RETURN(WaitProcessWideKeyAtomic(system, address, cv_key, tag, timeout_ns));
 }
 

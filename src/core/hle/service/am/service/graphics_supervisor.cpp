@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/hle/service/am/service/native_video_layout.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
 #include <algorithm>
@@ -1153,6 +1154,8 @@ private:
         R_SUCCEED();
     }
     void PresentClientBuffer(HLERequestContext& ctx) {
+        FefwWaitStats::MarkThread(FefwWaitStats::Role::Render, &ctx.GetThread());
+        FefwWaitStats::MaybeReport();
         const auto* packet = ctx.CommandBuffer();
         const u64 token = u64{packet[2]} | (u64{packet[3]} << 32);
         RefreshReleasedBuffers();

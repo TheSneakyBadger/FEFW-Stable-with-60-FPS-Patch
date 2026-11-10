@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/scope_exit.h"
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_hardware_timer.h"
@@ -307,6 +308,7 @@ void ExitThread64(Core::System& system) {
 }
 
 void SleepThread64(Core::System& system, int64_t ns) {
+    const FefwWaitStats::Scope stats{ns > 0 ? GetCurrentThreadPointer(system.Kernel()) : nullptr, "sleep"};
     return SleepThread(system, ns);
 }
 

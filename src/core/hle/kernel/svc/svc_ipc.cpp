@@ -6,6 +6,7 @@
 
 #include "common/scope_exit.h"
 #include "common/scratch_buffer.h"
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_client_session.h"
 #include "core/hle/kernel/k_hardware_timer.h"
@@ -282,13 +283,21 @@ Result ReplyAndReceiveWithUserBuffer(Core::System& system, int32_t* out_index, u
 }
 
 Result SendSyncRequest64(Core::System& system, Handle session_handle) {
-    R_RETURN(SendSyncRequest(system, session_handle));
+    auto* const thread = GetCurrentThreadPointer(system.Kernel());
+    FefwWaitStats::Scope stats{thread, "ipc"};
+    const Result result = SendSyncRequest(system, session_handle);
+    if (FefwWaitStats::Enabled()) stats.SetLabel(FefwWaitStats::TakeCommand(thread));
+    R_RETURN(result);
 }
 
 Result SendSyncRequestWithUserBuffer64(Core::System& system, uint64_t message_buffer,
                                        uint64_t message_buffer_size, Handle session_handle) {
-    R_RETURN(
-        SendSyncRequestWithUserBuffer(system, message_buffer, message_buffer_size, session_handle));
+    auto* const thread = GetCurrentThreadPointer(system.Kernel());
+    FefwWaitStats::Scope stats{thread, "ipc"};
+    const Result result =
+        SendSyncRequestWithUserBuffer(system, message_buffer, message_buffer_size, session_handle);
+    if (FefwWaitStats::Enabled()) stats.SetLabel(FefwWaitStats::TakeCommand(thread));
+    R_RETURN(result);
 }
 
 Result SendAsyncRequestWithUserBuffer64(Core::System& system, Handle* out_event_handle,

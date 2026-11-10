@@ -16,6 +16,7 @@
 #include "common/assert.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/ipc.h"
 #include "core/hle/kernel/k_process.h"
@@ -116,7 +117,13 @@ void ServiceFrameworkBase::InvokeRequest(HLERequestContext& ctx) {
         return ReportUnimplementedFunction(ctx, info);
 
     LOG_TRACE(Service, "{}", MakeFunctionString(info->name, GetServiceName(), ctx.CommandBuffer()));
+    const auto handler_start = std::chrono::steady_clock::now();
     handler_invoker(this, info->handler_callback, ctx);
+    if (FefwWaitStats::Enabled()) {
+        std::string label = fmt::format("{}:{}", GetServiceName(), info->name);
+        FefwWaitStats::AccountHandler(label, std::chrono::steady_clock::now() - handler_start);
+        FefwWaitStats::SetCommand(&ctx.GetThread(), std::move(label));
+    }
 
     if (is_i_storage && is_cmd_read) {
         const auto* const process = ctx.GetThread().GetOwnerProcess();
@@ -133,7 +140,13 @@ void ServiceFrameworkBase::InvokeRequestTipc(HLERequestContext& ctx) {
         return ReportUnimplementedFunction(ctx, info);
 
     LOG_TRACE(Service, "{}", MakeFunctionString(info->name, GetServiceName(), ctx.CommandBuffer()));
+    const auto handler_start = std::chrono::steady_clock::now();
     handler_invoker(this, info->handler_callback, ctx);
+    if (FefwWaitStats::Enabled()) {
+        std::string label = fmt::format("{}:{}", GetServiceName(), info->name);
+        FefwWaitStats::AccountHandler(label, std::chrono::steady_clock::now() - handler_start);
+        FefwWaitStats::SetCommand(&ctx.GetThread(), std::move(label));
+    }
 }
 
 Result ServiceFrameworkBase::HandleSyncRequest(Kernel::KServerSession& session,

@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_memory_layout.h"
 #include "core/hle/kernel/k_process.h"
@@ -35,6 +36,7 @@ Result ArbitrateUnlock(Core::System& system, u64 address) {
 }
 
 Result ArbitrateLock64(Core::System& system, Handle thread_handle, uint64_t address, uint32_t tag) {
+    const FefwWaitStats::Scope stats{GetCurrentThreadPointer(system.Kernel()), "mutex"};
     R_RETURN(ArbitrateLock(system, thread_handle, address, tag));
 }
 

@@ -4,9 +4,13 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <cstdlib>
+#include <string>
+#include <fmt/format.h>
 #include "common/scope_exit.h"
 #include "common/scratch_buffer.h"
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_hardware_timer.h"
 #include "core/hle/kernel/k_process.h"
@@ -111,7 +115,22 @@ Result WaitSynchronization(Core::System& system, int32_t* out_index, u64 user_ha
     }
 
     // Wait on the objects.
+    const auto wait_start = std::chrono::steady_clock::now();
     Result res = KSynchronizationObject::Wait(system.Kernel(), out_index, objs.data(), num_handles, timeout);
+    if (FefwWaitStats::Enabled()) {
+        std::string label;
+        if (num_handles == 0) {
+            label = "wait (no handles)";
+        } else if (num_handles == 1) {
+            label = "wait " + FefwWaitStats::ObjectLabel(objs[0]);
+        } else if (res.IsSuccess() && *out_index >= 0 && *out_index < num_handles) {
+            label = fmt::format("wait {} (of {})", FefwWaitStats::ObjectLabel(objs[*out_index]), num_handles);
+        } else {
+            label = fmt::format("wait timeout (of {})", num_handles);
+        }
+        FefwWaitStats::AccountWait(GetCurrentThreadPointer(system.Kernel()), label,
+                                   std::chrono::steady_clock::now() - wait_start);
+    }
 
     R_SUCCEED_IF(res == ResultSessionClosed);
     R_RETURN(res);

@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_event.h"
@@ -64,6 +65,7 @@ Kernel::KEvent* ServiceContext::CreateEvent(std::string&& name) {
 
     // Register the event.
     Kernel::KEvent::Register(kernel, event);
+    FefwWaitStats::NameObject(&event->GetReadableEvent(), name);
 
     return event;
 }

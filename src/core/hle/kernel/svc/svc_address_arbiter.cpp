@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_hardware_timer.h"
 #include "core/hle/kernel/k_memory_layout.h"
@@ -88,6 +89,7 @@ Result SignalToAddress(Core::System& system, u64 address, SignalType signal_type
 
 Result WaitForAddress64(Core::System& system, u64 address, ArbitrationType arb_type, s32 value,
                         s64 timeout_ns) {
+    const FefwWaitStats::Scope stats{GetCurrentThreadPointer(system.Kernel()), "address wait"};
     R_RETURN(WaitForAddress(system, address, arb_type, value, timeout_ns));
 }
 
