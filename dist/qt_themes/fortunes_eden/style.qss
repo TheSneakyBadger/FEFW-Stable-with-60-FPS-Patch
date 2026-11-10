@@ -1991,14 +1991,14 @@ QToolTip {
     padding: 6px 8px;
 }
 
-/* Buttons */
+/* Buttons. Padding stays close to QDarkStyle's (5px, no side padding): many dialogs give
+   buttons fixed sizes, and wider padding cut their text off at 125-150% Windows scaling. */
 QPushButton {
     color: #ece8f3;
     background-color: #282435;
     border: 1px solid #3a3448;
-    border-radius: 7px;
-    padding: 6px 16px;
-    min-height: 18px;
+    border-radius: 6px;
+    padding: 5px 4px;
 }
 QPushButton:hover {
     background-color: #322d42;
@@ -2011,7 +2011,6 @@ QPushButton:default {
     color: #1b1824;
     background-color: #e0b04a;
     border: 1px solid #e0b04a;
-    font-weight: bold;
 }
 QPushButton:default:hover {
     background-color: #f0c463;
@@ -2026,9 +2025,8 @@ QPushButton:disabled {
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QAbstractSpinBox {
     background-color: #14121b;
     border: 1px solid #3a3448;
-    border-radius: 7px;
-    padding: 4px 8px;
-    min-height: 20px;
+    border-radius: 6px;
+    padding: 2px 6px;
 }
 QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover {
     border: 1px solid #8a6d2e;
@@ -2078,7 +2076,7 @@ QTabBar::tab {
     background-color: transparent;
     border: 0;
     border-bottom: 2px solid transparent;
-    padding: 8px 16px;
+    padding: 6px 10px;
     margin-right: 2px;
 }
 QTabBar::tab:hover {
@@ -2100,8 +2098,8 @@ QListWidget#selectorList {
 QListWidget#selectorList::item {
     color: #a79fb8;
     border-radius: 7px;
-    padding: 9px 12px;
-    margin: 2px 0;
+    padding: 7px 10px;
+    margin: 1px 0;
 }
 QListWidget#selectorList::item:hover {
     color: #ece8f3;
@@ -2162,7 +2160,7 @@ QMenu {
     padding: 6px;
 }
 QMenu::item {
-    padding: 6px 24px 6px 22px;
+    padding: 5px 20px 5px 20px;
     border-radius: 5px;
 }
 QMenu::item:selected {
