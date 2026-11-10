@@ -2190,7 +2190,7 @@ u64 TextureCacheRuntime::GetDeviceLocalMemory() const {
 }
 
 u64 TextureCacheRuntime::GetDeviceMemoryUsage() const {
-    return device.GetDeviceMemoryUsage();
+    return device.GetDeviceMemoryInUse();
 }
 
 bool TextureCacheRuntime::CanDownloadMsaa(const VideoCommon::ImageInfo& info) const {

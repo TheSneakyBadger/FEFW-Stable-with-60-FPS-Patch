@@ -786,9 +786,11 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             .flags = flags,
             .physicalDevice = physical,
             .device = *logical,
-            .preferredLargeHeapBlockSize = is_integrated
-                                           ? (64u * 1024u * 1024u)
-                                           : (256u * 1024u * 1024u),
+            // 64 MiB blocks (VMA's default is 256 MiB): a texture cleanup frees textures spread
+            // over many blocks, and a block only goes back to the driver once it is empty.
+            // With 256 MiB blocks Fortune's Weave's sessions kept gigabytes of freed space in
+            // half-used blocks (3.4 GB after six minutes), so video memory crept up.
+            .preferredLargeHeapBlockSize = 64u * 1024u * 1024u,
             .pAllocationCallbacks = nullptr,
             .pDeviceMemoryCallbacks = nullptr,
             .pHeapSizeLimit = nullptr,
@@ -1688,6 +1690,19 @@ u64 Device::GetDeviceMemoryUsage() const {
     u64 result{};
     for (const size_t heap : valid_heap_memory) {
         result += budget.heapUsage[heap];
+    }
+    return result;
+}
+
+u64 Device::GetDeviceMemoryInUse() const {
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    u64 result{};
+    for (const size_t heap : valid_heap_memory) {
+        const VmaBudget& budget = budgets[heap];
+        const u64 free_in_blocks =
+            budget.statistics.blockBytes - budget.statistics.allocationBytes;
+        result += budget.usage > free_in_blocks ? budget.usage - free_in_blocks : 0;
     }
     return result;
 }

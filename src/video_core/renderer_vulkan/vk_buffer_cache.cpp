@@ -406,7 +406,7 @@ u64 BufferCacheRuntime::GetDeviceLocalMemory() const {
 }
 
 u64 BufferCacheRuntime::GetDeviceMemoryUsage() const {
-    return device.GetDeviceMemoryUsage();
+    return device.GetDeviceMemoryInUse();
 }
 
 bool BufferCacheRuntime::CanReportMemoryUsage() const {

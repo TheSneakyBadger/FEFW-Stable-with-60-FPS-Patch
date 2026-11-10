@@ -970,6 +970,11 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Video memory in use by live allocations: what the driver reports, less the free space
+    /// inside the allocator's memory blocks (space a cleanup freed but the block still holds).
+    /// The texture and buffer caches clean up by this, as freeing textures lowers it at once.
+    u64 GetDeviceMemoryInUse() const;
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
