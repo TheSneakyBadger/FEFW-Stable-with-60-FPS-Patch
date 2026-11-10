@@ -4,6 +4,7 @@
 #include "core/fefw_frame_rate.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <atomic>
 #include <chrono>
@@ -34,6 +35,10 @@ struct Measure {
     using Clock = std::chrono::steady_clock;
     Clock::time_point last{};
     double average_ms = 1000.0 / MaxRate;
+    // The last three frame gaps; their median feeds the average, so one long frame (a shader
+    // build, a hitch) doesn't pull the rate down and back up over the frames after it.
+    std::array<double, 3> recent_ms{};
+    u64 recent_count = 0;
     int written = 0;
     // Summary for the log, every 10 s.
     Clock::time_point period_start{};
@@ -114,11 +119,21 @@ void OnPresent(Core::Memory::Memory& memory) {
     // A load, a pause or the window in the background: keep the rate, start measuring again.
     if (gap_ms > 250.0) {
         measure.average_ms = 1000.0 / std::max(measure.written, MinRate);
+        measure.recent_count = 0;
         return;
     }
-    // A short average (about 4 frames) follows real changes within a few frames without passing
-    // single-frame hitches straight into the game's step.
-    measure.average_ms += (gap_ms - measure.average_ms) * 0.25;
+    // Median of the last three gaps: a single slow frame is ignored (the game loses that bit of
+    // time, as on Switch, rather than speeding up afterwards to catch up), while a real change
+    // in frame rate shows up after two frames. Then a short average (about 4 frames) smooths it.
+    measure.recent_ms[measure.recent_count % 3] = gap_ms;
+    ++measure.recent_count;
+    double sample = gap_ms;
+    if (measure.recent_count >= 3) {
+        auto sorted = measure.recent_ms;
+        std::sort(sorted.begin(), sorted.end());
+        sample = sorted[1];
+    }
+    measure.average_ms += (sample - measure.average_ms) * 0.25;
     int rate = static_cast<int>(std::lround(1000.0 / measure.average_ms));
     if (rate >= SnapTo60From) {
         rate = MaxRate;
