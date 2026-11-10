@@ -90,6 +90,14 @@ constexpr u32 DESCRIPTOR_SIZE = 8;
 constexpr u32 DESCRIPTOR_SIZE_SHIFT = u32(std::countr_zero(DESCRIPTOR_SIZE));
 constexpr u32 DESCRIPTOR_MAX_COUNT = 1024;
 
+// A dynamically indexed texture array binds every entry on every draw, whatever the shader samples.
+// In Fire Emblem: Fortune's Weave's crowds about 2,800 draws a second bind three arrays of 1024,
+// nearly half of the GPU back thread (measured by KektJ, Eglantine "crowded areas"). 256 cut those
+// frames from 52-66 ms to about 40 ms with correct textures; lower caps were faster but an index past
+// the cap samples the last entry, i.e. a wrong texture, so Fortune's Eden stays at 256.
+constexpr u32 DYNAMIC_TEXTURE_ARRAY_CAP = 256;
+
+
 u32 DynamicDescriptorSizeShift(const IR::U32& dynamic_offset) {
     const IR::Inst* const inst = dynamic_offset.InstRecursive();
     if (!inst || inst->GetOpcode() != IR::Opcode::ShiftLeftLogical32)
@@ -947,7 +955,7 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
                     .size_shift = size_shift,
                 });
             } else {
-                if (!cbuf.buffer_source.enabled) count = std::min(count, sampled_dynamic_cap);
+                if (!cbuf.buffer_source.enabled) count = std::min({count, sampled_dynamic_cap, DYNAMIC_TEXTURE_ARRAY_CAP});
                 const bool is_integer{!cbuf.buffer_source.enabled && is_texture_pixel_format_integer(cbuf)};
                 index = descriptors.Add(TextureDescriptor{
                     .type = flags.type,
