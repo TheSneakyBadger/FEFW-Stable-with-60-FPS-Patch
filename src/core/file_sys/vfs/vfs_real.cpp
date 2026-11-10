@@ -24,6 +24,10 @@
 #define stat _stat64
 #endif
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
 #ifdef __ANDROID__
 #include "common/fs/fs_android.h"
 #endif
@@ -40,7 +44,21 @@ size_t GetMaxOpenFiles() {
     const size_t limit = static_cast<size_t>(_getmaxstdio());
     return std::min(size_t{8192}, limit > 64 ? limit - 64 : size_t{1});
 #else
-    return 8192;
+    // At most 8192, and well inside the process's open-file limit: main raises the soft limit to
+    // 8192 or the hard limit, but where the hard limit is lower (often 1024 or 4096 on Linux),
+    // keeping 8192 game files open ran out of descriptors ("Too many open files") and the game
+    // froze loading a map.
+    static const size_t max_open = [] {
+        struct rlimit rl {};
+        if (getrlimit(RLIMIT_NOFILE, &rl) != 0 || rl.rlim_cur == RLIM_INFINITY) {
+            return size_t{8192};
+        }
+        const size_t limit = static_cast<size_t>(rl.rlim_cur);
+        // Leave room for the GPU driver, audio, sockets, logs and module files.
+        const size_t reserve = std::min<size_t>(512, limit / 4);
+        return std::clamp<size_t>(limit - reserve, 64, 8192);
+    }();
+    return max_open;
 #endif
 }
 
