@@ -1241,6 +1241,13 @@ endif()
 
 set_source_files_properties(hle/service/am/service/native_video_decoder.cpp PROPERTIES
     INCLUDE_DIRECTORIES "$<TARGET_PROPERTY:libgav1_static,INTERFACE_INCLUDE_DIRECTORIES>")
+if (TARGET dav1d)
+    set_property(SOURCE hle/service/am/service/native_video_decoder.cpp APPEND PROPERTY
+        INCLUDE_DIRECTORIES "$<TARGET_PROPERTY:dav1d,INTERFACE_INCLUDE_DIRECTORIES>")
+    set_property(SOURCE hle/service/am/service/native_video_decoder.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS FEFW_HAVE_DAV1D)
+    target_link_libraries(core PRIVATE "$<LINK_ONLY:dav1d>")
+endif()
 
 target_link_libraries(core PRIVATE
     "$<LINK_ONLY:libgav1_static>"

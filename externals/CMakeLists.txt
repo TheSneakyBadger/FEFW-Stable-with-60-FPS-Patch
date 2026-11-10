@@ -23,6 +23,11 @@ set(BUILD_SHARED_LIBS OFF)
 
 add_subdirectory(libgav1)
 
+# dav1d: the AV1 decoder for Switch 2 cutscenes (libgav1 stays as a fallback). x86-64 only.
+if (ARCHITECTURE_x86_64 AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    add_subdirectory(dav1d)
+endif()
+
 # Skip install rules for all externals
 set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL ON)
 
