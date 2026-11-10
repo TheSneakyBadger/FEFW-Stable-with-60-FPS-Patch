@@ -263,7 +263,7 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
         const Streamline::Api& api = Streamline::GetApi();
         const sl::ViewportHandle viewport{0u};
         // The caller draws the output this frame even when DLSS writes nothing to it: clear it
-        // then, rather than show undefined contents (the game's own DLSS takes over from the next frame).
+        // then, rather than show undefined contents (the fallback takes over from the next frame).
         const auto clear_output = [&] {
             const VkImageSubresourceRange range{
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -301,7 +301,7 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
             if (const sl::Result result = set(viewport, options); result != sl::Result::eOk) {
                 if (!failed.exchange(true)) {
                     LOG_ERROR(Render_Vulkan,
-                              "Streamline rejected the DLSS options (result {}); the game's own DLSS runs",
+                              "Streamline rejected the DLSS options (result {})",
                               static_cast<int>(result));
                 }
                 clear_output();
@@ -312,7 +312,7 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
         if (const sl::Result result = api.get_new_frame_token(frame, &index);
             result != sl::Result::eOk || !frame) {
             if (!failed.exchange(true)) {
-                LOG_ERROR(Render_Vulkan, "Streamline gave no frame token (result {}); the game's own DLSS runs",
+                LOG_ERROR(Render_Vulkan, "Streamline gave no frame token (result {})",
                           static_cast<int>(result));
             }
             clear_output();
@@ -393,8 +393,7 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
             api.evaluate_feature(sl::kFeatureDLSS, *frame, inputs, std::size(inputs),
                                  reinterpret_cast<sl::CommandBuffer*>(*cmdbuf));
         if (result != sl::Result::eOk && !failed.exchange(true)) {
-            LOG_ERROR(Render_Vulkan, "NVIDIA DLSS evaluation failed (Streamline result {}); "
-                                     "the game's own DLSS runs from now on",
+            LOG_ERROR(Render_Vulkan, "NVIDIA DLSS evaluation failed (Streamline result {})",
                       static_cast<int>(result));
         }
 

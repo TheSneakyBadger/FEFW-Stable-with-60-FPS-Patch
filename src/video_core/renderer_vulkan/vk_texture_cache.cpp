@@ -1464,7 +1464,9 @@ bool TextureCacheRuntime::Fsr3Upscale(Framebuffer* dst_framebuffer, ImageView& i
 }
 
 // NVIDIA DLSS (through NVIDIA Streamline) in place of the game's own DLSS, from Eglantine
-// (Duck912). Returns false when DLSS can't run; it then stays off for the session.
+// (Duck912). Returns false when DLSS can't run. If it can't start, it stays off for the session;
+// if it fails while running (Streamline runs out of video memory on 8 GB cards, issue #31), its
+// memory is freed, AMD FSR 3.1 stands in for 30 seconds and DLSS is tried again, up to 3 times.
 bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageView& dst,
                                             ImageView& input_color, ImageView& motion_vectors,
                                             ImageView& depth, std::array<u32, 2> render_size,
@@ -1473,6 +1475,10 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
 #ifdef EGLANTINE_STREAMLINE
     if (dlss_unsupported || dst.Samples() != VK_SAMPLE_COUNT_1_BIT ||
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (dlss_retry_at && now < *dlss_retry_at) {
         return false;
     }
     if (!dlss_upscaler) {
@@ -1490,9 +1496,18 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
             dlss_unsupported = true;
             return false;
         }
+        if (dlss_retry_at) {
+            dlss_retry_at.reset();
+            LOG_INFO(Render_Vulkan, "NVIDIA DLSS: trying again");
+        }
+        if (fsr3_upscaler) {
+            // AMD FSR 3.1 stood in while DLSS was off: free its video memory.
+            scheduler.Finish();
+            fsr3_upscaler.reset();
+            fsr3_last_evaluation.reset();
+        }
     }
     // A gap in the evaluations (a menu, a movie, a load) starts the history again.
-    const auto now = std::chrono::steady_clock::now();
     const bool reset =
         !dlss_last_evaluation ||
         std::chrono::duration<f32, std::milli>(now - *dlss_last_evaluation).count() > 250.0f;
@@ -1529,8 +1544,23 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
         .reset = reset,
     });
     if (!upscaled) {
-        LOG_WARNING(Render_Vulkan, "NVIDIA DLSS failed; falling back from now on");
-        dlss_unsupported = true;
+        // Free DLSS's video memory (its recorded work refers to it, so let that finish first),
+        // rather than keep it while AMD FSR 3.1 allocates its own.
+        scheduler.Finish();
+        dlss_upscaler.reset();
+        dlss_last_evaluation.reset();
+        constexpr u32 MaxFailures = 3;
+        if (++dlss_failures >= MaxFailures) {
+            LOG_WARNING(Render_Vulkan,
+                        "NVIDIA DLSS failed {} times; AMD FSR 3.1 runs for the rest of the session",
+                        dlss_failures);
+            dlss_unsupported = true;
+        } else {
+            LOG_WARNING(Render_Vulkan,
+                        "NVIDIA DLSS failed; AMD FSR 3.1 stands in and DLSS is tried again in 30 "
+                        "seconds");
+            dlss_retry_at = now + std::chrono::seconds{30};
+        }
         return false;
     }
     DrawUpscaledOutput(dst_framebuffer, dlss_upscaler->OutputView(), dlss_upscaler->OutputImage(),

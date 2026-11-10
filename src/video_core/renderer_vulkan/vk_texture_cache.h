@@ -204,6 +204,10 @@ public:
     std::unique_ptr<StreamlineDlssUpscaler> dlss_upscaler;
     bool dlss_unsupported{};
     std::optional<std::chrono::steady_clock::time_point> dlss_last_evaluation;
+    // A failed DLSS evaluation (Streamline: out of video memory, for example) frees DLSS and lets
+    // AMD FSR 3.1 stand in until this time; DLSS then gets another try.
+    std::optional<std::chrono::steady_clock::time_point> dlss_retry_at;
+    u32 dlss_failures{};
 #endif
     std::optional<ASTCDecoderPass> astc_decoder_pass;
     std::optional<BcEncoderPass> bc_encoder_pass;
