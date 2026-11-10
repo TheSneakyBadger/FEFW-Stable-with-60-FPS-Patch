@@ -13,9 +13,7 @@
 #include "common/hex_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
-#ifndef _WIN32
 #include "common/string_util.h"
-#endif
 
 #include "core/core.h"
 #include "core/file_sys/common_funcs.h"
@@ -499,9 +497,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             const auto sixty = std::make_shared<VectorVfsFile>(
                 std::vector<u8>(FefwSixtyPatch::Ips.begin(), FefwSixtyPatch::Ips.end()),
                 "60fps.ips");
-            const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), sixty);
-            if (patched != nullptr) {
-                out = patched->ReadAllBytes();
+            const auto sixty_patched = PatchIPS(std::make_shared<VectorVfsFile>(out), sixty);
+            if (sixty_patched != nullptr) {
+                out = sixty_patched->ReadAllBytes();
             } else {
                 LOG_ERROR(Loader, "    - The built-in 60 FPS patch could not be applied");
             }
