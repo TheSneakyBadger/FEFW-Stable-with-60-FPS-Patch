@@ -99,16 +99,15 @@ TICK30 = f'''
 '''
 
 SPECIAL = f'''
-// CL: wld::ClothModule job (leaf, tail-calls the step at 0xA6BC20, no dt). Step on 30 Hz
-// steps only, and always when a stabilise was requested ([arg + 0x25], read by the step).
+// CL: wld::ClothModule step (fn 0xA6BC20). Per cloth piece it simulates one step with no dt
+// (bl 0xA68640, made for 30 FPS) and then writes the shown result (0xA69700), which has to
+// happen every frame (the result is double-buffered: skipping it showed the older buffer, and
+// hair and capes flickered). So only the simulation is held to 30 Hz steps; the stabilise path
+// (0xA6BE04, 10-100 steps after a teleport) is left as it is.
 r_CL:
-    ldrb w16, [x0, #0x25]
-    cmp w16, #1
-    b.eq 4f
 {TICK30}
     cbz w16, 5f
-4:  ldr s0, [x9, #0x9c]
-    b 0xa6bc20
+    b 0xa68640
 5:  ret
 
 // Q: evt::demo::Seq quake block (fn 0x11E9B50): run on 30 Hz steps, otherwise hold it and
@@ -284,16 +283,18 @@ r_UG{i}:
     b {site + 4:#x}
 '''
 
-# Site -> (routine label, how the site enters it). 'b' everywhere: no link register is used.
+# Site -> routine label. Entered with b (no link register is used), except CALL_SITES, which
+# replace a bl and return to its caller.
+CALL_SITES = {'CL'}
 SITES = [(s, n) for n, s, *_ in MOVK] + [
-    (0xA6D454, 'CL'), (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
+    (0xA6BD3C, 'CL'), (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
     (0x133FEB4, 'M2'), (0x14CF5D4, 'P34'), (0x16A8D68, 'BG1'), (0x16A8D74, 'BG2'),
     (0x16A8EF4, 'BG5')] + [(s, f'UD{i}') for i, s in enumerate(UMD_SITES)] + \
     [(s, f'UG{i}') for i, s in enumerate(UMA_SITES)]
 
 # The original instruction at every site (checked against main before patching).
 EXPECT = {
-    0xA6D454: 'ldr\ts0, [x9, #0x9c]', 0x11EA5CC: 'ldrb\tw8, [x19, #0xc8]',
+    0x11EA5CC: 'ldrb\tw8, [x19, #0xc8]',
     0x112291C: 'sdiv\tw10, w10, w12', 0x10D7320: 'ldr\ts2, [x0, #0xa4]',
     0x133FB90: 'fmov\ts1, #3.00000000', 0x133FEB4: 'fmul\ts0, s0, s2',
     0x14CF5D4: 'mov\tw8, #0x2', 0x16A8D68: 'fcsel\ts11, s0, s9, eq',
@@ -342,7 +343,8 @@ def main():
     src = '.section .cave, "ax"\n.p2align 2\n' + cave
     sections = [('cave', CAVE_START)]
     for i, (site, label) in enumerate(SITES):
-        src += f'\n.section .s{i}, "ax"\n    b r_{label}\n'
+        op = 'bl' if label in CALL_SITES else 'b'
+        src += f'\n.section .s{i}, "ax"\n    {op} r_{label}\n'
         sections.append((f's{i}', site))
     for i, (site, ins) in enumerate(SINGLE.items()):
         src += f'\n.section .x{i}, "ax"\n    {ins}\n'
@@ -360,6 +362,8 @@ def main():
         assert set(image[CAVE_START:CAVE_START + len(cave_bytes)]) == {0}, 'cave not empty'
         dis = run(['llvm-objdump', '-d', '--no-show-raw-insn', '--triple=aarch64', '-b', 'binary',
                    '-m', 'aarch64', sys.argv[1]] if False else ['true'])
+        word = struct.unpack_from('<I', image, 0xA6BD3C)[0]
+        assert word == 0x94000000 | (((0xA68640 - 0xA6BD3C) >> 2) & 0x3FFFFFF), 'CL: no bl 0xA68640'
         with tempfile.TemporaryDirectory() as work:
             for site, want in EXPECT.items():
                 open(f'{work}/w.bin', 'wb').write(image[site:site + 4])
