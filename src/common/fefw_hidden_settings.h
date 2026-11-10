@@ -51,6 +51,7 @@ inline constexpr std::array<std::string_view, 53> FefwHiddenSettings{
     "use_custom_cpu_ticks",
     "cpu_ticks",
     "memory_layout_mode",
+    "vram_usage_mode",
     "use_multi_core",
     "sync_core_speed",
     "enable_overlay",
