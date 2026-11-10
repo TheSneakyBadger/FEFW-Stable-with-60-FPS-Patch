@@ -366,7 +366,7 @@ struct Values {
                                                         "resolution_setup", Category::Renderer};
 
     SwitchableSetting<VSyncMode, true> vsync_mode{linkage,
-                                                  VSyncMode::Fifo,
+                                                  VSyncMode::Mailbox,
                                                   "use_vsync",
                                                   Category::Renderer,
                                                   Specialization::RuntimeList,
@@ -384,7 +384,7 @@ struct Values {
 #ifdef __ANDROID__
                                                        0,
 #else
-                                                       25,
+                                                       150,
 #endif
                                                        0,
                                                        200,
@@ -576,7 +576,7 @@ struct Values {
 #ifdef __ANDROID__
                                                            AnisotropyMode::Default,
 #else
-                                                           AnisotropyMode::Automatic,
+                                                           AnisotropyMode::X16,
 #endif
                                                            "max_anisotropy",
                                                            Category::RendererAdvanced};
@@ -630,7 +630,7 @@ struct Values {
 #ifdef __ANDROID__
                                                   false,
 #else
-                                                  true,
+                                                  false,
 #endif
                                                   "use_reactive_flushing",
                                                   Category::RendererAdvanced};
@@ -686,7 +686,7 @@ struct Values {
     SwitchableSetting<bool> emulate_bgr565{linkage, false, "emulate_bgr565",
                                             Category::RendererHacks};
 
-    SwitchableSetting<bool> use_asynchronous_shaders{linkage, false, "use_asynchronous_shaders",
+    SwitchableSetting<bool> use_asynchronous_shaders{linkage, true, "use_asynchronous_shaders",
                                                      Category::RendererHacks};
 
     SwitchableSetting<GpuUnswizzleSize> gpu_unswizzle_texture_size{linkage,
