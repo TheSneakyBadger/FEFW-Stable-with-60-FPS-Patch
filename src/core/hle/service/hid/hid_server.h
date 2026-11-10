@@ -7,6 +7,9 @@
 #pragma once
 
 #include <array>
+#include <chrono>
+#include <memory>
+#include <mutex>
 #include <vector>
 #include "core/hle/service/cmif_types.h"
 #include "core/hle/service/service.h"
@@ -16,6 +19,10 @@
 
 namespace Core {
 class System;
+}
+
+namespace Core::Timing {
+struct EventType;
 }
 
 namespace Kernel {
@@ -304,8 +311,23 @@ private:
         std::array<u32, 4> parameters;
         u32 merged_source_types{};
         std::array<u64, 2> jcms_button_configurations{};
+        // Joy-Con mouse fed from the PC mouse (mode 0 memories, see UpdateNmouse)
+        bool nmouse_initialized{};
+        bool nmouse_published{};
+        bool nmouse_has_last{};
+        s32 nmouse_x{};
+        s32 nmouse_y{};
+        u64 nmouse_sampling{};
+        f32 nmouse_last_x{};
+        f32 nmouse_last_y{};
+        s32 nmouse_last_wheel_x{};
+        s32 nmouse_last_wheel_y{};
     };
+    void UpdateNmouse();
     std::vector<NativeInputMemory> native_input_memories;
+    std::mutex native_input_mutex;
+    std::shared_ptr<Core::Timing::EventType> nmouse_update_event;
+    bool nmouse_update_scheduled{};
     std::shared_ptr<ResourceManager> resource_manager;
     std::shared_ptr<HidFirmwareSettings> firmware_settings;
 };

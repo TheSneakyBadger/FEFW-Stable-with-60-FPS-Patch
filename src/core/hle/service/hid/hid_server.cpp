@@ -4,12 +4,20 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <cmath>
+#include <cstring>
+#include <optional>
 
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/core.h"
+#include "core/core_timing.h"
+#include "hid_core/frontend/emulated_devices.h"
+#include "hid_core/hid_core.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_shared_memory.h"
 #include "core/hle/kernel/k_transfer_memory.h"
@@ -43,6 +51,17 @@
 #include "hid_core/resources/vibration/vibration_device.h"
 
 namespace Service::HID {
+
+namespace NmouseLayout {
+constexpr u64 Handle = 0x4E4D4F5553450001ULL; // Any non-zero value: matched as a key
+constexpr u64 RingBase = 0x220;
+constexpr u64 EntryCount = 17;
+constexpr u64 EntrySize = 0x78;
+constexpr u64 StateSize = 0x70;
+constexpr u64 InfoBase = 0x8c40;
+constexpr u32 TypeJoyRight = 1U << 2; // Fortune's Weave reads the right Joy-Con's cursor
+constexpr u64 Size = 0x8e70;
+} // namespace NmouseLayout
 
 IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> resource,
                        std::shared_ptr<HidFirmwareSettings> settings)
@@ -265,9 +284,20 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
     // clang-format on
 
     RegisterHandlers(functions);
+
+    nmouse_update_event = Core::Timing::CreateEvent(
+        "HID::NmouseUpdate",
+        [this](s64, std::chrono::nanoseconds) -> std::optional<std::chrono::nanoseconds> {
+            UpdateNmouse();
+            return std::nullopt;
+        });
 }
 
 IHidServer::~IHidServer() {
+    if (nmouse_update_event) {
+        system.CoreTiming().UnscheduleEvent(nmouse_update_event);
+    }
+    std::scoped_lock lock{native_input_mutex};
     for (const auto& registration : native_input_memories) {
         registration.memory->Close(kernel);
     }
@@ -1518,13 +1548,22 @@ Result IHidServer::RegisterNativeInputMemory(
              memory->GetOwner()->GetProcessId() == aruid.pid, Kernel::ResultInvalidHandle);
     R_UNLESS(mode <= 1 && size && size == memory->GetSize() && size <= 0x1000000,
              Kernel::ResultInvalidSize);
+    std::scoped_lock lock{native_input_mutex};
     R_UNLESS(native_input_memories.size() < 64, Kernel::ResultOutOfResource);
     const auto existing = std::ranges::find(native_input_memories, memory.Get(), &NativeInputMemory::memory);
     R_UNLESS(existing == native_input_memories.end(), Kernel::ResultInvalidState);
     memory->Open(kernel);
-    native_input_memories.push_back({memory.Get(), aruid.pid, size, {mode, parameter0, parameter1, parameter2}});
-    // Retain the real guest-owned input buffer. No Joy-Con mouse samples are
-    // produced while those devices are disconnected.
+    NativeInputMemory registration{memory.Get(), aruid.pid, size, {mode, parameter0, parameter1, parameter2}};
+    registration.nmouse_x = static_cast<s32>(parameter0 / 2);
+    registration.nmouse_y = static_cast<s32>(parameter1 / 2);
+    native_input_memories.push_back(registration);
+    // Mode 0 is the Joy-Con mouse (nn::hid::InitializeNmouse(buffer, size, width, height)): the
+    // PC mouse is presented there as a right Joy-Con mouse on player 1 (see UpdateNmouse).
+    if (mode == 0 && !nmouse_update_scheduled) {
+        constexpr std::chrono::nanoseconds period{8'000'000}; // 125 Hz
+        system.CoreTiming().ScheduleLoopingEvent(period, period, nmouse_update_event);
+        nmouse_update_scheduled = true;
+    }
     R_SUCCEED();
 }
 
@@ -1615,12 +1654,22 @@ Result IHidServer::SetNativeInputEnabled3135(u8 enabled, AppletResourceUserId ar
     return CheckNativeInputAruid(aruid);
 }
 
-// 3140: two u32 values, the aruid and a u64.
+// 3140 is SetNmousePointerPosition(handle, x, y): raw x, y, aruid, handle. Fortune's Weave puts
+// the pointer back in the middle of the screen every frame and reads how far it moved.
 Result IHidServer::SetNativeInputValues3140(u32 first, u32 second, AppletResourceUserId aruid,
                                             u64 value) {
-    LOG_INFO(Service_HID, "(STUBBED) Native input values 3140: {:#x}, {:#x}, {:#x}, aruid={}", first,
-             second, value, aruid.pid);
-    return CheckNativeInputAruid(aruid);
+    LOG_TRACE(Service_HID, "Nmouse pointer position {}, {} (handle {:#x}), aruid={}",
+              static_cast<s32>(first), static_cast<s32>(second), value, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    std::scoped_lock lock{native_input_mutex};
+    for (auto& registration : native_input_memories) {
+        if (registration.parameters[0] == 0 &&
+            (aruid.pid == 0 || registration.aruid == aruid.pid)) {
+            registration.nmouse_x = static_cast<s32>(first);
+            registration.nmouse_y = static_cast<s32>(second);
+        }
+    }
+    R_SUCCEED();
 }
 
 // 3141: a bool (bit 0 of a u8), the aruid and a u64.
@@ -1655,6 +1704,7 @@ Result IHidServer::SetNativeInputValue138(AppletResourceUserId aruid, u64 value)
 Result IHidServer::SetMergedNmouseSourceTypes(u32 source_types, ClientAppletResourceUserId aruid) {
     LOG_INFO(Service_HID, "Native merged mouse sources: types={:#x}, aruid={}", source_types, aruid.pid);
     R_UNLESS((source_types & ~6U) == 0, Kernel::ResultInvalidCombination);
+    std::scoped_lock lock{native_input_mutex};
     const auto memory = std::ranges::find_if(native_input_memories, [&](const auto& registration) {
         return registration.aruid == aruid.pid && registration.parameters[0] == 0;
     });
@@ -1667,6 +1717,7 @@ Result IHidServer::SetNmouseButtonConfiguration(ClientAppletResourceUserId aruid
                                                 size_t side) {
     LOG_INFO(Service_HID, "Native Joy-Con mouse buttons: side={}, config={:#x}, aruid={}",
              side, configuration, aruid.pid);
+    std::scoped_lock lock{native_input_mutex};
     const auto memory = std::ranges::find_if(native_input_memories, [&](const auto& registration) {
         return registration.aruid == aruid.pid && registration.parameters[0] == 0;
     });
@@ -1687,6 +1738,115 @@ Result IHidServer::SetMouseLibraryVersion(ClientAppletResourceUserId aruid) {
     LOG_INFO(Service_HID, "(STUBBED) called, applet_resource_user_id={}", aruid.pid);
 
     R_SUCCEED();
+}
+
+// Joy-Con mouse memory layout (nn::hid::detail::NmouseTransferMemoryAccessor in the SDK):
+//   0x0000 + i * 0x10  handle table: u64 handle, u8 valid (17 devices)
+//   0x0220 + i * 0x818 sample ring per device: header (u64 tail at +0x10, u64 count at +0x18),
+//                      then 17 entries of { u64 sequence (even when complete), state[0x70] }
+//   0x8c40 + i * 0x1c  device info: u32 NmouseType set, u8 valid, u32 npad ID, u8 valid,
+//                      u8 pointer enabled
+// The state the game reads (nn::hid::NmouseState) is built from: +0x00 sampling number,
+// +0x10/+0x14 pointer x/y, +0x18/+0x1c delta, +0x20/+0x30 wheel, +0x28 buttons (as
+// nn::hid::MouseButton), +0x2c attributes (bit 1: connected).
+void IHidServer::UpdateNmouse() {
+    auto* const application = system.ApplicationProcess();
+    if (application == nullptr) {
+        return;
+    }
+    const auto* devices = system.HIDCore().GetEmulatedDevices();
+    const bool enabled = Settings::values.mouse_enabled.GetValue();
+
+    std::scoped_lock lock{native_input_mutex};
+    for (auto& registration : native_input_memories) {
+        if (registration.parameters[0] != 0 || registration.size < NmouseLayout::Size ||
+            registration.memory->GetOwner() != application) {
+            continue;
+        }
+        auto& memory = application->GetMemory();
+        const auto base = registration.memory->GetSourceAddress();
+        if (!registration.nmouse_initialized) {
+            // The game's buffer is not cleared: no stale handles or samples.
+            const std::vector<u8> zeros(NmouseLayout::Size);
+            memory.WriteBlock(base, zeros.data(), zeros.size());
+            registration.nmouse_initialized = true;
+        }
+
+        if (!enabled) {
+            if (registration.nmouse_published) {
+                memory.Write8(base + 0x8, 0);
+                registration.nmouse_published = false;
+            }
+            registration.nmouse_has_last = false;
+            continue;
+        }
+        if (!registration.nmouse_published) {
+            // Device 0: a right Joy-Con mouse on player 1 (npad ID 0), pointer enabled.
+            const auto info = base + NmouseLayout::InfoBase;
+            memory.Write32(info + 0x0, NmouseLayout::TypeJoyRight);
+            memory.Write8(info + 0x4, 1);
+            memory.Write32(info + 0x8, 0);
+            memory.Write8(info + 0xc, 1);
+            memory.Write8(info + 0x10, 1);
+            memory.Write64(base + 0x0, NmouseLayout::Handle);
+            memory.Write8(base + 0x8, 1);
+            registration.nmouse_published = true;
+            LOG_INFO(Service_HID, "PC mouse presented as a Joy-Con mouse (aruid={})",
+                     registration.aruid);
+        }
+
+        const s32 width = registration.parameters[1] ? static_cast<s32>(registration.parameters[1]) : 1920;
+        const s32 height = registration.parameters[2] ? static_cast<s32>(registration.parameters[2]) : 1080;
+        const auto position = devices->GetMousePosition();
+        const auto wheel = devices->GetMouseWheel();
+        s32 delta_x = 0;
+        s32 delta_y = 0;
+        s32 wheel_x = 0;
+        s32 wheel_y = 0;
+        if (registration.nmouse_has_last) {
+            delta_x = static_cast<s32>(std::lround((position.x - registration.nmouse_last_x) * width));
+            delta_y = static_cast<s32>(std::lround((position.y - registration.nmouse_last_y) * height));
+            wheel_x = wheel.x - registration.nmouse_last_wheel_x;
+            wheel_y = wheel.y - registration.nmouse_last_wheel_y;
+        }
+        registration.nmouse_has_last = true;
+        registration.nmouse_last_x = position.x;
+        registration.nmouse_last_y = position.y;
+        registration.nmouse_last_wheel_x = wheel.x;
+        registration.nmouse_last_wheel_y = wheel.y;
+        registration.nmouse_x = std::clamp(registration.nmouse_x + delta_x, 0, width - 1);
+        registration.nmouse_y = std::clamp(registration.nmouse_y + delta_y, 0, height - 1);
+
+        std::array<u8, NmouseLayout::StateSize> state{};
+        const u64 sampling = ++registration.nmouse_sampling;
+        const u32 buttons = devices->GetMouseButtons().raw;
+        const u32 attributes = 0x3; // Transferable, connected
+        std::memcpy(state.data() + 0x00, &sampling, sizeof(sampling));
+        std::memcpy(state.data() + 0x10, &registration.nmouse_x, sizeof(s32));
+        std::memcpy(state.data() + 0x14, &registration.nmouse_y, sizeof(s32));
+        std::memcpy(state.data() + 0x18, &delta_x, sizeof(s32));
+        std::memcpy(state.data() + 0x1c, &delta_y, sizeof(s32));
+        std::memcpy(state.data() + 0x20, &wheel_x, sizeof(s32));
+        std::memcpy(state.data() + 0x28, &buttons, sizeof(u32));
+        std::memcpy(state.data() + 0x2c, &attributes, sizeof(u32));
+        std::memcpy(state.data() + 0x30, &wheel_y, sizeof(s32));
+
+        // Ring write: the reader retries an entry whose sequence is odd or changes under it.
+        const auto ring = base + NmouseLayout::RingBase;
+        const u64 count = memory.Read64(ring + 0x18);
+        const u64 tail = memory.Read64(ring + 0x10);
+        const u64 next = count == 0 ? 0 : (tail + 1) % NmouseLayout::EntryCount;
+        const auto entry = ring + 0x20 + next * NmouseLayout::EntrySize;
+        memory.Write64(entry, sampling * 2 - 1);
+        std::atomic_thread_fence(std::memory_order_release);
+        memory.WriteBlock(entry + 8, state.data(), state.size());
+        std::atomic_thread_fence(std::memory_order_release);
+        memory.Write64(entry, sampling * 2);
+        std::atomic_thread_fence(std::memory_order_release);
+        memory.Write64(ring + 0x8, NmouseLayout::EntryCount);
+        memory.Write64(ring + 0x10, next);
+        memory.Write64(ring + 0x18, std::min(count + 1, NmouseLayout::EntryCount));
+    }
 }
 
 std::shared_ptr<ResourceManager> IHidServer::GetResourceManager() {
