@@ -37,6 +37,21 @@
 #include "core/memory/cheat_engine.h"
 
 namespace FileSys {
+
+namespace {
+// Fortune's Weave 1.1.0 turns its Joy-Con mouse cursor on only while the right Joy-Con lies flat
+// (a motion value of -0.8 or less) or after one very fast movement (110 px in a frame), and turns
+// it off when the Joy-Con tilts. A PC mouse has no such motion, so with "Emulate mouse" on the
+// threshold becomes 10.0 (main+0x6500c0: the constructor's mov/movk that store -0.8 at +0x398;
+// the next float, 20.0, is unchanged). IPS32, offsets include the 0x100-byte NSO header.
+constexpr std::array<u8, 23> FefwMouseIps{
+    'I', 'P', 'S', '3', '2',
+    0x00, 0x65, 0x01, 0xC0, 0x00, 0x08,
+    0x08, 0x00, 0x80, 0xD2, // mov x8, #0
+    0x08, 0x24, 0xA8, 0xF2, // movk x8, #0x4120, lsl #16 (10.0f)
+    'E', 'E', 'O', 'F',
+};
+} // Anonymous namespace
 namespace {
 
 constexpr u32 SINGLE_BYTE_MODULUS = 0x100;
@@ -461,6 +476,17 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             LOG_ERROR(Loader, "    - The built-in ultrawide patch could not be applied");
         }
     }
+    if (Settings::values.mouse_enabled.GetValue() && build_id == FefwUltrawide::MainBuildId) {
+        LOG_INFO(Loader, "    - Applying the built-in mouse patch (cursor without Joy-Con motion)");
+        const auto patch = std::make_shared<VectorVfsFile>(
+            std::vector<u8>(FefwMouseIps.begin(), FefwMouseIps.end()), "mouse.ips");
+        const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), patch);
+        if (patched != nullptr) {
+            out = patched->ReadAllBytes();
+        } else {
+            LOG_ERROR(Loader, "    - The built-in mouse patch could not be applied");
+        }
+    }
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
             LOG_INFO(Loader, "    - Applying IPS patch from mod \"{}\"",
@@ -492,7 +518,8 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
 
     LOG_INFO(Loader, "Querying NSO patch existence for build_id={}, name={}", build_id, name);
 
-    if (Settings::values.fefw_ultrawide.GetValue() && build_id == FefwUltrawide::MainBuildId) {
+    if ((Settings::values.fefw_ultrawide.GetValue() || Settings::values.mouse_enabled.GetValue()) &&
+        build_id == FefwUltrawide::MainBuildId) {
         return true;
     }
 
