@@ -1374,8 +1374,8 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{offset >> 2} << 30) | (u64{operation} << 52));
             break;
         }
-        case 0x38d: { // ATOMS.CAS.32: if shared [address + offset] equals compare, store the new
-            // value; returns the old value. SM80 encoding: dest 16..23, address 24..31, compare
+        case 0x38d: { // ATOMS.CAST.SPIN.32: if shared [address + offset] equals compare, store
+            // the new value; returns 1 if it stored, 0 if not. SM80 encoding: dest 16..23, address 24..31, compare
             // 32..39, signed byte offset 40..63, new value 64..71, type 73..75 (0: 32-bit),
             // 78..79 free, 87..88 = 3 for CAS. Lowered to ATOMS_cas in the encoding its Maxwell
             // translator reads (atomic_operations_shared_memory.cpp): dest 0..7, address 8..15,

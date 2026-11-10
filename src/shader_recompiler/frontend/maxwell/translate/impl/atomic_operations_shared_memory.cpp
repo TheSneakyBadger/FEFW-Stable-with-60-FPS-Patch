@@ -106,7 +106,7 @@ void TranslatorVisitor::ATOMS(u64 insn) {
     StoreResult(*this, atoms.dest_reg, result, atoms.size);
 }
 
-// Only the shared compare-and-swap that the Ampere lowering emits for ATOMS.CAS.32 (opcode 0x38d,
+// Only the shared compare-and-store that the Ampere lowering emits for ATOMS.CAST.SPIN.32 (0x38d,
 // lower_to_maxwell.h), in that lowering's own encoding: dest 0..7, address 8..15, compare
 // 20..27, signed word offset 28..41, new value 42..49, and LOWERED_CAS_MARK in 50..55. The real
 // Maxwell ATOMS.CAS encoding is still not implemented.
@@ -129,7 +129,13 @@ void TranslatorVisitor::ATOMS_cas(u64 insn) {
     if (cas.addr_reg != IR::Reg::RZ) {
         offset = ir.IAdd(X(cas.addr_reg), ir.Imm32(byte_offset));
     }
-    X(cas.dest_reg, ir.SharedAtomicCompareExchange(offset, X(cas.compare_reg), X(cas.value_reg)));
+    // The lowered instruction is ATOMS.CAST.SPIN, not a plain CAS: it returns 1 when the value was
+    // stored and 0 when it wasn't, and the compiler's retry loops test for 1. Returning the old
+    // value (as for CAS) made every successful update look like a failure, so loops kept adding
+    // until their safety limit: wrong sums and ~10 ms shaders (issue #27, found by nanachi7700).
+    const IR::U32 compare{X(cas.compare_reg)};
+    const IR::U32 old{ir.SharedAtomicCompareExchange(offset, compare, X(cas.value_reg))};
+    X(cas.dest_reg, IR::U32{ir.Select(ir.IEqual(old, compare), ir.Imm32(1), ir.Imm32(0))});
 }
 
 } // namespace Shader::Maxwell
