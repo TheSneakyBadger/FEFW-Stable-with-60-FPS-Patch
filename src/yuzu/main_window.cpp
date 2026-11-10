@@ -8,7 +8,11 @@
 #undef VMA_IMPLEMENTATION
 #endif
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <boost/algorithm/string/split.hpp>
@@ -2366,6 +2370,61 @@ void MainWindow::OnGameListLoadFile(QString game_path, u64 program_id) {
 }
 
 // TODO(crueter): Common profile selector
+namespace {
+/// save\0000000000000000\<profile>\<program ID> folders that hold files: the one written
+/// most recently.
+std::optional<std::filesystem::path> FindExistingSaveFolder(const std::filesystem::path& save_dir,
+                                                            u64 program_id) {
+    namespace fs = std::filesystem;
+    const fs::path profiles = save_dir / "user" / "save" / "0000000000000000";
+    const std::string title = fmt::format("{:016X}", program_id);
+    std::optional<fs::path> best;
+    fs::file_time_type best_time = fs::file_time_type::min();
+    std::error_code ec;
+    for (fs::directory_iterator it{profiles, ec}, end; !ec && it != end; it.increment(ec)) {
+        std::error_code entry_ec;
+        if (!it->is_directory(entry_ec)) {
+            continue;
+        }
+        fs::path folder = it->path() / title;
+        if (!fs::is_directory(folder, entry_ec)) {
+            // Some file systems change the case of folder names.
+            bool found = false;
+            for (fs::directory_iterator sub{it->path(), entry_ec}, sub_end;
+                 !entry_ec && sub != sub_end; sub.increment(entry_ec)) {
+                const auto name = Common::FS::PathToUTF8String(sub->path().filename());
+                if (name.size() == title.size() &&
+                    std::equal(name.begin(), name.end(), title.begin(), [](char a, char b) {
+                        return std::toupper(static_cast<unsigned char>(a)) == b;
+                    })) {
+                    folder = sub->path();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                continue;
+            }
+        }
+        bool has_files = false;
+        fs::file_time_type newest = fs::file_time_type::min();
+        for (fs::recursive_directory_iterator file{folder, entry_ec}, file_end;
+             !entry_ec && file != file_end; file.increment(entry_ec)) {
+            std::error_code file_ec;
+            if (file->is_regular_file(file_ec)) {
+                has_files = true;
+                newest = (std::max)(newest, file->last_write_time(file_ec));
+            }
+        }
+        if (has_files && (!best || newest > best_time)) {
+            best = folder;
+            best_time = newest;
+        }
+    }
+    return best;
+}
+} // Anonymous namespace
+
 void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
                                       const std::string& game_path) {
     std::filesystem::path path;
@@ -2388,10 +2447,10 @@ void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
         }
     }();
 
-    const bool has_user_save{user_save_size > 0};
-    const bool has_device_save{device_save_size > 0};
-
-    ASSERT_MSG(has_user_save != has_device_save, "Game uses both user and device savedata?");
+    // Without readable control data (a .nup or loose files) both sizes are 0: treat it as a
+    // per-profile save, as Fortune's Weave is, not as device save data.
+    const bool has_device_save{device_save_size > 0 && user_save_size == 0};
+    const bool has_user_save{!has_device_save};
 
     switch (target) {
     case GameListOpenTarget::SaveData: {
@@ -2400,10 +2459,16 @@ void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
         auto vfs_save_dir = QtCommon::vfs->OpenDirectory(Common::FS::PathToUTF8String(save_dir),
                                                          FileSys::OpenMode::Read);
 
-        if (has_user_save) {
+        if (const auto existing = FindExistingSaveFolder(save_dir, program_id)) {
+            // Open the folder that holds this game's save (the most recently written one if
+            // several profiles have one), rather than an empty one for another profile.
+            path = *existing;
+        } else if (has_user_save) {
             // User save data
             const auto user_id = GetProfileID();
-            assert(user_id);
+            if (!user_id) {
+                return; // Profile selection cancelled
+            }
 
             const auto user_save_data_path = FileSys::SaveDataFactory::GetFullPath(
                 {}, vfs_save_dir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account,
