@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 
@@ -1667,6 +1668,9 @@ Result IHidServer::SetNativeInputValues3140(u32 first, u32 second, AppletResourc
             (aruid.pid == 0 || registration.aruid == aruid.pid)) {
             registration.nmouse_x = static_cast<s32>(first);
             registration.nmouse_y = static_cast<s32>(second);
+            ++registration.nmouse_resets;
+            registration.nmouse_reset_x = static_cast<s32>(first);
+            registration.nmouse_reset_y = static_cast<s32>(second);
         }
     }
     R_SUCCEED();
@@ -1816,6 +1820,7 @@ void IHidServer::UpdateNmouse() {
         registration.nmouse_last_wheel_y = wheel.y;
         registration.nmouse_x = std::clamp(registration.nmouse_x + delta_x, 0, width - 1);
         registration.nmouse_y = std::clamp(registration.nmouse_y + delta_y, 0, height - 1);
+        registration.nmouse_moved += std::abs(delta_x) + std::abs(delta_y);
 
         std::array<u8, NmouseLayout::StateSize> state{};
         const u64 sampling = ++registration.nmouse_sampling;
@@ -1846,6 +1851,21 @@ void IHidServer::UpdateNmouse() {
         memory.Write64(ring + 0x8, NmouseLayout::EntryCount);
         memory.Write64(ring + 0x10, next);
         memory.Write64(ring + 0x18, std::min(count + 1, NmouseLayout::EntryCount));
+
+        if (sampling - registration.nmouse_logged_at >= 250) { // Every 2 s at 125 Hz
+            registration.nmouse_logged_at = sampling;
+            LOG_INFO(Service_HID,
+                     "Joy-Con mouse, last 2 s: PC mouse at {:.3f}, {:.3f}, moved {} px; pointer {}, "
+                     "{}; buttons {:#x}; game re-centred it {} times (last to {}, {}); ring tail "
+                     "{}, count {}, handle valid {}",
+                     position.x, position.y, registration.nmouse_moved, registration.nmouse_x,
+                     registration.nmouse_y, buttons, registration.nmouse_resets,
+                     registration.nmouse_reset_x, registration.nmouse_reset_y,
+                     memory.Read64(ring + 0x10), memory.Read64(ring + 0x18),
+                     memory.Read8(base + 0x8));
+            registration.nmouse_moved = 0;
+            registration.nmouse_resets = 0;
+        }
     }
 }
 

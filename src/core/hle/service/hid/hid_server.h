@@ -322,6 +322,12 @@ private:
         f32 nmouse_last_y{};
         s32 nmouse_last_wheel_x{};
         s32 nmouse_last_wheel_y{};
+        // Diagnostics (logged every 2 s while the PC mouse is presented)
+        u32 nmouse_resets{};
+        s32 nmouse_reset_x{};
+        s32 nmouse_reset_y{};
+        s64 nmouse_moved{};
+        u64 nmouse_logged_at{};
     };
     void UpdateNmouse();
     std::vector<NativeInputMemory> native_input_memories;
