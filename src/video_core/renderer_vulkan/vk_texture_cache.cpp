@@ -37,6 +37,7 @@
 #include "video_core/texture_cache/samples_helper.h"
 #include "video_core/texture_cache/util.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/textures/decoders.h"
@@ -2274,6 +2275,27 @@ void TextureCacheRuntime::TickFrame() {
     std::erase_if(pending_resolve_shadows, [this](const auto& pending) {
         return scheduler.IsFree(pending.first);
     });
+
+    // Diagnostics, about once a minute next to the texture cache's report: where the video
+    // memory the driver reports goes. VMA blocks hold every image and buffer allocation (the
+    // gap between block and allocation bytes is free space inside blocks); what the driver
+    // reports beyond the blocks is memory allocated outside VMA (swapchain, upscalers, driver).
+    if (++diagnostics_frame % 3600 == 0) {
+        VmaTotalStatistics stats{};
+        vmaCalculateStatistics(device.GetAllocator(), &stats);
+        const auto& total = stats.total.statistics;
+        const u64 reported = device.GetDeviceMemoryUsage();
+        LOG_INFO(Render_Vulkan,
+                 "Video memory breakdown: driver reports {} MiB; VMA {} blocks {} MiB, {} "
+                 "allocations {} MiB (largest {} MiB); outside VMA about {} MiB; ASTC scratch "
+                 "kept {} MiB in {} images; MSAA scratch {} images",
+                 reported >> 20, total.blockCount, total.blockBytes >> 20,
+                 total.allocationCount, total.allocationBytes >> 20,
+                 stats.total.allocationSizeMax >> 20,
+                 (reported > total.blockBytes ? reported - total.blockBytes : 0) >> 20,
+                 free_transcode_bytes >> 20, free_transcodes.size(),
+                 msaa_scratch_images.size());
+    }
 }
 
 Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu_addr_,

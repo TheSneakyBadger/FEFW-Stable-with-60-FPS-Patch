@@ -232,6 +232,7 @@ public:
     std::deque<PendingTranscode> pending_transcodes;
     u64 pending_transcode_bytes = 0;
     u64 free_transcode_bytes = 0;
+    u64 diagnostics_frame = 0;
     /// Video memory the decode images in flight, and the free ones, may each use.
     [[nodiscard]] u64 TranscodeMemoryCap() const;
     /// Moves decode images the GPU is done with to the free list (waiting for the oldest first
