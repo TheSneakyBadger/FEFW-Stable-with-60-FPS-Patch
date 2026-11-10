@@ -4626,6 +4626,9 @@ void MainWindow::HideMouseCursor() {
 }
 
 void MainWindow::ShowMouseCursor() {
+    if (render_window->IsFefwMouseLocked()) {
+        return; // Mouse mode keeps the PC cursor hidden (clicks used to flash it)
+    }
     render_window->unsetCursor();
     if (QtCommon::emu_thread != nullptr && UISettings::values.hide_mouse)
         mouse_hide_timer.start();

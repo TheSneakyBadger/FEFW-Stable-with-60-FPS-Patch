@@ -127,6 +127,11 @@ public:
     /// Instructs the window to exit the application.
     void Exit();
 
+    /// Fortune's Eden mouse mode: the PC cursor is hidden and held in the game window.
+    [[nodiscard]] bool IsFefwMouseLocked() const {
+        return fefw_mouse_locked;
+    }
+
 public slots:
     void OnFramebufferSizeChanged();
 
