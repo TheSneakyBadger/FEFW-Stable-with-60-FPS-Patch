@@ -1230,6 +1230,8 @@ void MainWindow::InitializeWidgets() {
                 renderer_status_button->repaint();
             });
     statusBar()->insertPermanentWidget(0, renderer_status_button);
+    // Vulkan only in Fortune's Eden (the renderer choice is hidden).
+    renderer_status_button->hide();
 
     // Setup Refresh Button
     refresh_button = new QPushButton();

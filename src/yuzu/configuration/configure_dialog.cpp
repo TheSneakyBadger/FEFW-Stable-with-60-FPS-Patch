@@ -66,6 +66,9 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
 
     ui->setupUi(this);
 
+    // Post-processing effects live on the Advanced page.
+    graphics_advanced_tab->AddExtraWidget(graphics_tab->PostProcessWidget());
+
     ui->tabWidget->addTab(applets_tab.get(), tr("Applets"));
     ui->tabWidget->addTab(audio_tab.get(), tr("Audio"));
     ui->tabWidget->addTab(cpu_tab.get(), tr("CPU"));
@@ -171,15 +174,17 @@ void ConfigureDialog::HandleApplyButtonClicked() {
 Q_DECLARE_METATYPE(QList<QWidget*>);
 
 void ConfigureDialog::PopulateSelectionList() {
-    const std::array<std::pair<QString, QList<QWidget*>>, 5> items{
-        {{tr("General"),
-          {general_tab.get(), hotkeys_tab.get(), ui_tab.get(), debug_tab_tab.get()}},
-         {tr("System"),
-          {system_tab.get(), profile_tab.get(), network_tab.get(), filesystem_tab.get()}},
-         {tr("Graphics"),
-          {graphics_tab.get(), graphics_advanced_tab.get()}},
+    // Fortune's Eden: five pages for everyday settings and one Advanced page (advanced graphics
+    // and post-processing, game folders and paths, logging). No network page: the game has no
+    // online play.
+    const std::array<std::pair<QString, QList<QWidget*>>, 6> items{
+        {{tr("General"), {general_tab.get(), hotkeys_tab.get(), ui_tab.get()}},
+         {tr("System"), {system_tab.get(), profile_tab.get()}},
+         {tr("Graphics"), {graphics_tab.get()}},
          {tr("Audio"), {audio_tab.get()}},
-         {tr("Controls"), input_tab->GetSubTabs()}},
+         {tr("Controls"), input_tab->GetSubTabs()},
+         {tr("Advanced"),
+          {graphics_advanced_tab.get(), filesystem_tab.get(), debug_tab_tab.get()}}},
     };
 
     [[maybe_unused]] const QSignalBlocker blocker(ui->selectorList);

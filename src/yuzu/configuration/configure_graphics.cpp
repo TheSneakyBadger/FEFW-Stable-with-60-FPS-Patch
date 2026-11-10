@@ -250,6 +250,9 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             // Add the renderer combobox now so it's at the top
             api_grid_layout->addWidget(widget);
             api_combobox = widget->combobox;
+            // Fortune's Eden: Vulkan only (the upscalers, HDR and FSR 4 need it); the choice is
+            // kept for the layout code but not shown.
+            widget->hide();
             api_restore_global_button = widget->restore_button;
             if (!Settings::IsConfiguringGlobal()) {
                 api_restore_global_button->connect(api_restore_global_button,
@@ -301,6 +304,8 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
         } else if (setting->Id() == Settings::values.aspect_ratio.Id()) {
             // Keep track of the aspect ratio combobox to update other UI tabs that need it
             aspect_ratio_combobox = widget->combobox;
+            // Fortune's Weave is 16:9 (Ultrawide covers 21:9): not shown.
+            widget->hide();
             hold_graphics.emplace(setting->Id(), widget);
         } else if (setting->Id() == Settings::values.resolution_setup.Id()) {
             // Keep track of the resolution combobox to update other UI tabs that need it
@@ -320,6 +325,7 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
 
             QBoxLayout* row = qobject_cast<QBoxLayout*>(widget->layout());
             row->insertWidget(1, post_shader_button);
+            post_process_widget = widget; // moved to the Advanced page by the dialog
 
             hold_graphics.emplace(setting->Id(), widget);
 #endif
@@ -383,6 +389,9 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     for (auto widget : hold_api) {
         api_grid_layout->addWidget(widget);
     }
+
+    // The background colour only shows in the bars around the picture: not shown.
+    ui->bg_widget->hide();
 
     // Background color is too specific to build into the new system, so we manage it here
     // (3 settings, all collected into a single widget with a QColor to manage on top)

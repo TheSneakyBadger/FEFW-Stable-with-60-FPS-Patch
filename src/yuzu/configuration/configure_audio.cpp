@@ -144,6 +144,8 @@ void ConfigureAudio::Setup(const ConfigurationShared::Builder& builder) {
             }
         } else if (setting->Id() == Settings::values.audio_input_device_id.Id()) {
             input_device_combo_box = widget->combobox;
+            // Fortune's Weave doesn't use a microphone: not shown.
+            widget->hide();
 
             if (!Settings::IsConfiguringGlobal()) {
                 restore_input_device_button =

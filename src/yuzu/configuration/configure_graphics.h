@@ -61,6 +61,11 @@ public:
     void ApplyConfiguration() override;
     void SetConfiguration() override;
 
+    /// The post-processing effects row, for the Advanced page (null without ReShade).
+    QWidget* PostProcessWidget() const {
+        return post_process_widget;
+    }
+
 private:
     void changeEvent(QEvent* event) override;
     void RetranslateUI();
@@ -110,6 +115,7 @@ private:
     QPushButton* vsync_restore_global_button;
     QWidget* vulkan_device_widget;
     QWidget* api_widget;
+    QWidget* post_process_widget{};
     QComboBox* aspect_ratio_combobox;
     QComboBox* resolution_combobox;
     QComboBox* upscaler_combobox{};

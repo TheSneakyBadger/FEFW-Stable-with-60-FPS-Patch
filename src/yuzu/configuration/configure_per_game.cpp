@@ -81,12 +81,13 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
     ui->tabWidget->addTab(graphics_advanced_tab.get(), tr("Adv. Graphics"));
     ui->tabWidget->addTab(audio_tab.get(), tr("Audio"));
     ui->tabWidget->addTab(input_tab.get(), tr("Input Profiles"));
-    ui->tabWidget->addTab(network_tab.get(), tr("Network"));
+    graphics_advanced_tab->AddExtraWidget(graphics_tab->PostProcessWidget());
     // Fortune's Eden shows no applet or extended graphics settings (all hidden): keep those
     // (empty) tabs out of the dialog. They still apply their settings as before.
     graphics_extensions_tab->hide();
     applets_tab->hide();
     cpu_tab->hide();
+    network_tab->hide();
 
     setFocusPolicy(Qt::ClickFocus);
     setWindowTitle(tr("Properties"));

@@ -33,6 +33,8 @@ public:
     void SetConfiguration() override;
 
     void ExposeComputeOption();
+    /// Adds a row from another page (the graphics page's post-processing effects).
+    void AddExtraWidget(QWidget* widget);
 
 private:
     void Setup(const ConfigurationShared::Builder& builder);

@@ -33,6 +33,12 @@ ConfigureGraphicsAdvanced::~ConfigureGraphicsAdvanced() = default;
 
 void ConfigureGraphicsAdvanced::SetConfiguration() {}
 
+void ConfigureGraphicsAdvanced::AddExtraWidget(QWidget* widget) {
+    if (widget) {
+        ui->normal_target->layout()->addWidget(widget);
+    }
+}
+
 void ConfigureGraphicsAdvanced::Setup(const ConfigurationShared::Builder& builder) {
     auto& normal_layout = *ui->normal_target->layout();
 
