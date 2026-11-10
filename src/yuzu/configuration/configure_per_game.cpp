@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -75,19 +76,19 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
 
     ui->setupUi(this);
 
+    // Fortune's Eden runs one game, so its settings live in one place: Settings. Game Settings
+    // only has the game's add-ons and input profiles (a per-game Upscaler quality silently beat
+    // the one in Settings, #27). The other pages are still built (the dialog applies them) but
+    // not shown, and per-game values of those settings are ignored when the game starts.
     ui->tabWidget->addTab(addons_tab.get(), tr("Add-Ons"));
-    ui->tabWidget->addTab(system_tab.get(), tr("System"));
-    ui->tabWidget->addTab(graphics_tab.get(), tr("Graphics"));
-    ui->tabWidget->addTab(graphics_advanced_tab.get(), tr("Adv. Graphics"));
-    ui->tabWidget->addTab(audio_tab.get(), tr("Audio"));
     ui->tabWidget->addTab(input_tab.get(), tr("Input Profiles"));
-    graphics_advanced_tab->AddExtraWidget(graphics_tab->PostProcessWidget());
-    // Fortune's Eden shows no applet or extended graphics settings (all hidden): keep those
-    // (empty) tabs out of the dialog. They still apply their settings as before.
-    graphics_extensions_tab->hide();
-    applets_tab->hide();
-    cpu_tab->hide();
-    network_tab->hide();
+    for (QWidget* const page :
+         std::initializer_list<QWidget*>{system_tab.get(), graphics_tab.get(),
+                                         graphics_advanced_tab.get(), audio_tab.get(),
+                                         graphics_extensions_tab.get(), applets_tab.get(),
+                                         cpu_tab.get(), network_tab.get()}) {
+        page->hide();
+    }
 
     setFocusPolicy(Qt::ClickFocus);
     setWindowTitle(tr("Properties"));

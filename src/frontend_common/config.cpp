@@ -566,16 +566,24 @@ void Config::ReadValues() {
 
     // Fortune's Eden: settings no longer shown that have one right value for Fortune's Weave.
     // Always those, whatever an older config file or a game's own config says.
-    const auto force = [this](auto& setting, auto value) {
-        if (global) {
-            setting.SetValue(value);
-        } else {
-            setting.SetGlobal(true);
+    if (global) {
+        Settings::values.gpu_accuracy.SetValue(Settings::GpuAccuracy::Low);
+        Settings::values.astc_recompression.SetValue(Settings::AstcRecompression::Auto);
+        Settings::values.memory_layout_mode.SetValue(Settings::MemoryLayout::Memory_12Gb);
+    } else if (type != ConfigType::InputProfile) {
+        // One game, one set of settings: a game's own config (an older version's Game Settings)
+        // can't override Settings any more, except its controls (input profiles).
+        for (const auto& [category, settings] : Settings::values.linkage.by_category) {
+            if (category == Settings::Category::Controls) {
+                continue;
+            }
+            for (Settings::BasicSetting* const setting : settings) {
+                if (setting->Switchable()) {
+                    setting->SetGlobal(true);
+                }
+            }
         }
-    };
-    force(Settings::values.gpu_accuracy, Settings::GpuAccuracy::Low);
-    force(Settings::values.astc_recompression, Settings::AstcRecompression::Auto);
-    force(Settings::values.memory_layout_mode, Settings::MemoryLayout::Memory_12Gb);
+    }
 }
 
 void Config::SavePlayerValues(const std::size_t player_index) {
