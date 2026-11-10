@@ -2351,6 +2351,14 @@ void MainWindow::OnEmulationStopped() {
 /// The launch screen's Check for Updates: the same check as at startup, saying so when there
 /// is nothing newer.
 void MainWindow::CheckForFefwUpdateNow() {
+#ifndef _WIN32
+    QMessageBox::information(
+        this, tr("Check for Updates"),
+        tr("This is a Linux test build of Fortune's Eden (%1). It doesn't update itself: new "
+           "Linux builds are downloaded by hand.")
+            .arg(QString::fromUtf8(Common::FefwVersion)));
+    return;
+#endif
     if (fefw_update_watcher.isRunning()) {
         fefw_manual_update_check = true;
         return;

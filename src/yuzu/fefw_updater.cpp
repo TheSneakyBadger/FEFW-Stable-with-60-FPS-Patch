@@ -261,6 +261,10 @@ try {
 } // Anonymous namespace
 
 std::optional<Release> CheckForUpdate() {
+#ifndef _WIN32
+    // The releases are Windows packages, installed by a PowerShell script.
+    return std::nullopt;
+#endif
     try {
         const auto result = MakeClient(kApiHost)->Get(
             kLatestPath, httplib::Headers{{"User-Agent", kUserAgent},
