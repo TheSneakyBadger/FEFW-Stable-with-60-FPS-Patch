@@ -1833,10 +1833,10 @@ void IHidServer::UpdateNmouse() {
         // report the notches since that until it does, so none fall between its reads.
         registration.nmouse_wheel_unread_x += wheel_x;
         registration.nmouse_wheel_unread_y += wheel_y;
-        // Test 19: which of the two wheel fields the game zooms with, and at what scale, is not
-        // known yet, so the vertical wheel goes in both, in Qt units (120 per notch).
-        const s32 wheel_report_x = registration.nmouse_wheel_unread_y * 120;
-        const s32 wheel_report_y = registration.nmouse_wheel_unread_y * 120;
+        // (Fortune's Weave doesn't zoom with these: the wheel also drives the left stick, see
+        // FefwMouseInput::WheelStickY.)
+        const s32 wheel_report_x = registration.nmouse_wheel_unread_x;
+        const s32 wheel_report_y = registration.nmouse_wheel_unread_y;
         registration.nmouse_x = std::clamp(registration.nmouse_x + delta_x, 0, width - 1);
         registration.nmouse_y = std::clamp(registration.nmouse_y + delta_y, 0, height - 1);
         registration.nmouse_moved += std::abs(delta_x) + std::abs(delta_y);

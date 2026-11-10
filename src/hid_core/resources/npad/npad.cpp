@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "common/assert.h"
+#include "common/fefw_mouse_input.h"
 #include "common/bit_field.h"
 #include "common/common_types.h"
 #include "common/logging.h"
@@ -459,6 +460,13 @@ void NPad::RequestPadStateUpdate(Kernel::KernelCore& kernel, u64 aruid, Core::HI
             btn::Minus | btn::StickLLeft | btn::StickLUp | btn::StickLRight | btn::StickLDown;
         pad_entry.npad_buttons.raw |= button_state.raw & left_button_mask;
         pad_entry.l_stick = stick_state.left;
+        // Fortune's Eden mouse mode: the mouse wheel zooms like the left stick (up/down).
+        if (npad_id == Core::HID::NpadIdType::Player1 || npad_id == Core::HID::NpadIdType::Handheld) {
+            if (const int wheel_y = FefwMouseInput::WheelStickY(); wheel_y != 0) {
+                pad_entry.l_stick.x = 0;
+                pad_entry.l_stick.y = wheel_y;
+            }
+        }
     }
 
     if (controller_type == Core::HID::NpadStyleIndex::JoyconLeft ||

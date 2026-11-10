@@ -1243,7 +1243,6 @@ void MainWindow::InitializeWidgets() {
                 mouse_status_button->repaint();
             });
     mouse_hint_label = new QLabel();
-    mouse_hint_label->setText(tr("Press Ctrl + Enter to turn off"));
     mouse_hint_label->setContentsMargins(4, 0, 4, 0);
     statusBar()->insertPermanentWidget(0, mouse_status_button);
     statusBar()->insertPermanentWidget(1, mouse_hint_label);
@@ -4514,9 +4513,12 @@ void MainWindow::UpdateMouseButton() {
     }
     const bool enabled = Settings::values.mouse_enabled.GetValue();
     mouse_status_button->setChecked(enabled);
-    mouse_status_button->setText(enabled ? tr("Turn mouse mode off") : tr("Turn mouse mode on"));
+    mouse_status_button->setText(enabled ? tr("Click to turn mouse mode off")
+                                         : tr("Click to turn mouse mode on"));
     if (mouse_hint_label != nullptr) {
-        mouse_hint_label->setVisible(enabled);
+        mouse_hint_label->setText(enabled ? tr("Ctrl + Enter to turn mouse mode off  ·  "
+                                               "Right-click to alter sensitivity")
+                                          : tr("Right-click to alter sensitivity"));
     }
 }
 
