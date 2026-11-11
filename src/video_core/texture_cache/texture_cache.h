@@ -135,6 +135,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     bool evict_old_costly = false;
+    bool evict_old_gpu = false;
     bool allow_writebacks = true;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
@@ -211,7 +212,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
         writeback_bytes = 0;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &allow_writebacks, &num_deleted, &num_downloaded,
+                          &evict_old_costly, &evict_old_gpu, &allow_writebacks, &num_deleted, &num_downloaded,
                           &writebacks,
                           &writeback_bytes, &UsedMemory, &freed_bytes,
                           &target_free](ImageId image_id) {
@@ -253,7 +254,10 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // Fortune's Eden: larger ones are kept too until the hard limit. Passes over the
         // expected level now free hundreds of images, and losing what the GPU drew into a
         // shadow map or effect buffer would show as black or flickering until it is redrawn.
-        if (keeps_gpu_contents && !aggressive_mode) {
+        // Except those unused for 30 seconds (evict_old_gpu), earlier scenes' render targets:
+        // kept, they were most of what grew (1.5 GB in 205 images three minutes after boot, a
+        // third of it unused for a minute), until the hard limit held use there (issue #31).
+        if (keeps_gpu_contents && !aggressive_mode && !evict_old_gpu) {
             ++num_iterations;
             return false;
         }
@@ -302,6 +306,17 @@ u32 TextureCache<P>::RunGarbageCollector() {
         evict_old_costly = true;
         lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
         evict_old_costly = false;
+    }
+    // Large GPU-drawn images that can't be written back, unused for 30 s (EDEN_TC_OLD_GPU_AGE
+    // frames; 0 turns it off), go next (see Cleanup).
+    static const u64 old_gpu_age = [] {
+        const char* value = std::getenv("EDEN_TC_OLD_GPU_AGE");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 1800ULL;
+    }();
+    if (high_priority_mode && old_gpu_age != 0 && frame_tick > old_gpu_age) {
+        evict_old_gpu = true;
+        lru_cache.ForEachItemBelow(frame_tick - old_gpu_age, Cleanup);
+        evict_old_gpu = false;
     }
     // Over the hard level, write back only images unused for 2 s (see below).
     static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
@@ -393,16 +408,18 @@ void TextureCache<P>::TickFrame() {
             u64 idle_bytes = 0;
         };
         // 0 drawn by the GPU, written back when collected; 1 drawn by the GPU, kept (can't be
-        // written back); 2 drawn by the GPU, then overwritten by the CPU; 3 costly (ASTC);
+        // written back; 5 the small ones, kept in every mode); 2 drawn by the GPU, then overwritten by the CPU; 3 costly (ASTC);
         // 4 the rest.
-        std::array<Kind, 5> kinds{};
+        std::array<Kind, 6> kinds{};
         const auto KindOf = [this](const ImageBase& image) -> size_t {
             if (True(image.flags & ImageFlagBits::GpuModified)) {
                 if (True(image.flags & ImageFlagBits::CpuModified)) {
                     return 2;
                 }
-                return IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap) ? 0
-                                                                                               : 1;
+                if (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)) {
+                    return 0;
+                }
+                return image.guest_size_bytes <= 4_MiB ? 5 : 1;
             }
             return True(image.flags & ImageFlagBits::CostlyLoad) ? 3 : 4;
         };
@@ -421,10 +438,11 @@ void TextureCache<P>::TickFrame() {
         const auto Mib = [](u64 bytes) { return bytes >> 20; };
         LOG_INFO(HW_GPU,
                  "Texture cache images (MiB, count, MiB unused for a minute): GPU-drawn written "
-                 "back {}/{}/{}, GPU-drawn kept {}/{}/{}, GPU-drawn then CPU-written {}/{}/{}, "
+                 "back {}/{}/{}, GPU-drawn kept {}/{}/{} (small {}/{}/{}), GPU-drawn then CPU-written {}/{}/{}, "
                  "ASTC {}/{}/{}, other {}/{}/{}",
                  Mib(kinds[0].bytes), kinds[0].count, Mib(kinds[0].idle_bytes),
                  Mib(kinds[1].bytes), kinds[1].count, Mib(kinds[1].idle_bytes),
+                 Mib(kinds[5].bytes), kinds[5].count, Mib(kinds[5].idle_bytes),
                  Mib(kinds[2].bytes), kinds[2].count, Mib(kinds[2].idle_bytes),
                  Mib(kinds[3].bytes), kinds[3].count, Mib(kinds[3].idle_bytes),
                  Mib(kinds[4].bytes), kinds[4].count, Mib(kinds[4].idle_bytes));
