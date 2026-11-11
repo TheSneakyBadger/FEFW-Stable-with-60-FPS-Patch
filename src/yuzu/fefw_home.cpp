@@ -202,6 +202,13 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     hdr_box->setCursor(Qt::PointingHandCursor);
     hdr_box->setToolTip(tr("HDR10 output when Windows HDR is on: the game sends its own HDR "
                            "picture. Takes effect when the game starts."));
+    ultrawide_box = new QCheckBox(tr("Ultrawide"), card);
+    ultrawide_box->setObjectName(QStringLiteral("fefwHome60"));
+    ultrawide_box->setCursor(Qt::PointingHandCursor);
+    ultrawide_box->setToolTip(tr("Kompas9's ultrawide patch: 3440x1440 (21:9), with the HUD, menus "
+                                 "and movies kept at 16:9. For 21:9 monitors only; play "
+                                 "fullscreen. Game version 1.1.0 only. Takes effect when the game "
+                                 "starts."));
     paper_white = new QSlider(Qt::Horizontal, card);
     paper_white->setRange(80, 500);
     paper_white->setSingleStep(10);
@@ -236,6 +243,8 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     buttons->addWidget(play_button, 0, Qt::AlignBottom);
     buttons->addSpacing(4);
     buttons->addWidget(sixty_fps, 0, Qt::AlignBottom);
+    buttons->addSpacing(6);
+    buttons->addWidget(ultrawide_box, 0, Qt::AlignBottom);
     buttons->addSpacing(6);
     buttons->addWidget(hdr_box, 0, Qt::AlignBottom);
     {
@@ -328,6 +337,12 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         }
     });
     connect(performance, &QPushButton::clicked, this, &FefwHome::PerformanceSettingsRequested);
+    connect(ultrawide_box, &QCheckBox::toggled, this, [this](bool checked) {
+        if (Settings::values.fefw_ultrawide.GetValue() != checked) {
+            Settings::values.fefw_ultrawide.SetValue(checked);
+            emit SettingChanged();
+        }
+    });
     connect(hdr_box, &QCheckBox::toggled, this, [this](bool checked) {
         paper_white->setEnabled(checked);
         if (Settings::values.hdr_output.GetValue() != checked) {
@@ -409,6 +424,8 @@ void FefwHome::UpdateStatusLine() {
     quality_box->setCurrentIndex(
         quality_box->findData(static_cast<int>(Settings::values.upscaler_quality.GetValue())));
     quality_box->setEnabled(upscaler != Settings::Upscaler::GameDlss);
+    const QSignalBlocker ultrawide_blocker{ultrawide_box};
+    ultrawide_box->setChecked(Settings::values.fefw_ultrawide.GetValue());
     const QSignalBlocker hdr_blocker{hdr_box};
     hdr_box->setChecked(Settings::values.hdr_output.GetValue());
     paper_white->setEnabled(hdr_box->isChecked());

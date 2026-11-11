@@ -57,6 +57,7 @@ private:
     QComboBox* upscaler_box{};
     QComboBox* quality_box{};
     QComboBox* frame_gen_box{};
+    QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
     QSlider* paper_white{};
     QLabel* paper_white_label{};
