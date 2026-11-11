@@ -517,11 +517,13 @@ public:
 
 private:
     void WatchUiLayer();
-    bool fg_ui_watch = false;
-    ImageId fg_ui_image{};
+    bool fg_ui_watch = false;     ///< Counting draws (the game evaluated DLSS last frame or this).
+    bool fg_ui_dlss_seen = false; ///< DLSS evaluated this frame.
     ImageId fg_ui_exclude{};
-    GPUVAddr fg_ui_addr = 0;
     Extent3D fg_ui_size{};
+    /// Full-size 8-bit colour targets drawn this frame and how many draws each got.
+    std::array<std::pair<ImageId, u32>, 8> fg_ui_counts{};
+    size_t fg_ui_count_size = 0;
     void FlushRenderTargetTrace();
     bool fg_trace_active = false;
     bool fg_trace_done = false;

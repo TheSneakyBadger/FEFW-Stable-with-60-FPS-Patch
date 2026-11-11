@@ -375,8 +375,11 @@ u32 TextureCache<P>::RunGarbageCollector() {
 
 template <class P>
 void TextureCache<P>::TickFrame() {
-    fg_ui_image = {};
-    fg_ui_watch = false;
+    // Count again next frame while the game keeps evaluating DLSS (from the frame's start: the
+    // UI may be drawn before the evaluation).
+    fg_ui_watch = fg_ui_dlss_seen;
+    fg_ui_dlss_seen = false;
+    fg_ui_count_size = 0;
     if (fg_trace_active) {
         FlushRenderTargetTrace();
         LOG_INFO(HW_GPU, "Draw trace: frame end");
@@ -939,21 +942,36 @@ void TextureCache<P>::WatchUiLayer() {
         image.info.size.height != fg_ui_size.height || image.info.num_samples != 1) {
         return;
     }
-    // The first full-size 8-bit colour target drawn after the evaluation.
-    fg_ui_image = image_id;
-    fg_ui_addr = image.gpu_addr;
-    fg_ui_watch = false;
+    for (size_t i = 0; i < fg_ui_count_size; ++i) {
+        if (fg_ui_counts[i].first == image_id) {
+            ++fg_ui_counts[i].second;
+            return;
+        }
+    }
+    if (fg_ui_count_size < fg_ui_counts.size()) {
+        fg_ui_counts[fg_ui_count_size++] = {image_id, 1};
+    }
 }
 
 template <class P>
 typename P::ImageView* TextureCache<P>::FrameGenUiLayer() {
-    if (!fg_ui_image || slot_images[fg_ui_image].gpu_addr != fg_ui_addr) {
+    // The UI layer gets dozens of draws a frame (94 in a traced frame); the target the game
+    // combines it into, the same size and format, gets about three. The most drawn one, then.
+    ImageId best{};
+    u32 best_count = 0;
+    for (size_t i = 0; i < fg_ui_count_size; ++i) {
+        if (fg_ui_counts[i].second > best_count) {
+            best = fg_ui_counts[i].first;
+            best_count = fg_ui_counts[i].second;
+        }
+    }
+    if (!best || best_count < 5) {
         return nullptr;
     }
-    const ImageBase& image = slot_images[fg_ui_image];
+    const ImageBase& image = slot_images[best];
     const ImageViewId view = FindOrEmplaceImageView(
-        fg_ui_image, ImageViewInfo(ImageViewType::e2D, image.info.format,
-                                   SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
+        best, ImageViewInfo(ImageViewType::e2D, image.info.format,
+                            SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
     return &slot_image_views[view];
 }
 
@@ -1390,7 +1408,7 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
         // Frame generation: watch for the UI layer the game draws next.
         fg_ui_watch = true;
-        fg_ui_image = {};
+        fg_ui_dlss_seen = true;
         fg_ui_exclude = dst_id;
         fg_ui_size = slot_images[dst_id].info.size;
         // Testing: trace the draws that follow, once, 30 s or more into the game.
