@@ -30,13 +30,10 @@ constexpr u32 MAX_PRESENT_ATTEMPTS = 3;
 static_assert(MAX_FRAMES_IN_FLIGHT <= LSFG_MAX_TARGETS);
 #endif
 
+// Frame generation (Lossless Scaling on Android, AMD FSR 3.1) writes frames through storage views.
 bool CanStoreToFrame(const vk::PhysicalDevice& physical_device, VkFormat format) {
-#ifdef HAS_LSFG
     const VkFormatProperties props{physical_device.GetFormatProperties(format)};
     return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
-#else
-    return false;
-#endif
 }
 
 bool CanBlitToSwapchain(const vk::PhysicalDevice& physical_device, VkFormat format) {

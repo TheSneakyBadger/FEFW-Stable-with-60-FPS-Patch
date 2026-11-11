@@ -295,6 +295,14 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     const bool wanted = generator->HasPrepared() && frame->storage_view &&
                         fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
     if (!wanted) {
+        // Once a session: why no frame was made while the game had motion.
+        static bool logged{};
+        if (generator->HasPrepared() && !logged) {
+            logged = true;
+            LOG_INFO(Render_Vulkan,
+                     "AMD FSR 3.1 frame generation skipped: frame storage {}, {:.1f} ms apart",
+                     static_cast<bool>(frame->storage_view), fsr_fg_interval_ms);
+        }
         generator->Skip();
         return;
     }
