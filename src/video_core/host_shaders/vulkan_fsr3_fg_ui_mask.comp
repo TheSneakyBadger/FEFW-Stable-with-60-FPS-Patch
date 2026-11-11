@@ -8,8 +8,10 @@
 //    only the scene, even behind see-through panels: scene = (frame - ui.rgb) / ui.a;
 //  - mode 1 (after it) puts this frame's UI back over the generated scene, unmoved.
 // Where the UI is solid (or near its edges) the scene isn't recovered: see SOLID below.
-// Layers past the first are only masked (the generated frame takes the real frame's pixels), and
-// mode 2 (HDR frames, where the combine isn't known) masks every layer, the first included.
+// Layers past the first are only masked (the generated frame takes the real frame's pixels).
+// HDR frames (the game's own PQ or scRGB picture, whose combine isn't known): mode 3 (before
+// interpolation) fills every UI-covered pixel from the scene around it, so frame generation never
+// moves the UI there either, and mode 2 (after it) gives those pixels back the real frame's.
 
 #version 460
 #extension GL_EXT_shader_image_load_formatted : require
@@ -91,7 +93,8 @@ float PointCoverage(vec2 uv) {
 }
 
 // The scene around a UI-covered pixel: in eight directions, the nearest frame pixel without UI,
-// averaged (nearer weighs more). Smooth and UI-free, so moving it shows no UI.
+// averaged (nearer weighs more). Smooth and UI-free, so moving it shows no UI. HDR frames (mode 3)
+// are averaged as they are encoded.
 vec3 Fill(ivec2 local, vec3 fallback) {
     const vec2 directions[8] = vec2[8](vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1),
                                        vec2(0.7071, 0.7071), vec2(-0.7071, 0.7071),
@@ -108,7 +111,8 @@ vec3 Fill(ivec2 local, vec3 fallback) {
             const vec2 uv = (vec2(p) + 0.5) / vec2(c.rect_size);
             if (PointCoverage(uv) < c.threshold) {
                 const float w = 1.0 / distance;
-                sum += w * ToLinear(texelFetch(current_frame, p + c.rect_base, 0).rgb);
+                const vec3 texel = texelFetch(current_frame, p + c.rect_base, 0).rgb;
+                sum += w * (c.mode == 3 ? texel : ToLinear(texel));
                 weight += w;
                 break;
             }
@@ -125,7 +129,7 @@ void main() {
     const vec4 current = texelFetch(current_frame, pos, 0);
     const ivec2 local = pos - c.rect_base;
     if (any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, c.rect_size))) {
-        if (c.mode == 0) {
+        if (c.mode == 0 || c.mode == 3) {
             imageStore(target, pos, current);
             imageStore(ui_alpha, pos, vec4(0.0));
         }
@@ -133,6 +137,15 @@ void main() {
     }
     const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
     const float widened = AllCoverage(uv);
+    if (c.mode == 3) {
+        imageStore(ui_alpha, pos, vec4(widened < c.threshold ? 0.0 : clamp(widened, 0.0, 1.0)));
+        if (widened < c.threshold) {
+            imageStore(target, pos, current);
+        } else {
+            imageStore(target, pos, vec4(Fill(local, current.rgb), current.a));
+        }
+        return;
+    }
     if (c.mode == 2) {
         const float mask = smoothstep(c.threshold, c.threshold * 8.0, widened);
         if (c.show_mask != 0) {

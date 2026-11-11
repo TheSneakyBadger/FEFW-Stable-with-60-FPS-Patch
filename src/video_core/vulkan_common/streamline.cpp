@@ -527,6 +527,16 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
     }
     if (state.want_frame_gen) {
         state.frame_gen_available = true;
+        if (const std::vector<std::string> missing = MissingFrameGenFiles(); !missing.empty()) {
+            std::string names;
+            for (const std::string& name : missing) {
+                names += (names.empty() ? "" : ", ") + name;
+            }
+            LOG_WARNING(Render_Vulkan,
+                        "NVIDIA DLSS frame generation needs NVIDIA's files, and {} are not in {}: "
+                        "Settings > Graphics > Frame generation can download them",
+                        names, Common::FS::PathToUTF8String(FindDlssFiles().folder));
+        }
         for (const auto& [feature, name] :
              {std::pair{sl::kFeatureDLSS_G, "DLSS frame generation"},
               std::pair{sl::kFeatureReflex, "Reflex"}, std::pair{sl::kFeaturePCL, "PC latency"}}) {
