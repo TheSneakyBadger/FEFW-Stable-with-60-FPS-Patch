@@ -411,17 +411,13 @@ struct Values {
     // the game's own DLSS stay at Performance. Takes effect when a game starts.
     SwitchableSetting<UpscalerQuality, true> upscaler_quality{
         linkage, UpscalerQuality::Balanced, "upscaler_quality", Category::Renderer};
-    // AMD FSR 3.1 frame generation: a frame made between each two of the game's, from its motion
-    // (the DLSS evaluation's motion vectors and depth) and optical flow. Only in the 3D scenes,
-    // where the game evaluates DLSS; needs a display faster than the game's frame rate.
-    SwitchableSetting<bool> fsr_frame_generation{linkage, false, "fsr_frame_generation",
-                                                 Category::Renderer};
-    // NVIDIA DLSS frame generation (through NVIDIA Streamline, from the user's DLLs) in place of
-    // AMD's, on GeForce RTX 40 and 50 cards: the same inputs (the game's motion, depth and UI
-    // layer), and NVIDIA's model makes and paces the frames. Falls back to AMD's (when that is on)
-    // where it can't run. Takes effect when a game starts.
-    SwitchableSetting<bool> dlss_frame_generation{linkage, false, "dlss_frame_generation",
-                                                  Category::Renderer};
+    // Frame generation: a frame made between each two of the game's, from its motion (the DLSS
+    // evaluation's motion vectors and depth) and its UI layer. Off, AMD FSR 3.1's (frame
+    // interpolation and optical flow, any card) or NVIDIA DLSS's (through NVIDIA Streamline,
+    // from the user's DLLs; GeForce RTX 40 and 50), which falls back to AMD's where it can't
+    // run. Only in the 3D scenes, where the game evaluates DLSS. Takes effect when a game starts.
+    SwitchableSetting<FrameGeneration, true> frame_generation{
+        linkage, FrameGeneration::Off, "frame_generation", Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.

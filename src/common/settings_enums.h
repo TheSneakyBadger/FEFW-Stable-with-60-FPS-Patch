@@ -140,6 +140,8 @@ ENUM(Upscaler, Fsr3, GameDlss, NvidiaDlss, Fsr4);
 // The upscaler's quality mode: the 3D scene's size against the picture's (1, 0.77, 0.67, 0.58,
 // 0.5). Fortune's Weave itself draws at Performance (720p to 1440p).
 ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
+// Frame generation: none, AMD FSR 3.1's (any card) or NVIDIA DLSS's (GeForce RTX 40 and 50).
+ENUM(FrameGeneration, Off, AmdFsr3, NvidiaDlss);
 // Fortune's Weave's screen-space reflections: as the game sets them (32 rays), 8 rays, or off.
 ENUM(FefwReflections, Full, Reduced, Off);
 // How much sound is queued ahead of the audio device (issue #29: crackling).

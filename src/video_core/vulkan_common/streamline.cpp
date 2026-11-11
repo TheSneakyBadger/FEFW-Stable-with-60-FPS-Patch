@@ -307,7 +307,8 @@ bool Start() {
         return true;
     }
     const bool dlss_wanted = Settings::values.upscaler.GetValue() == Settings::Upscaler::NvidiaDlss;
-    const bool frame_gen_wanted = Settings::values.dlss_frame_generation.GetValue();
+    const bool frame_gen_wanted =
+        Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss;
     if (!dlss_wanted && !frame_gen_wanted) {
         return false;
     }

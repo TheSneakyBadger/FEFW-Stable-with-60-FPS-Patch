@@ -372,6 +372,8 @@ private slots:
     void OnMenuInstallToNAND();
     void OnMenuRecentFile();
     void OnConfigure();
+    /// The settings, opened on the page with this name ("Performance").
+    void OnConfigurePage(const QString& page);
     void OnConfigureTas();
     void OnDecreaseVolume();
     void OnIncreaseVolume();

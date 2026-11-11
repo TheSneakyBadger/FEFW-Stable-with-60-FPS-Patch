@@ -57,6 +57,8 @@ public:
     ~ConfigureDialog() override;
 
     void ApplyConfiguration();
+    /// Shows the page with this name in the list on the left.
+    void SelectPage(const QString& name);
 
 private slots:
     void OnLanguageChanged(const QString& locale);

@@ -1566,7 +1566,9 @@ void MainWindow::ConnectWidgetEvents() {
             });
     connect(fefw_home, &FefwHome::SettingsRequested, this, &MainWindow::OnConfigure);
     connect(fefw_home, &FefwHome::UpdateCheckRequested, this, &MainWindow::CheckForFefwUpdateNow);
-    connect(fefw_home, &FefwHome::SixtyFpsChanged, this, [this] { config->SaveAllValues(); });
+    connect(fefw_home, &FefwHome::SettingChanged, this, [this] { config->SaveAllValues(); });
+    connect(fefw_home, &FefwHome::PerformanceSettingsRequested, this,
+            [this] { OnConfigurePage(tr("Performance")); });
     connect(game_list, &GameList::SaveConfig, this, &MainWindow::OnSaveConfig);
 
     connect(game_list, &GameList::OpenPerGameGeneralRequested, this,
@@ -3653,6 +3655,10 @@ void MainWindow::ToggleShowGameName() {
 }
 
 void MainWindow::OnConfigure() {
+    OnConfigurePage({});
+}
+
+void MainWindow::OnConfigurePage(const QString& page) {
     const auto old_theme = UISettings::values.theme;
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
     const auto old_language_index = Settings::values.language_index.GetValue();
@@ -3669,6 +3675,9 @@ void MainWindow::OnConfigure() {
             &MainWindow::OnLanguageChanged);
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
+    if (!page.isEmpty()) {
+        configure_dialog.SelectPage(page);
+    }
 
     const auto result = configure_dialog.exec();
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&

@@ -388,7 +388,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
 #ifdef EGLANTINE_STREAMLINE
     // NVIDIA DLSS frame generation: its present makes and paces the frame; this frame's inputs
     // are tagged for it (the frame without its UI, the UI's coverage, depth and motion).
-    if (Settings::values.dlss_frame_generation.GetValue() &&
+    if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
         Streamline::IsFrameGenerationAvailable()) {
         frame->sl_frame_gen = true;
         frame->sl_index = ++dlssg_index;

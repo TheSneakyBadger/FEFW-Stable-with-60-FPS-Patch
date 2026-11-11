@@ -134,8 +134,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     // Frame generation paces its frames on the present thread: without one, the waits ran on the
     // GPU thread and slowed the game wherever its frames took longer (battles: 60 FPS to 40).
     , use_present_thread{Settings::values.async_presentation.GetValue() ||
-                         Settings::values.fsr_frame_generation.GetValue() ||
-                         Settings::values.dlss_frame_generation.GetValue()}
+                         Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::Off}
 {
     SetImageCount();
 
@@ -412,7 +411,7 @@ void PresentManager::SetImageCount() {
 #else
     // AMD FSR 3.1 frame generation presents two frames per game frame: two more to render into,
     // so the emulated GPU doesn't wait for the presentation.
-    const size_t extra = Settings::values.fsr_frame_generation.GetValue() ? 2 : 0;
+    const size_t extra = Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::Off ? 2 : 0;
     image_count = std::min<size_t>(swapchain.GetImageCount() + extra, MAX_FRAMES_IN_FLIGHT);
 #endif
     swapchain_image_count = swapchain.GetImageCount();

@@ -10,6 +10,8 @@
 #include "common/common_types.h"
 
 class QCheckBox;
+class QComboBox;
+class QSlider;
 class QLabel;
 class QPushButton;
 class QStandardItemModel;
@@ -28,7 +30,7 @@ public:
 
     /// Looks for Fortune's Weave in the game list's model and shows or hides the card.
     void Refresh(const QStandardItemModel& model);
-    /// Re-reads the upscaler line and the 60 FPS box (after the settings change).
+    /// Re-reads the card's settings (after the settings change).
     void UpdateStatusLine();
 
 signals:
@@ -36,8 +38,10 @@ signals:
     void GameSettingsRequested(u64 title_id, const QString& path);
     void SettingsRequested();
     void UpdateCheckRequested();
-    /// The 60 FPS box was ticked or unticked (the setting is already changed; save it).
-    void SixtyFpsChanged();
+    /// A setting on the card changed (60 FPS, upscaler, quality, frame generation): it is
+    /// already set; save it.
+    void SettingChanged();
+    void PerformanceSettingsRequested();
 
 protected:
     bool eventFilter(QObject* object, QEvent* event) override;
@@ -50,5 +54,11 @@ private:
     QLabel* status_label{};
     QPushButton* play_button{};
     QCheckBox* sixty_fps{};
+    QComboBox* upscaler_box{};
+    QComboBox* quality_box{};
+    QComboBox* frame_gen_box{};
+    QCheckBox* hdr_box{};
+    QSlider* paper_white{};
+    QLabel* paper_white_label{};
     QString game_path;
 };

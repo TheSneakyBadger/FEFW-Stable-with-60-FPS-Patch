@@ -208,18 +208,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "size. Applies at 1X resolution with AMD FSR 3.1, NVIDIA DLSS or AMD FSR 4; other "
               "resolutions and the game's own DLSS use Performance. Takes effect when a game "
               "starts."));
-    INSERT(Settings, fsr_frame_generation, tr("Frame generation (AMD FSR 3.1)"),
+    INSERT(Settings, frame_generation, tr("Frame generation:"),
            tr("Makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as "
-              "60).\nOnly in the 3D scenes: it uses the game's own motion data, which menus and "
-              "movies don't have. Adds about half a frame of input delay.\nNeeds a display "
-              "faster than the game's frame rate (120 Hz or more for 60 FPS). Any graphics card; "
-              "works with any upscaler. Experimental."));
-    INSERT(Settings, dlss_frame_generation, tr("Frame generation (NVIDIA DLSS)"),
-           tr("NVIDIA's frame generation in place of AMD's: GeForce RTX 40 and 50 cards, with "
-              "NVIDIA Streamline's DLLs (sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, "
-              "sl.reflex.dll, sl.pcl.dll) and nvngx_dlssg.dll in the user folder's streamline "
-              "folder.\nWorks with any upscaler. Where it can't run, AMD's frame generation is "
-              "used if that is on. Takes effect when a game starts. Experimental."));
+              "60). Only in the 3D scenes: it uses the game's own motion data, which menus and "
+              "movies don't have. Needs a display faster than the game's frame rate (120 Hz or "
+              "more for 60 FPS). Works with any upscaler.\nAMD FSR 3.1: any graphics card.\n"
+              "NVIDIA DLSS: GeForce RTX 40 and 50 cards, with NVIDIA Streamline's DLLs "
+              "(sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll) and "
+              "nvngx_dlssg.dll in the user folder's streamline folder; AMD's is used where it "
+              "can't run.\nTakes effect when a game starts. Experimental."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -492,6 +489,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(UpscalerQuality, Quality, tr("Quality")),
                               PAIR(UpscalerQuality, Balanced, tr("Balanced")),
                               PAIR(UpscalerQuality, Performance, tr("Performance")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::FrameGeneration>::Index(),
+                          {
+                              PAIR(FrameGeneration, Off, tr("Off")),
+                              PAIR(FrameGeneration, AmdFsr3, tr("AMD FSR 3.1 (any card)")),
+                              PAIR(FrameGeneration, NvidiaDlss,
+                                   tr("NVIDIA DLSS (GeForce RTX 40/50)")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::AudioBuffer>::Index(),
                           {

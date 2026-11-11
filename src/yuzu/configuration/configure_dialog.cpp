@@ -170,6 +170,15 @@ void ConfigureDialog::RetranslateUI() {
     ui->tabWidget->setCurrentIndex(old_index);
 }
 
+void ConfigureDialog::SelectPage(const QString& name) {
+    for (int row = 0; row < ui->selectorList->count(); ++row) {
+        if (ui->selectorList->item(row)->text() == name) {
+            ui->selectorList->setCurrentRow(row);
+            return;
+        }
+    }
+}
+
 void ConfigureDialog::HandleApplyButtonClicked() {
     UISettings::values.configuration_applied = true;
     ApplyConfiguration();
