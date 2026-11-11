@@ -212,6 +212,11 @@ struct Values {
                                        Specialization::Scalar | Specialization::Percentage,
                                        true,
                                        true};
+    // Fortune's Eden: sound queued ahead of the device. Low is about 40 ms (as before: 6 x 5 ms
+    // buffers and a 10 ms device buffer), Medium about 80 ms and High about 160 ms; more rides
+    // out hitches without crackling (issue #29), with more delay.
+    SwitchableSetting<AudioBuffer> audio_buffer{linkage, AudioBuffer::Low, "audio_buffer",
+                                                Category::Audio};
     Setting<bool, false> audio_muted{
                                      linkage, false, "audio_muted", Category::Audio, Specialization::Default, true, true};
     Setting<bool, false> dump_audio_commands{

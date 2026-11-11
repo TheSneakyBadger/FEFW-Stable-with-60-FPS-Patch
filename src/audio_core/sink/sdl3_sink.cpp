@@ -13,6 +13,7 @@
 #include "audio_core/sink/sdl3_sink.h"
 #include "audio_core/sink/sink_stream.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/scope_exit.h"
 #include "core/core.h"
 
@@ -105,6 +106,23 @@ public:
                                            : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
                                 : FindAudioDeviceByName(device_name, capture);
 
+        // Fortune's Eden: a larger device buffer with the Audio buffer setting (issue #29).
+        if (!capture) {
+            const char* frames = nullptr;
+            switch (Settings::values.audio_buffer.GetValue()) {
+            case Settings::AudioBuffer::Medium:
+                frames = "960";
+                break;
+            case Settings::AudioBuffer::High:
+                frames = "1920";
+                break;
+            default:
+                break;
+            }
+            if (frames != nullptr) {
+                SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, frames);
+            }
+        }
         stream = SDL_OpenAudioDeviceStream(audio_device, &spec, &SDLSinkStream::DataCallback,
                                            this);
 

@@ -12,6 +12,7 @@
 #include "audio_core/common/common.h"
 #include "audio_core/sink/sink.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/thread.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -127,7 +128,23 @@ void AudioRenderer::CreateSinkStreams() {
             sink.AcquireSinkStream(system, channels, name, ::AudioCore::Sink::StreamType::Render);
         // 6 x 5 ms buffers (was 4): WASAPI takes about 10 ms per callback, so 4 left only one
         // spare render cycle before an underrun on a busy 4-core CPU. Costs 10 ms of latency.
-        streams[i]->SetRingSize(6);
+        // Fortune's Eden: the Audio buffer setting doubles it (Medium) or quadruples it (High),
+        // so a hitch in emulation doesn't empty the queue and crackle (issue #29).
+        u32 ring_size = 6;
+        switch (Settings::values.audio_buffer.GetValue()) {
+        case Settings::AudioBuffer::Medium:
+            ring_size = 12;
+            break;
+        case Settings::AudioBuffer::High:
+            ring_size = 24;
+            break;
+        default:
+            break;
+        }
+        streams[i]->SetRingSize(ring_size);
+        if (i == 0) {
+            LOG_INFO(Service_Audio, "Audio buffer: {} x 5 ms queued", ring_size);
+        }
     }
 }
 

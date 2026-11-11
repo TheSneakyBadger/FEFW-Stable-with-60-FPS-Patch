@@ -142,6 +142,8 @@ ENUM(Upscaler, Fsr3, GameDlss, NvidiaDlss, Fsr4);
 ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
 // Fortune's Weave's screen-space reflections: as the game sets them (32 rays), 8 rays, or off.
 ENUM(FefwReflections, Full, Reduced, Off);
+// How much sound is queued ahead of the audio device (issue #29: crackling).
+ENUM(AudioBuffer, Low, Medium, High);
 ENUM(RendererBackend, OpenGL_GLSL, Vulkan, Null, OpenGL_GLASM, OpenGL_SPIRV);
 ENUM(GpuAccuracy, Low, High);
 ENUM(DmaAccuracy, Default, Unsafe, Safe);

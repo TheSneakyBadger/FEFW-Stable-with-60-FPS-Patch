@@ -55,6 +55,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, audio_output_device_id, tr("Output Device:"), QString());
     INSERT(Settings, audio_input_device_id, tr("Input Device:"), QString());
     INSERT(Settings, audio_muted, tr("Mute audio"), QString());
+    INSERT(Settings, audio_buffer, tr("Audio buffer:"),
+           tr("How much sound is queued ahead of your speakers. If the sound crackles or pops, "
+              "try Medium or High: they ride out short hitches, with a little more delay.
+"
+              "Takes effect when the game starts."));
     INSERT(Settings, volume, tr("Volume:"), QString());
     INSERT(Settings, dump_audio_commands, QString(), QString());
     INSERT(UISettings, mute_when_in_background, tr("Mute audio when in background"), QString());
@@ -471,6 +476,12 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(UpscalerQuality, Quality, tr("Quality")),
                               PAIR(UpscalerQuality, Balanced, tr("Balanced")),
                               PAIR(UpscalerQuality, Performance, tr("Performance")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::AudioBuffer>::Index(),
+                          {
+                              PAIR(AudioBuffer, Low, tr("Low (least delay)")),
+                              PAIR(AudioBuffer, Medium, tr("Medium")),
+                              PAIR(AudioBuffer, High, tr("High (fewest crackles)")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::FefwReflections>::Index(),
                           {

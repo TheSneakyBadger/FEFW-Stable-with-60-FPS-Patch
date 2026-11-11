@@ -11,6 +11,7 @@
 #include "audio_core/sink/cubeb_sink.h"
 #include "audio_core/sink/sink_stream.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/scope_exit.h"
 #include "core/core.h"
 
@@ -74,6 +75,19 @@ public:
         }
 
         minimum_latency = (std::max)(minimum_latency, TargetSampleCount * 2);
+        // Fortune's Eden: a larger device buffer with the Audio buffer setting (issue #29).
+        if (type != StreamType::In) {
+            switch (Settings::values.audio_buffer.GetValue()) {
+            case Settings::AudioBuffer::Medium:
+                minimum_latency = (std::max)(minimum_latency, TargetSampleCount * 4);
+                break;
+            case Settings::AudioBuffer::High:
+                minimum_latency = (std::max)(minimum_latency, TargetSampleCount * 8);
+                break;
+            default:
+                break;
+            }
+        }
 
         LOG_INFO(Service_Audio,
                  "Opening cubeb stream {} type {} with: rate {} channels {} (system channels {}) "
