@@ -245,7 +245,12 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
                      framebuffers[0].width, framebuffers[0].height);
         }
     }
+    const auto frame_wait_start = std::chrono::steady_clock::now();
     Frame* frame = present_manager.GetRenderFrame();
+    // Frame generation's pacing doesn't count time spent here waiting for a free frame.
+    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() -
+                                                             frame_wait_start)
+                          .count();
 
     scheduler.RequestOutsideRenderPassOperationContext();
     blit_swapchain.DrawToFrame(device, rasterizer, frame, framebuffers,
@@ -293,21 +298,32 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     // The game's frame interval (smoothed): the generated frame goes halfway through it.
     const auto now = std::chrono::steady_clock::now();
     if (fsr_fg_last_composite) {
+        // The game's own interval: without the time this thread waited for free frames, which
+        // the pacing itself causes (counted, it fed back: longer waits, slower game, longer
+        // waits; battles settled at 35-45 FPS).
         const f32 interval =
-            std::chrono::duration<f32, std::milli>(now - *fsr_fg_last_composite).count();
+            (std::max)(std::chrono::duration<f32, std::milli>(now - *fsr_fg_last_composite)
+                               .count() -
+                           fsr_fg_wait_ms,
+                       1.0f);
+        fsr_fg_minute_wait_ms += fsr_fg_wait_ms;
         fsr_fg_interval_ms = fsr_fg_interval_ms == 0.0f || interval > 4.0f * fsr_fg_interval_ms
                                  ? interval
                                  : fsr_fg_interval_ms * 0.9f + interval * 0.1f;
     }
     fsr_fg_last_composite = now;
+    fsr_fg_wait_ms = 0.0f;
     // About every 10 s: how many frames were made, and the game's frame interval.
     if (!fsr_fg_report_start) {
         fsr_fg_report_start = now;
     } else if (now - *fsr_fg_report_start >= std::chrono::seconds{10}) {
         LOG_INFO(Render_Vulkan,
                  "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
-                 "{} game frames without one; game frames {:.1f} ms apart",
-                 fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms);
+                 "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
+                 "for free frames",
+                 fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
+                 fsr_fg_minute_wait_ms);
+        fsr_fg_minute_wait_ms = 0.0f;
         fsr_fg_ui = 0;
         fsr_fg_report_start = now;
         fsr_fg_made = 0;
@@ -331,7 +347,11 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         return;
     }
     const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+    const auto generated_wait_start = std::chrono::steady_clock::now();
     Frame* const generated = present_manager.GetRenderFrame();
+    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() -
+                                                             generated_wait_start)
+                          .count();
     blit_swapchain.PrepareFrame(device, generated, layout);
     const VkFormat format = present_manager.SwapchainImageFormat();
     const u32 transfer_function = format == VK_FORMAT_A2B10G10R10_UNORM_PACK32   ? 1U

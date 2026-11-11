@@ -118,6 +118,8 @@ private:
     u32 fsr_fg_made{};
     u32 fsr_fg_skipped{};
     u32 fsr_fg_ui{};
+    f32 fsr_fg_wait_ms{};
+    f32 fsr_fg_minute_wait_ms{};
 
     Frame applet_frame;
 };
