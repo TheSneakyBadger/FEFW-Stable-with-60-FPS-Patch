@@ -18,9 +18,7 @@
 #include "common/settings_enums.h"
 #include "config.h"
 
-#ifdef _WIN32
 #include "common/string_util.h"
-#endif
 
 #include <boost/algorithm/string/replace.hpp>
 
@@ -582,6 +580,7 @@ void Config::ReadValues() {
     // Fortune's Eden: settings no longer shown that have one right value for Fortune's Weave.
     // Always those, whatever an older config file or a game's own config says.
     if (global) {
+        MigrateFefwSixtyAddon();
         // Settings that aren't shown go back to their defaults (Vulkan, multi-core, 16:9, no
         // anti-aliasing, Bilinear, Auto pacing, 12 GB, GPU mode Fast, ASTC recompression Auto...):
         // a value set in an older version can't stay stuck where nobody can change it.
@@ -605,6 +604,58 @@ void Config::ReadValues() {
                 }
             }
         }
+    }
+}
+
+// v1.6.7.4 built the 60 FPS mode in (setting fefw_60fps). The old way was an add-on folder
+// named "60fps" holding a cheat (load/04007EF01F8AE000/60fps/cheats/*.txt), which then showed
+// as a second 60 FPS add-on next to the setting. The setting takes over its state (on unless the
+// add-on was unticked), the folder is deleted, and its entry leaves the disabled add-ons list.
+// Only a folder of small cheat text files is deleted: anything else in it is left alone.
+void Config::MigrateFefwSixtyAddon() {
+    static constexpr u64 TitleId = 0x04007EF01F8AE000;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path title_dir =
+        FS::GetEdenPath(FS::EdenPath::LoadDir) / fmt::format("{:016X}", TitleId);
+    if (!fs::is_directory(title_dir, ec)) {
+        return;
+    }
+    for (const auto& entry : fs::directory_iterator(title_dir, ec)) {
+        const std::string name = FS::PathToUTF8String(entry.path().filename());
+        if (!entry.is_directory(ec) || Common::ToLower(name) != "60fps") {
+            continue;
+        }
+        bool only_cheats = true;
+        for (const auto& file : fs::recursive_directory_iterator(entry.path(), ec)) {
+            if (file.is_directory(ec)) {
+                continue;
+            }
+            const std::string extension =
+                Common::ToLower(FS::PathToUTF8String(file.path().extension()));
+            if ((extension != ".txt" && extension != ".pchtxt") || file.file_size(ec) > 64 * 1024) {
+                only_cheats = false;
+                break;
+            }
+        }
+        if (ec || !only_cheats) {
+            LOG_INFO(Config, "Old 60 FPS add-on folder {} has other files; left as it is", name);
+            continue;
+        }
+        auto& disabled = Settings::values.disabled_addons[TitleId];
+        const auto it = std::find(disabled.begin(), disabled.end(), name);
+        const bool was_on = it == disabled.end();
+        if (it != disabled.end()) {
+            disabled.erase(it);
+        }
+        if (was_on) {
+            Settings::values.fefw_60fps.SetValue(true);
+        }
+        fs::remove_all(entry.path(), ec);
+        LOG_INFO(Config, "Old 60 FPS add-on removed ({}); 60 FPS mode {}",
+                 ec ? "the folder couldn't be deleted" : "folder deleted",
+                 was_on ? "turned on, as the add-on was" : "left off, as the add-on was");
+        break;
     }
 }
 

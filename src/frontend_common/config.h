@@ -73,6 +73,8 @@ protected:
     virtual void SaveAllValues() = 0;
 
     void ReadValues();
+
+    void MigrateFefwSixtyAddon();
     void ReadPlayerValues(std::size_t player_index);
 
     void ReadTouchscreenValues();
