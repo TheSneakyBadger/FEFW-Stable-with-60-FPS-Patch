@@ -390,6 +390,29 @@ void SetActiveUpscaler(const char* name) {
     active_upscaler.store(name, std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<const char*> active_frame_generation{nullptr};
+std::atomic<s64> active_frame_generation_time{0};
+s64 SteadyMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // Anonymous namespace
+
+const char* ActiveFrameGeneration() {
+    if (SteadyMilliseconds() - active_frame_generation_time.load(std::memory_order_relaxed) >
+        1500) {
+        return nullptr;
+    }
+    return active_frame_generation.load(std::memory_order_relaxed);
+}
+
+void SetActiveFrameGeneration(const char* name) {
+    active_frame_generation.store(name, std::memory_order_relaxed);
+    active_frame_generation_time.store(SteadyMilliseconds(), std::memory_order_relaxed);
+}
+
 bool HdrOutputActive() {
     return hdr_output_active.load(std::memory_order_relaxed);
 }

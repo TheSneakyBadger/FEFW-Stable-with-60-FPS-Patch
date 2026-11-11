@@ -448,6 +448,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         // Streamline records its own copies and state on the command buffer.
         scheduler.InvalidateState();
         frame->sl_tagged = true;
+        Settings::SetActiveFrameGeneration("NVIDIA DLSS");
         ++fsr_fg_made;
         if (++fsr_fg_generated == 1) {
             LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation: first frame tagged");
@@ -588,6 +589,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.45f));
     scheduler.Flush(*generated->render_ready);
     present_manager.Present(generated);
+    Settings::SetActiveFrameGeneration("AMD FSR 3.1");
     ++fsr_fg_made;
     if (++fsr_fg_generated == 1) {
         LOG_INFO(Render_Vulkan, "AMD FSR 3.1 frame generation: first frame made ({:.1f} ms apart)",

@@ -1115,6 +1115,10 @@ void SetHdrOutputActive(bool active);
 /// "AMD FSR 3.1"), or nullptr before any has run this boot. Shown in the status bar.
 const char* ActiveUpscaler();
 void SetActiveUpscaler(const char* name);
+/// The frame generation that made a frame in the last second or so ("NVIDIA DLSS",
+/// "AMD FSR 3.1"), else null. Set with each frame made.
+const char* ActiveFrameGeneration();
+void SetActiveFrameGeneration(const char* name);
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.

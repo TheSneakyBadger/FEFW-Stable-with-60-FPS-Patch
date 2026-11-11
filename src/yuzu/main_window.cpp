@@ -4486,9 +4486,14 @@ void MainWindow::UpdateStatusBar() {
                 break;
             }
         }
-        upscaler_label->setText(mode.isEmpty()
-                                    ? QString::fromUtf8(upscaler)
-                                    : QStringLiteral("%1 - %2").arg(QString::fromUtf8(upscaler), mode));
+        QString text = mode.isEmpty()
+                           ? QString::fromUtf8(upscaler)
+                           : QStringLiteral("%1 - %2").arg(QString::fromUtf8(upscaler), mode);
+        // The frame generation making frames now, if any.
+        if (const char* frame_gen = Settings::ActiveFrameGeneration()) {
+            text += tr("  ·  %1 Frame Gen").arg(QString::fromUtf8(frame_gen));
+        }
+        upscaler_label->setText(text);
         upscaler_label->setVisible(true);
     } else {
         upscaler_label->setVisible(false);
