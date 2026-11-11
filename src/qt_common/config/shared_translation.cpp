@@ -208,6 +208,12 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "size. Applies at 1X resolution with AMD FSR 3.1, NVIDIA DLSS or AMD FSR 4; other "
               "resolutions and the game's own DLSS use Performance. Takes effect when a game "
               "starts."));
+    INSERT(Settings, fsr_frame_generation, tr("Frame generation (AMD FSR 3.1)"),
+           tr("Makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as "
+              "60).\nOnly in the 3D scenes: it uses the game's own motion data, which menus and "
+              "movies don't have. Adds about half a frame of input delay.\nNeeds a display "
+              "faster than the game's frame rate (120 Hz or more for 60 FPS). Any graphics card; "
+              "works with any upscaler. Experimental."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));

@@ -259,6 +259,8 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 #endif
 
+    GenerateFsrFrame(frame);
+
     scheduler.Flush(*frame->render_ready);
 
     present_manager.Present(frame);
@@ -269,6 +271,102 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     gpu.RendererFrameEndNotify();
     rasterizer.TickFrame();
+}
+
+void RendererVulkan::GenerateFsrFrame(Frame* frame) {
+    frame->present_delay = {};
+    Fsr3FrameGenerator* const generator = rasterizer.FrameGenerator();
+    if (!generator) {
+        fsr_fg_last_composite.reset();
+        return;
+    }
+    // The game's frame interval (smoothed): the generated frame goes halfway through it.
+    const auto now = std::chrono::steady_clock::now();
+    if (fsr_fg_last_composite) {
+        const f32 interval =
+            std::chrono::duration<f32, std::milli>(now - *fsr_fg_last_composite).count();
+        fsr_fg_interval_ms = fsr_fg_interval_ms == 0.0f || interval > 4.0f * fsr_fg_interval_ms
+                                 ? interval
+                                 : fsr_fg_interval_ms * 0.9f + interval * 0.1f;
+    }
+    fsr_fg_last_composite = now;
+    // Only with the game's motion for this frame (3D scenes), storage-capable frames, and a frame
+    // rate where it helps: not above ~120 FPS (already smooth) or below ~15 (too far apart).
+    const bool wanted = generator->HasPrepared() && frame->storage_view &&
+                        fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
+    if (!wanted) {
+        generator->Skip();
+        return;
+    }
+    const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+    Frame* const generated = present_manager.GetRenderFrame();
+    blit_swapchain.PrepareFrame(device, generated, layout);
+    const VkFormat format = present_manager.SwapchainImageFormat();
+    const u32 transfer_function = format == VK_FORMAT_A2B10G10R10_UNORM_PACK32   ? 1U
+                                  : format == VK_FORMAT_R16G16B16A16_SFLOAT ? 2U
+                                                                            : 0U;
+    const s32 left = static_cast<s32>((std::min)(layout.screen.left, frame->width));
+    const s32 top = static_cast<s32>((std::min)(layout.screen.top, frame->height));
+    const u32 width = (std::min)(layout.screen.GetWidth(), frame->width - static_cast<u32>(left));
+    const u32 height =
+        (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
+    if (!generated->storage_view || generated->width != frame->width ||
+        generated->height != frame->height || width == 0 || height == 0) {
+        // Shouldn't happen (the frames are made alike); show the real frame twice.
+        generator->Skip();
+        scheduler.Record([source = *frame->image, destination = *generated->image,
+                          w = frame->width, h = frame->height](vk::CommandBuffer cmdbuf) {
+            const VkImageMemoryBarrier barrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = 0,
+                .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = destination,
+                .subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {}, barrier);
+            cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,
+                             VkImageCopy{
+                                 .srcSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .srcOffset{},
+                                 .dstSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .dstOffset{},
+                                 .extent{w, h, 1},
+                             });
+        });
+        scheduler.Flush(*generated->render_ready);
+        present_manager.Present(generated);
+        return;
+    }
+    generator->Generate({
+        .current_image = *frame->image,
+        .current_view = *frame->storage_view,
+        .output_image = *generated->image,
+        .output_view = *generated->storage_view,
+        .format = format,
+        .display_size = {frame->width, frame->height},
+        .interpolation_rect = {.offset = {left, top}, .extent = {width, height}},
+        .frame_time_ms = fsr_fg_interval_ms,
+        .reset = false,
+        .transfer_function = transfer_function,
+        .min_max_luminance = {0.0f, 1000.0f},
+    });
+    // Each frame shows for half the game's interval (a little less, so a late frame catches up).
+    const auto half = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.5f * 0.95f));
+    generated->present_delay = half;
+    frame->present_delay = half;
+    scheduler.Flush(*generated->render_ready);
+    present_manager.Present(generated);
+    if (++fsr_fg_generated == 1) {
+        LOG_INFO(Render_Vulkan, "AMD FSR 3.1 frame generation: first frame made ({:.1f} ms apart)",
+                 fsr_fg_interval_ms);
+    }
 }
 
 void RendererVulkan::Report() const {

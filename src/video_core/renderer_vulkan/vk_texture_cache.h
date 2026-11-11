@@ -25,6 +25,7 @@
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #endif
+#include "video_core/renderer_vulkan/vk_fsr3_frame_generator.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
 
@@ -96,6 +97,10 @@ public:
                          ImageView& motion_vectors, ImageView& depth,
                          std::array<u32, 2> render_size, std::array<f32, 2> jitter,
                          std::array<f32, 2> motion_scale);
+
+    /// AMD FSR 3.1 frame generation while it is on in the settings and the device can run it
+    /// (created on first use), else null.
+    [[nodiscard]] Fsr3FrameGenerator* FrameGenerator();
 
     /// True while TemporalUpscale would replace the game's DLSS: AMD FSR 4 or NVIDIA DLSS (on in
     /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (ticked, not failed).
@@ -192,6 +197,8 @@ public:
     DescriptorPool& descriptor_pool;
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
     std::unique_ptr<Fsr3Upscaler> fsr3_upscaler;
+    std::unique_ptr<Fsr3FrameGenerator> frame_generator;
+    bool frame_generator_unsupported{};
     bool fsr3_unsupported{};
     std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;
     bool Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& input_color,

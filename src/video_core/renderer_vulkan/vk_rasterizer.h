@@ -141,6 +141,11 @@ public:
                                    std::array<f32, 2> jitter,
                                    std::array<f32, 2> motion_scale) override;
     bool UsesReplacementUpscaler() const override;
+
+    /// AMD FSR 3.1 frame generation, when on (see TextureCacheRuntime::FrameGenerator).
+    Fsr3FrameGenerator* FrameGenerator() {
+        return texture_cache_runtime.FrameGenerator();
+    }
     Tegra::Engines::AccelerateDMAInterface& AccessAccelerateDMA() override;
     void AccelerateInlineToMemory(GPUVAddr address, size_t copy_size,
                                   std::span<const u8> memory) override;

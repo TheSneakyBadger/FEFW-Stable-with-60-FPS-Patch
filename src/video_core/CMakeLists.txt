@@ -204,6 +204,8 @@ add_library(video_core STATIC
     renderer_vulkan/vk_state_tracker.h
     renderer_vulkan/vk_swapchain.cpp
     renderer_vulkan/vk_swapchain.h
+    renderer_vulkan/vk_fsr3_frame_generator.cpp
+    renderer_vulkan/vk_fsr3_frame_generator.h
     renderer_vulkan/vk_fsr3_upscaler.cpp
     renderer_vulkan/vk_fsr3_upscaler.h
     renderer_vulkan/vk_fsr4_upscaler.cpp

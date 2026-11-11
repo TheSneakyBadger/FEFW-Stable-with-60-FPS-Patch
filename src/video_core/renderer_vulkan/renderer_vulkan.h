@@ -74,6 +74,9 @@ private:
                               VkDeviceSize buffer_size);
     void RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers);
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
+    /// AMD FSR 3.1 frame generation: presents a frame between the last one and `frame` (when on
+    /// and this frame has the game's motion), and paces the two.
+    void GenerateFsrFrame(Frame* frame);
 
     std::vector<Tegra::FramebufferConfig> applet_capture_layers;
     std::vector<Tegra::FramebufferConfig> screenshot_layer_scratch;
@@ -108,6 +111,9 @@ private:
     FrameGen frame_gen;
 #endif
     std::optional<TurboMode> turbo_mode;
+    std::optional<std::chrono::steady_clock::time_point> fsr_fg_last_composite;
+    f32 fsr_fg_interval_ms{};
+    u64 fsr_fg_generated{};
 
     Frame applet_frame;
 };

@@ -1378,24 +1378,62 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
     }
     // The chosen upscaler; AMD FSR 3.1 when NVIDIA DLSS or FSR 4 can't run.
     const Settings::Upscaler choice = Settings::values.upscaler.GetValue();
+    bool upscaled = false;
     if (choice == Settings::Upscaler::Fsr4) {
         if (Fsr4Upscale(dst_framebuffer, dst, input_color, motion_vectors, depth, render_size,
                         jitter, motion_scale)) {
             Settings::SetActiveUpscaler("AMD FSR 4");
-            return true;
+            upscaled = true;
         }
     } else if (choice == Settings::Upscaler::NvidiaDlss &&
                NvidiaDlssUpscale(dst_framebuffer, dst, input_color, motion_vectors, depth,
                                  render_size, jitter, motion_scale)) {
         Settings::SetActiveUpscaler("NVIDIA DLSS");
-        return true;
+        upscaled = true;
     }
-    if (Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size, jitter,
-                    motion_scale)) {
+    if (!upscaled && Fsr3Upscale(dst_framebuffer, input_color, motion_vectors, depth, render_size,
+                                 jitter, motion_scale)) {
         Settings::SetActiveUpscaler("AMD FSR 3.1");
-        return true;
+        upscaled = true;
     }
-    return false;
+    // Frame generation takes this frame's motion and depth now, while they are the game's.
+    if (upscaled) {
+        if (Fsr3FrameGenerator* const generator = FrameGenerator()) {
+            generator->Prepare({
+                .depth = depth.DepthView(),
+                .motion_vectors = motion_vectors.Handle(Shader::TextureType::Color2D),
+                .render_size = {render_size[0], render_size[1]},
+                .jitter = jitter,
+                .motion_vector_scale = motion_scale,
+            });
+        }
+    }
+    return upscaled;
+}
+
+Fsr3FrameGenerator* TextureCacheRuntime::FrameGenerator() {
+    if (!Settings::values.fsr_frame_generation.GetValue() || frame_generator_unsupported) {
+        return nullptr;
+    }
+    if (!frame_generator) {
+        if (!Fsr3FrameGenerator::IsSupported(device)) {
+            LOG_WARNING(Render_Vulkan,
+                        "AMD FSR 3.1 frame generation needs formats or features this device lacks");
+            frame_generator_unsupported = true;
+            return nullptr;
+        }
+        try {
+            frame_generator = std::make_unique<Fsr3FrameGenerator>(
+                device, scheduler, memory_allocator, staging_buffer_pool, descriptor_pool,
+                compute_pass_descriptor_queue);
+        } catch (const vk::Exception& exception) {
+            LOG_ERROR(Render_Vulkan, "AMD FSR 3.1 frame generation failed to start ({})",
+                      exception.what());
+            frame_generator_unsupported = true;
+            return nullptr;
+        }
+    }
+    return frame_generator.get();
 }
 
 // AMD FidelityFX Super Resolution 3.1 (externals/FidelityFX-SDK, MIT), the base replacement for

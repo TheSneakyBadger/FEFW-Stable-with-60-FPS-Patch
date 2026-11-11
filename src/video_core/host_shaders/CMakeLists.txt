@@ -272,6 +272,63 @@ foreach(VARIANT IN ITEMS ${FSR3_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${FSR3_HEADER_FILE})
 endforeach()
 
+# AMD FidelityFX frame interpolation and optical flow (externals/FidelityFX-SDK, unmodified): FSR 3.1
+# frame generation. The SDK's Vulkan pass files with the upscaler's input options (render-size
+# motion vectors, reversed depth).
+set(FFXFG_GPU_DIR ${CMAKE_SOURCE_DIR}/externals/FidelityFX-SDK/include/FidelityFX/gpu)
+set(FFXFG_PASS_DIR ${CMAKE_SOURCE_DIR}/externals/FidelityFX-SDK/shaders)
+file(GLOB FFXFG_GPU_FILES ${FFXFG_GPU_DIR}/*.h ${FFXFG_GPU_DIR}/spd/*.h
+     ${FFXFG_GPU_DIR}/frameinterpolation/*.h ${FFXFG_GPU_DIR}/opticalflow/*.h)
+set(FFXFG_VARIANTS
+    "fi_reconstruct_and_dilate|frameinterpolation|ffx_frameinterpolation_reconstruct_and_dilate_pass|none"
+    "fi_setup|frameinterpolation|ffx_frameinterpolation_setup_pass|none"
+    "fi_reconstruct_previous_depth|frameinterpolation|ffx_frameinterpolation_reconstruct_previous_depth_pass|none"
+    "fi_game_motion_vector_field|frameinterpolation|ffx_frameinterpolation_game_motion_vector_field_pass|none"
+    "fi_game_vector_field_inpainting_pyramid|frameinterpolation|ffx_frameinterpolation_compute_game_vector_field_inpainting_pyramid_pass|none"
+    "fi_optical_flow_vector_field|frameinterpolation|ffx_frameinterpolation_optical_flow_vector_field_pass|none"
+    "fi_disocclusion_mask|frameinterpolation|ffx_frameinterpolation_disocclusion_mask_pass|none"
+    "fi_interpolation|frameinterpolation|ffx_frameinterpolation_pass|none"
+    "fi_inpainting_pyramid|frameinterpolation|ffx_frameinterpolation_compute_inpainting_pyramid_pass|none"
+    "fi_inpainting|frameinterpolation|ffx_frameinterpolation_inpainting_pass|none"
+    "of_prepare_luma|opticalflow|ffx_opticalflow_prepare_luma_pass|none"
+    "of_luminance_pyramid|opticalflow|ffx_opticalflow_compute_luminance_pyramid_pass|none"
+    "of_scd_histogram|opticalflow|ffx_opticalflow_generate_scd_histogram_pass|none"
+    "of_scd_divergence|opticalflow|ffx_opticalflow_compute_scd_divergence_pass|none"
+    "of_search|opticalflow|ffx_opticalflow_compute_optical_flow_advanced_pass_v5|none"
+    "of_filter|opticalflow|ffx_opticalflow_filter_optical_flow_pass_v5|none"
+    "of_scale|opticalflow|ffx_opticalflow_scale_optical_flow_advanced_pass_v5|none"
+)
+foreach(VARIANT IN ITEMS ${FFXFG_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS "${VARIANT}")
+    list(GET VARIANT_PARTS 0 FFXFG_NAME)
+    list(GET VARIANT_PARTS 1 FFXFG_COMPONENT)
+    list(GET VARIANT_PARTS 2 FFXFG_PASS)
+    list(GET VARIANT_PARTS 3 FFXFG_DEFINE)
+    if (FFXFG_DEFINE STREQUAL "none")
+        set(FFXFG_DEFINE "")
+    endif()
+    set(FFXFG_SOURCE ${FFXFG_PASS_DIR}/${FFXFG_COMPONENT}/${FFXFG_PASS}.glsl)
+    string(TOUPPER fsr3_fg_${FFXFG_NAME}_comp_spv FFXFG_VARIABLE_NAME)
+    set(FFXFG_HEADER_FILE ${SHADER_DIR}/fsr3_fg_${FFXFG_NAME}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${FFXFG_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -S comp -I"${FFXFG_GPU_DIR}"
+            -I"${FFXFG_GPU_DIR}/${FFXFG_COMPONENT}" -DFFX_GPU=1 -DFFX_GLSL=1
+            -DFFX_FRAMEINTERPOLATION_OPTION_LOW_RES_MOTION_VECTORS=1
+            -DFFX_FRAMEINTERPOLATION_OPTION_JITTER_MOTION_VECTORS=0
+            -DFFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH=1 ${FFXFG_DEFINE}
+            --variable-name ${FFXFG_VARIABLE_NAME} -o ${FFXFG_HEADER_FILE} ${FFXFG_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${FFXFG_SOURCE}
+        DEPENDS
+            ${FFXFG_GPU_FILES}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${FFXFG_HEADER_FILE})
+endforeach()
+
 foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
     get_filename_component(FILENAME ${FILEPATH} NAME)
     string(REPLACE "." "_" HEADER_NAME ${FILENAME})

@@ -411,6 +411,11 @@ struct Values {
     // the game's own DLSS stay at Performance. Takes effect when a game starts.
     SwitchableSetting<UpscalerQuality, true> upscaler_quality{
         linkage, UpscalerQuality::Balanced, "upscaler_quality", Category::Renderer};
+    // AMD FSR 3.1 frame generation: a frame made between each two of the game's, from its motion
+    // (the DLSS evaluation's motion vectors and depth) and optical flow. Only in the 3D scenes,
+    // where the game evaluates DLSS; needs a display faster than the game's frame rate.
+    SwitchableSetting<bool> fsr_frame_generation{linkage, false, "fsr_frame_generation",
+                                                 Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.

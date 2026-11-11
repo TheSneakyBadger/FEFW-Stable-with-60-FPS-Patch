@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <thread>
+
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
@@ -195,8 +197,27 @@ void PresentManager::Present(Frame* frame) {
         });
     } else {
         scheduler.WaitWorker();
+        Pace(frame);
         CopyToSwapchain(frame);
+        last_present = std::chrono::steady_clock::now();
         free_queue.push_back(frame);
+    }
+}
+
+void PresentManager::Pace(const Frame* frame) {
+    if (frame->present_delay.count() <= 0) {
+        return;
+    }
+    // Sleep to a little before the time (a sleep can overrun by a millisecond or more), then
+    // yield until it.
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point target = last_present + frame->present_delay;
+    const Clock::time_point coarse = target - std::chrono::microseconds{1500};
+    if (Clock::now() < coarse) {
+        std::this_thread::sleep_until(coarse);
+    }
+    while (Clock::now() < target) {
+        std::this_thread::yield();
     }
 }
 
@@ -345,7 +366,9 @@ void PresentManager::PresentThread(std::stop_token token) {
             // before the queue lock goes out of scope. This way the swapchain
             // lock in WaitPresent is guaranteed to occur after here.
             void(std::exchange(lock, std::unique_lock{swapchain_mutex}));
+            Pace(frame);
             CopyToSwapchain(frame);
+            last_present = std::chrono::steady_clock::now();
 
             // Free the frame for reuse
             std::scoped_lock fl{free_mutex};
