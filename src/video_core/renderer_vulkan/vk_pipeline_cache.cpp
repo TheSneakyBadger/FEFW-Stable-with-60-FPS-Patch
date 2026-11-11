@@ -45,6 +45,7 @@
 #include "video_core/shader_cache.h"
 #include "video_core/shader_environment.h"
 #include "video_core/shader_notify.h"
+#include "video_core/fefw_load_stats.h"
 #include "video_core/surface.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -684,6 +685,7 @@ ComputePipeline* PipelineCache::CurrentComputePipeline() {
     if (!is_new) {
         return pipeline.get();
     }
+    FefwLoadStats::Add(FefwLoadStats::Get().compute_pipelines);
     pipeline = CreateComputePipeline(key, shader);
     return pipeline.get();
 }
@@ -877,6 +879,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
         if (translating_graphics.contains(graphics_key)) {
             // Its translation is still running on a worker thread: the draw is dropped on
             // purpose, as for a pipeline the driver has not built yet.
+            FefwLoadStats::Add(FefwLoadStats::Get().draws_dropped);
             draw_deferred = true;
             return nullptr;
         }
@@ -909,6 +912,7 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) const
     }
     // The draw is dropped until the pipeline exists. Native draws are dropped on purpose here, so
     // the rasterizer must not report them as failed native work.
+    FefwLoadStats::Add(FefwLoadStats::Get().draws_dropped);
     draw_deferred = true;
     return nullptr;
 }
@@ -925,6 +929,7 @@ bool PipelineCache::CanSkipDraw() const noexcept {
 }
 
 bool PipelineCache::BuildNewGraphicsPipeline() {
+    FefwLoadStats::Add(FefwLoadStats::Get().graphics_pipelines);
     if (CanTranslateAsynchronously()) {
         // With an earlier pipeline's shaders only the driver compile is left, and it goes to the
         // pipeline workers: no translation worker is needed.
@@ -932,6 +937,7 @@ bool PipelineCache::BuildNewGraphicsPipeline() {
             graphics_cache.emplace(graphics_key, std::move(pipeline));
             return true;
         }
+        FefwLoadStats::Add(FefwLoadStats::Get().translations);
         if (std::optional<std::future<void>> done{QueueGraphicsTranslation()}) {
             return WaitForGraphicsTranslation(*done);
         }

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
+#include <string>
 #include <utility>
 #include "core/fefw_frame_rate.h"
 #include "core/hle/kernel/fefw_cpu_stats.h"
@@ -33,6 +34,7 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/am/service/graphics_supervisor.h"
+#include "video_core/fefw_load_stats.h"
 #include "core/hle/service/am/service/graphics_session.h"
 #include "core/hle/service/am/service/gpu_session.h"
 #include "core/hle/service/am/service/graphics_supervisor_protocol.h"
@@ -1003,6 +1005,44 @@ private:
     // worst time between them, and how many took over 50 ms (a missed frame at 30 FPS is ~67 ms)
     // and over 100 ms. Shows whether a PC keeps up without logging every frame. A gap over 2 s
     // (loading, a pause, the window in the background) starts a new period instead of counting.
+    // What FefwLoadStats counted, as a snapshot (all fields rise only).
+    struct LoadSnapshot {
+        u64 pipelines{};
+        u64 translations{};
+        u64 compute{};
+        u64 dropped{};
+        u64 astc{};
+        u64 astc_waits{};
+
+        static LoadSnapshot Take() {
+            auto& c = FefwLoadStats::Get();
+            return {c.graphics_pipelines.load(std::memory_order_relaxed),
+                    c.translations.load(std::memory_order_relaxed),
+                    c.compute_pipelines.load(std::memory_order_relaxed),
+                    c.draws_dropped.load(std::memory_order_relaxed),
+                    c.astc_textures.load(std::memory_order_relaxed),
+                    c.astc_waits.load(std::memory_order_relaxed)};
+        }
+        LoadSnapshot operator-(const LoadSnapshot& o) const {
+            return {pipelines - o.pipelines, translations - o.translations, compute - o.compute,
+                    dropped - o.dropped,     astc - o.astc,               astc_waits - o.astc_waits};
+        }
+        LoadSnapshot& operator+=(const LoadSnapshot& o) {
+            pipelines += o.pipelines;
+            translations += o.translations;
+            compute += o.compute;
+            dropped += o.dropped;
+            astc += o.astc;
+            astc_waits += o.astc_waits;
+            return *this;
+        }
+        std::string Text() const {
+            return fmt::format("{} pipelines built ({} with new shaders), {} compute, {} draws "
+                               "skipped while building, {} ASTC textures ({} waits)",
+                               pipelines, translations, compute, dropped, astc, astc_waits);
+        }
+    };
+
     void LogFramePacing() {
         using Clock = std::chrono::steady_clock;
         struct Pacing {
@@ -1013,17 +1053,25 @@ private:
             double worst_ms{};
             u32 over_50{};
             u32 over_100{};
+            LoadSnapshot period_load{}; // at the start of the period
+            LoadSnapshot slow_load{};   // summed over the frames over 100 ms
         };
         static Pacing pacing;
+        static LoadSnapshot last_load;
         const auto now = Clock::now();
+        const LoadSnapshot load = LoadSnapshot::Take();
+        const LoadSnapshot since_last = load - last_load;
+        last_load = load;
         if (pacing.last == Clock::time_point{}) {
             pacing.last = pacing.period_start = now;
+            pacing.period_load = load;
             return;
         }
         const double gap_ms = std::chrono::duration<double, std::milli>(now - pacing.last).count();
         pacing.last = now;
         if (gap_ms > 2000.0) {
             pacing = Pacing{now, now};
+            pacing.period_load = load;
             return;
         }
         ++pacing.frames;
@@ -1034,15 +1082,22 @@ private:
         }
         if (gap_ms > 100.0) {
             ++pacing.over_100;
+            pacing.slow_load += since_last;
         }
         if (now - pacing.period_start >= std::chrono::seconds{10}) {
+            const LoadSnapshot period = load - pacing.period_load;
+            const bool any = period.pipelines || period.compute || period.astc || period.dropped;
             LOG_INFO(Service_AM,
-                     "Frame pacing, last {:.0f} s: {} frames ({:.1f} FPS), average {:.1f} ms, worst {:.0f} ms, {} over 50 ms, {} over 100 ms",
+                     "Frame pacing, last {:.0f} s: {} frames ({:.1f} FPS), average {:.1f} ms, worst {:.0f} ms, {} over 50 ms, {} over 100 ms{}{}",
                      std::chrono::duration<double>(now - pacing.period_start).count(), pacing.frames,
                      static_cast<double>(pacing.frames) /
                          std::chrono::duration<double>(now - pacing.period_start).count(),
-                     pacing.total_ms / static_cast<double>(pacing.frames), pacing.worst_ms, pacing.over_50, pacing.over_100);
+                     pacing.total_ms / static_cast<double>(pacing.frames), pacing.worst_ms, pacing.over_50, pacing.over_100,
+                     any ? "; " + period.Text() : std::string{},
+                     pacing.over_100 ? "; in the frames over 100 ms: " + pacing.slow_load.Text()
+                                     : std::string{});
             pacing = Pacing{now, now};
+            pacing.period_load = load;
         }
     }
     Result QueueNativeImage(ClientState& state, const u32* packet) {

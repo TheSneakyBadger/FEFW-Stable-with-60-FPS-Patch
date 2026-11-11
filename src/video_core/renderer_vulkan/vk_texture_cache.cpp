@@ -23,6 +23,7 @@
 #include "common/settings.h"
 
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
+#include "video_core/fefw_load_stats.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 
 #include "video_core/engines/fermi_2d.h"
@@ -3643,6 +3644,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     const u32 height = info.size.height;
     const u32 levels = static_cast<u32>(info.resources.levels);
     const u32 layers = static_cast<u32>(info.resources.layers);
+    FefwLoadStats::Add(FefwLoadStats::Get().astc_textures);
     constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
     // A decode image of the same shape the GPU is done with: many textures share a few shapes,
     // and making an image each time cost more than the decode.
@@ -3679,6 +3681,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                 pending_transcodes.front().tick >= scheduler.CurrentTick()) {
                 break;
             }
+            FefwLoadStats::Add(FefwLoadStats::Get().astc_waits);
             static u32 waits_logged = 0;
             if (waits_logged < 20) {
                 ++waits_logged;

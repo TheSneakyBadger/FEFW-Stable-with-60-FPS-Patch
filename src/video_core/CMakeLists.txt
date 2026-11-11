@@ -99,6 +99,7 @@ add_library(video_core STATIC
     native_semaphore.h
     back_thread_stats.cpp
     back_thread_stats.h
+    fefw_load_stats.h
     gpu_split.cpp
     gpu_split.h
     gpu_thread.cpp
