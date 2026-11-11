@@ -353,6 +353,23 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             show_panel();
             connect(box, &QComboBox::currentIndexChanged, panel, show_panel);
             hold_graphics.emplace(setting->Id(), group);
+        } else if (setting->Id() == Settings::values.frame_generation.Id() && widget->combobox) {
+            // NVIDIA's frame generation files and a download button while it is chosen.
+            QWidget* group = new QWidget(this);
+            QVBoxLayout* group_layout = new QVBoxLayout(group);
+            group_layout->setContentsMargins(0, 0, 0, 0);
+            group_layout->setSpacing(2);
+            group_layout->addWidget(widget);
+            NvidiaDlssPanel* panel = new NvidiaDlssPanel(group, true);
+            group_layout->addWidget(panel);
+            QComboBox* const box = widget->combobox;
+            const auto show_panel = [box, panel] {
+                panel->setVisible(box->currentData().toUInt() ==
+                                  static_cast<u32>(Settings::FrameGeneration::NvidiaDlss));
+            };
+            show_panel();
+            connect(box, &QComboBox::currentIndexChanged, panel, show_panel);
+            hold_graphics.emplace(setting->Id(), group);
 #endif
         } else if (setting->Id() == Settings::values.upscaler_quality.Id() && widget->combobox) {
             // A warning under the list when the chosen resolution or upscaler ignores it.

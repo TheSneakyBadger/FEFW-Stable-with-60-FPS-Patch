@@ -301,6 +301,19 @@ DlssFiles FindDlssFiles() {
     return files;
 }
 
+std::vector<std::string> MissingFrameGenFiles() {
+    const std::filesystem::path folder = FindDlssFiles().folder;
+    std::vector<std::string> missing;
+    std::error_code ec;
+    for (const char* name : {"sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll",
+                             "sl.reflex.dll", "sl.pcl.dll", "nvngx_dlssg.dll"}) {
+        if (!std::filesystem::is_regular_file(folder / name, ec)) {
+            missing.emplace_back(name);
+        }
+    }
+    return missing;
+}
+
 bool Start() {
     State& state = GetState();
     if (state.started) {

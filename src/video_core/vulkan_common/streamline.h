@@ -30,6 +30,11 @@ struct DlssFiles {
 
 [[nodiscard]] DlssFiles FindDlssFiles();
 
+/// The files DLSS frame generation needs (besides the NVIDIA driver) that aren't in the
+/// Streamline folder (FindDlssFiles().folder): sl.interposer.dll, sl.common.dll, sl.dlss_g.dll,
+/// sl.reflex.dll, sl.pcl.dll and nvngx_dlssg.dll.
+[[nodiscard]] std::vector<std::string> MissingFrameGenFiles();
+
 /// The user folder's "streamline" folder.
 [[nodiscard]] std::filesystem::path UserFolder();
 

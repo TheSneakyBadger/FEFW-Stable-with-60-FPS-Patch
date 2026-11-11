@@ -55,6 +55,7 @@ constexpr const char* INTERPOSER_ENTRY = "bin/x64/sl.interposer.dll";
 constexpr const char* MODEL_ENTRY = "bin/x64/nvngx_dlss.dll";
 constexpr const char* STREAMLINE_LICENSE_ENTRY = "license.txt";
 constexpr const char* DLSS_LICENSE_ENTRY = "bin/x64/nvngx_dlss.license.txt";
+constexpr const char* REFLEX_LICENSE_ENTRY = "bin/x64/reflex.license.txt";
 
 QString Tr(const char* text) {
     return QCoreApplication::translate("NvidiaDlssPanel", text);
@@ -309,7 +310,8 @@ QString PathText(const std::filesystem::path& path) {
 
 } // Anonymous namespace
 
-NvidiaDlssPanel::NvidiaDlssPanel(QWidget* parent) : QWidget(parent) {
+NvidiaDlssPanel::NvidiaDlssPanel(QWidget* parent, bool frame_generation_)
+    : QWidget(parent), frame_generation{frame_generation_} {
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->setContentsMargins(24, 0, 0, 8);
     layout->setSpacing(6);
@@ -362,6 +364,32 @@ void NvidiaDlssPanel::showEvent(QShowEvent* event) {
 
 void NvidiaDlssPanel::Refresh() {
     const Streamline::DlssFiles files = Streamline::FindDlssFiles();
+    if (frame_generation) {
+        const std::vector<std::string> missing = Streamline::MissingFrameGenFiles();
+        const bool ready = missing.empty();
+        QStringList names;
+        for (const std::string& name : missing) {
+            names << QString::fromStdString(name);
+        }
+        icon_label->setText(ready ? QStringLiteral("<span style=\"color:#2ea043\">&#10004;</span>")
+                                  : QStringLiteral("<span style=\"color:#d29922\">&#9888;</span>"));
+        status_label->setText(
+            ready ? Tr("<b>Ready.</b> NVIDIA's frame generation files are in place (it also needs "
+                       "a GeForce RTX 40 or 50 and hardware-accelerated GPU scheduling on in "
+                       "Windows).")
+                  : Tr("<b>NVIDIA's files needed:</b> %1. Until then, AMD FSR 3.1 frame "
+                       "generation is used.")
+                        .arg(names.join(QStringLiteral(", "))));
+        status_label->setToolTip(Tr("Folder: %1").arg(PathText(files.folder)));
+        // About 1 MB a Streamline module, 7 MB the frame generation model.
+        int megabytes = 0;
+        for (const std::string& name : missing) {
+            megabytes += name == "nvngx_dlssg.dll" ? 7 : 1;
+        }
+        download_button->setText(Tr("Download from NVIDIA (about %1 MB)").arg(megabytes));
+        download_button->setVisible(!ready);
+        return;
+    }
     const bool has_loader = !files.interposer.empty();
     const bool has_model = !files.model.empty() || !files.app_model.empty();
     const QString dlss = !files.model.empty()
@@ -400,16 +428,24 @@ void NvidiaDlssPanel::Refresh() {
 void NvidiaDlssPanel::Download() {
     const Streamline::DlssFiles files = Streamline::FindDlssFiles();
     std::vector<std::string> wanted;
-    if (files.interposer.empty()) {
-        wanted.emplace_back(INTERPOSER_ENTRY);
-    }
-    if (files.model.empty() && files.app_model.empty()) {
-        wanted.emplace_back(MODEL_ENTRY);
+    if (frame_generation) {
+        for (const std::string& name : Streamline::MissingFrameGenFiles()) {
+            wanted.push_back("bin/x64/" + name);
+        }
+    } else {
+        if (files.interposer.empty()) {
+            wanted.emplace_back(INTERPOSER_ENTRY);
+        }
+        if (files.model.empty() && files.app_model.empty()) {
+            wanted.emplace_back(MODEL_ENTRY);
+        }
     }
     if (wanted.empty()) {
         return;
     }
-    const std::filesystem::path folder = Streamline::UserFolder();
+    // Next to the Streamline loader already in use, if any (it loads its plugins from there).
+    const std::filesystem::path folder =
+        files.interposer.empty() ? Streamline::UserFolder() : files.folder;
     const auto fail = [this](const std::string& error) {
         LOG_ERROR(Frontend, "NVIDIA DLSS download failed: {}", error);
         QMessageBox::warning(this, Tr("NVIDIA DLSS"),
@@ -434,8 +470,11 @@ void NvidiaDlssPanel::Download() {
         }
         std::vector<std::pair<QString, const char*>> texts{
             {Tr("NVIDIA Streamline"), STREAMLINE_LICENSE_ENTRY}};
-        if (std::ranges::find(wanted, MODEL_ENTRY) != wanted.end()) {
+        if (std::ranges::find(wanted, MODEL_ENTRY) != wanted.end() || frame_generation) {
             texts.emplace_back(Tr("NVIDIA DLSS"), DLSS_LICENSE_ENTRY);
+        }
+        if (frame_generation) {
+            texts.emplace_back(Tr("NVIDIA Reflex"), REFLEX_LICENSE_ENTRY);
         }
         for (const auto& [title, entry_name] : texts) {
             const ZipEntry* const entry = zip.Find(entry_name);
@@ -528,8 +567,12 @@ void NvidiaDlssPanel::Download() {
                 return;
             }
         }
-        const bool signed_ok = wanted[i] == INTERPOSER_ENTRY ? Streamline::IsStreamlineModule(partial)
-                                                             : Streamline::IsSignedByNvidia(partial);
+        // Streamline's own modules (sl.*.dll) carry its signature; NVIDIA's models are signed
+        // by NVIDIA.
+        const bool streamline_module =
+            std::filesystem::path{wanted[i]}.filename().string().starts_with("sl.");
+        const bool signed_ok = streamline_module ? Streamline::IsStreamlineModule(partial)
+                                                 : Streamline::IsSignedByNvidia(partial);
         if (!signed_ok) {
             std::filesystem::remove(partial, ec);
             progress.close();
@@ -550,7 +593,11 @@ void NvidiaDlssPanel::Download() {
     progress.close();
     Refresh();
     QMessageBox::information(this, Tr("NVIDIA DLSS"),
-                             Tr("NVIDIA DLSS is ready. It is used the next time a game starts."));
+                             frame_generation
+                                 ? Tr("NVIDIA DLSS frame generation is ready. It is used the next "
+                                      "time a game starts.")
+                                 : Tr("NVIDIA DLSS is ready. It is used the next time a game "
+                                      "starts."));
 }
 
 #endif

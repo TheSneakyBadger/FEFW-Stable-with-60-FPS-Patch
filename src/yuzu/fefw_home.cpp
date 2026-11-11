@@ -21,6 +21,9 @@
 
 #include "common/fefw_version.h"
 #include "common/settings.h"
+#ifdef EGLANTINE_STREAMLINE
+#include "video_core/vulkan_common/streamline.h"
+#endif
 #include "qt_common/game_list/game_list_p.h"
 
 namespace {
@@ -333,6 +336,7 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
             static_cast<Settings::FrameGeneration>(frame_gen_box->itemData(index).toInt());
         if (index >= 0 && Settings::values.frame_generation.GetValue() != frame_gen) {
             Settings::values.frame_generation.SetValue(frame_gen);
+            UpdateStatusLine();
             emit SettingChanged();
         }
     });
@@ -400,11 +404,20 @@ void FefwHome::UpdateStatusLine() {
     const Settings::Upscaler upscaler = Settings::values.upscaler.GetValue();
     const bool at_1x = Settings::values.resolution_setup.GetValue() == Settings::ResolutionSetup::Res1X;
     // The drop-downs show the choices; the line only says when the quality doesn't apply.
-    status_label->setText(upscaler == Settings::Upscaler::GameDlss
-                              ? tr("The game's own DLSS always draws at Performance.")
-                          : !at_1x ? tr("Upscaler quality applies at 1X resolution (Performance "
-                                        "at this one).")
-                                   : QString{});
+    QStringList notes;
+    if (upscaler == Settings::Upscaler::GameDlss) {
+        notes << tr("The game's own DLSS always draws at Performance.");
+    } else if (!at_1x) {
+        notes << tr("Upscaler quality applies at 1X resolution (Performance at this one).");
+    }
+#ifdef EGLANTINE_STREAMLINE
+    if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
+        !Vulkan::Streamline::MissingFrameGenFiles().empty()) {
+        notes << tr("NVIDIA DLSS frame generation needs NVIDIA's files: Settings → Graphics → "
+                    "Frame generation has a download button (until then AMD's is used).");
+    }
+#endif
+    status_label->setText(notes.join(QLatin1Char('\n')));
     status_label->setVisible(!status_label->text().isEmpty());
 
     const QSignalBlocker sixty_blocker{sixty_fps};
