@@ -171,6 +171,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("How fast the mouse moves the cursor in Fortune's Weave's mouse controls "
               "(Options > Controls > Mouse Controls), from 1 to 20. Turn mouse mode on with the "
               "button at the bottom of the window (Ctrl + Enter turns it off)."));
+    INSERT(Settings, hdr_paper_white, tr("HDR paper white (nits):"),
+           tr("How bright the game's HDR picture treats white paper and the menus (203 is the "
+              "HDR standard's). Raise it if the HDR picture looks darker than SDR; around 250-350 "
+              "suits most PC HDR monitors. Only with HDR output on. Takes effect when the game "
+              "starts."));
     INSERT(Settings, hdr_output, tr("HDR output (HDR10)"),
            tr("Shows the game in HDR on an HDR display. Turn on HDR in Windows first (Settings > "
               "Display > Use HDR).\nFire Emblem: Fortune's Weave then makes its own HDR picture: "

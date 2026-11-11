@@ -410,6 +410,18 @@ struct Values {
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.
     SwitchableSetting<bool> hdr_output{linkage, false, "hdr_output", Category::Renderer};
+    // The HDR reference ("paper") white, in nits, told to a game that asks the display for it
+    // (Fortune's Weave's HDR mode). 203 is BT.2408's; brighter makes the game's HDR picture
+    // brighter where it uses it. Takes effect when the game starts.
+    SwitchableSetting<int, true> hdr_paper_white{linkage,
+                                                 203,
+                                                 80,
+                                                 500,
+                                                 "hdr_paper_white",
+                                                 Category::Renderer,
+                                                 Specialization::Scalar,
+                                                 true,
+                                                 true};
     // Kompas9's 3440x1440 ultrawide patch for Fortune's Weave 1.1.0 (file_sys/fefw_ultrawide.h),
     // built in; when on, the picture is also stretched to the window. Takes effect at game start.
     SwitchableSetting<bool> fefw_ultrawide{linkage, false, "fefw_ultrawide", Category::Renderer};

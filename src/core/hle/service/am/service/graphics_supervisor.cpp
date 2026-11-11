@@ -1392,7 +1392,15 @@ private:
     }
 
     void GetDisplayState105(HLERequestContext& ctx) {
-        ReplyDisplayState(ctx, 0x79, 3, HdrPaperWhiteNits);
+        // The player's choice (Settings > Graphics, 203 by default) while the window is HDR.
+        const u32 paper_white = Settings::HdrOutputActive()
+                                    ? static_cast<u32>(Settings::values.hdr_paper_white.GetValue())
+                                    : HdrPaperWhiteNits;
+        static std::atomic<u32> reported{0};
+        if (reported.exchange(paper_white) != paper_white) {
+            LOG_INFO(Service_AM, "VI2 HDR paper white asked for: {} nits", paper_white);
+        }
+        ReplyDisplayState(ctx, 0x79, 3, paper_white);
     }
 
     // Command 107 (DragXDrive): request header 0x7b with the display name, reply header 0x7b with seven
