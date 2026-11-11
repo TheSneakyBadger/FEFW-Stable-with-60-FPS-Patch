@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include <array>
 #include <atomic>
 
@@ -75,6 +77,7 @@ private:
     vk::ImageView output_view;
     vk::Sampler point_sampler;
     std::atomic<bool> failed{};
+    std::optional<u64> seen_evaluate_failures;
 };
 
 } // namespace Vulkan

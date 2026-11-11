@@ -218,6 +218,21 @@ bool StreamlineDlssUpscaler::Upscale(const Inputs& in) {
     if (failed) {
         return false;
     }
+    // Streamline logs NGX failing inside an evaluation but returns success, and the output is
+    // never written (black picture, missing characters; issue #34). A few such failures since
+    // the last frame count as a failed evaluation, so the caller's fallback takes over.
+    const u64 evaluate_failures = Streamline::EvaluateFailures();
+    if (!seen_evaluate_failures) {
+        seen_evaluate_failures = evaluate_failures; // failures before this upscaler don't count
+    }
+    if (evaluate_failures >= *seen_evaluate_failures + 3) {
+        seen_evaluate_failures = evaluate_failures;
+        if (!failed.exchange(true)) {
+            LOG_ERROR(Render_Vulkan,
+                      "NVIDIA DLSS evaluations fail inside NGX (see the Streamline errors above)");
+        }
+        return false;
+    }
     bool reset = in.reset;
     bool options_changed = false;
     if (!output_image || in.render_size.width != render_extent.width ||

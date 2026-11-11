@@ -4,6 +4,7 @@
 // NVIDIA DLSS through NVIDIA Streamline, with Streamline's manual hooking.
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -61,8 +62,13 @@ int LogLevel() {
     return value ? std::atoi(value) : 0;
 }
 
+std::atomic<u64> evaluate_failures{0};
+
 void LogFromStreamline(sl::LogType type, const char* message) {
     std::string_view text{message ? message : ""};
+    if (type == sl::LogType::eError && text.find("evaluate feature failed") != std::string_view::npos) {
+        evaluate_failures.fetch_add(1, std::memory_order_relaxed);
+    }
     while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
         text.remove_suffix(1);
     }
@@ -455,6 +461,10 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
 bool IsDlssAvailable() {
     const State& state = GetState();
     return state.started && state.attached;
+}
+
+u64 EvaluateFailures() {
+    return evaluate_failures.load(std::memory_order_relaxed);
 }
 
 void Stop() {

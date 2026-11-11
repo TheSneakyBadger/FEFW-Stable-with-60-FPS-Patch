@@ -57,6 +57,11 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
 /// Whether DLSS can run on the attached device.
 [[nodiscard]] bool IsDlssAvailable();
 
+/// How many DLSS evaluations Streamline has reported as failed in its log. Streamline still
+/// returns success from the evaluation when NGX fails inside it (seen on an RTX 5060 Laptop GPU:
+/// "NGX evaluate feature failed 0xbad00005" on every frame), leaving the output unwritten.
+[[nodiscard]] u64 EvaluateFailures();
+
 /// Shuts Streamline down; call before the device is destroyed.
 void Stop();
 
