@@ -919,8 +919,102 @@ void RasterizerVulkan::OnCachedWrites(std::span<const std::pair<DAddr, u64>> wri
     }
 }
 
+namespace {
+// Guest CPU writes to pages the GPU has written (most of them, in Fortune's Weave's busy scenes)
+// are held until the next command list either way; answering that without the buffer cache's
+// lock saves the emulated cores from waiting for the draw thread, which holds it while drawing.
+// EDEN_CPU_WRITE_FAST=0 asks under the lock every time (as before); =2 also asks under the lock
+// after a lock-free "held" and logs how often the two answers differ.
+int CpuWriteFastMode() {
+    static const int mode = [] {
+        const char* const value = std::getenv("EDEN_CPU_WRITE_FAST");
+        const int parsed = value != nullptr ? std::atoi(value) : 1;
+        if (parsed != 1) {
+            LOG_INFO(Render_Vulkan, "EDEN_CPU_WRITE_FAST={}: {}", parsed,
+                     parsed == 0 ? "guest CPU writes always ask the buffer cache under its lock"
+                                 : "lock-free answers are checked under the lock");
+        }
+        return parsed;
+    }();
+    return mode;
+}
+
+struct CpuWriteCounters {
+    std::atomic<u64> fast{0};
+    std::atomic<u64> locked{0};
+    std::atomic<u64> checked{0};
+    std::atomic<u64> differed{0};
+    std::atomic<s64> period_start{0};
+};
+CpuWriteCounters cpu_write_counters;
+
+void CountCpuWrite(bool fast) {
+    auto& c = cpu_write_counters;
+    const u64 total = (fast ? c.fast : c.locked).fetch_add(1, std::memory_order_relaxed);
+    if ((total & 0xFFFF) != 0) {
+        return;
+    }
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    s64 start = c.period_start.load(std::memory_order_relaxed);
+    if (start == 0) {
+        c.period_start.compare_exchange_strong(start, now);
+        return;
+    }
+    if (now - start < 10000 || !c.period_start.compare_exchange_strong(start, now)) {
+        return;
+    }
+    const double seconds = static_cast<double>(now - start) / 1000.0;
+    const u64 fast_count = c.fast.exchange(0);
+    const u64 locked_count = c.locked.exchange(0);
+    const u64 checked = c.checked.exchange(0);
+    const u64 differed = c.differed.exchange(0);
+    if (CpuWriteFastMode() == 2) {
+        LOG_INFO(Render_Vulkan,
+                 "Guest CPU writes to cached memory: {:.0f}/s answered without the lock, {:.0f}/s "
+                 "under it; {} lock-free answers checked, {} differed",
+                 static_cast<double>(fast_count) / seconds,
+                 static_cast<double>(locked_count) / seconds, checked, differed);
+    } else {
+        LOG_INFO(Render_Vulkan,
+                 "Guest CPU writes to cached memory: {:.0f}/s answered without the lock, {:.0f}/s "
+                 "under it",
+                 static_cast<double>(fast_count) / seconds,
+                 static_cast<double>(locked_count) / seconds);
+    }
+}
+} // Anonymous namespace
+
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
+    const int fast_mode = CpuWriteFastMode();
+    if (fast_mode != 0 && buffer_cache.IsHeldWithoutLock(addr, size)) {
+        if (fast_mode != 2) {
+            CountCpuWrite(true);
+            return true;
+        }
+        // Checking: the answer under the lock is the one used.
+        bool held;
+        {
+            std::scoped_lock lock{buffer_cache.mutex};
+            held = buffer_cache.OnCPUWrite(addr, size);
+        }
+        cpu_write_counters.checked.fetch_add(1, std::memory_order_relaxed);
+        if (!held) {
+            cpu_write_counters.differed.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::scoped_lock lock{texture_cache.mutex};
+                texture_cache.WriteMemory(addr, size);
+            }
+            pipeline_cache.InvalidateRegion(addr, size);
+        }
+        CountCpuWrite(true);
+        return held;
+    }
+    if (fast_mode != 0) {
+        CountCpuWrite(false);
+    }
     {
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
         std::scoped_lock lock{buffer_cache.mutex};

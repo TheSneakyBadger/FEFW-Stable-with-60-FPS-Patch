@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <deque>
 #include <limits>
@@ -61,6 +62,32 @@ public:
         return IteratePages<false>(query_cpu_addr, query_size, [](Manager* manager, u64 offset, size_t size) {
             return manager->IsRegionModified(Type::GPU, offset, size);
         });
+    }
+
+    /// IsRegionGpuModified for a thread that doesn't hold the cache's lock (see
+    /// WordManager::IsRegionGpuModifiedRelaxed). Regions are never freed once created, and one
+    /// not created yet reads as not modified.
+    [[nodiscard]] bool IsRegionGpuModifiedRelaxed(VAddr query_cpu_addr, u64 query_size) const noexcept {
+        std::size_t remaining_size{query_size};
+        std::size_t page_index{query_cpu_addr >> HIGHER_PAGE_BITS};
+        u64 page_offset{query_cpu_addr & HIGHER_PAGE_MASK};
+        while (remaining_size > 0) {
+            if (page_index >= NUM_HIGH_PAGES) {
+                return false;
+            }
+            const std::size_t amount{
+                std::min<std::size_t>(HIGHER_PAGE_SIZE - page_offset, remaining_size)};
+            Manager*& slot = const_cast<Manager*&>(top_tier[page_index]);
+            const Manager* const manager =
+                std::atomic_ref<Manager*>(slot).load(std::memory_order_acquire);
+            if (manager != nullptr && manager->IsRegionGpuModifiedRelaxed(page_offset, amount)) {
+                return true;
+            }
+            ++page_index;
+            page_offset = 0;
+            remaining_size -= amount;
+        }
+        return false;
     }
 
     /// Returns true if a region has been marked as Preflushable
@@ -236,7 +263,8 @@ private:
 
     void CreateRegion(std::size_t page_index) {
         const VAddr base_cpu_addr = page_index << HIGHER_PAGE_BITS;
-        top_tier[page_index] = GetNewManager(base_cpu_addr);
+        std::atomic_ref<Manager*>(top_tier[page_index])
+            .store(GetNewManager(base_cpu_addr), std::memory_order_release);
     }
 
     Manager* GetNewManager(VAddr base_cpu_address) {

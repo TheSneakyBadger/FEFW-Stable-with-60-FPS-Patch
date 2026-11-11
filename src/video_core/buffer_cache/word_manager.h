@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <limits>
 #include <span>
@@ -219,6 +220,22 @@ struct WordManager {
         return result;
     }
 
+    /// IsRegionModified(Type::GPU, ...) for a thread that doesn't hold the cache's lock: the words
+    /// are read atomically, so the answer is the state at some moment during the call, as the
+    /// writers (under the lock) leave it.
+    [[nodiscard]] bool IsRegionGpuModifiedRelaxed(u64 offset, u64 size) const noexcept {
+        bool result = false;
+        IterateWords(offset, size, [&](size_t index, u64 mask) {
+            const u64 gpu = LoadRelaxed(Type::GPU, index);
+            if ((gpu & mask) == 0) {
+                return false;
+            }
+            return (gpu & mask & ~LoadRelaxed(Type::Untracked, index)) != 0 ? (result = true)
+                                                                            : false;
+        });
+        return result;
+    }
+
     /// @brief Returns a begin end pair with the inclusive modified region
     /// @param offset Offset in bytes from the start of the buffer
     /// @param size   Size in bytes of the region to query for modifications
@@ -313,6 +330,11 @@ struct WordManager {
 
     std::span<u64> Span(Type type) noexcept {
         return std::span<u64>(heap.data() + num_words * size_t(type), num_words);
+    }
+
+    u64 LoadRelaxed(Type type, size_t index) const noexcept {
+        u64& word = const_cast<u64&>(heap[num_words * size_t(type) + index]);
+        return std::atomic_ref<u64>(word).load(std::memory_order_relaxed);
     }
 
     std::span<const u64> Span(Type type) const noexcept {

@@ -355,6 +355,11 @@ public:
     /// Return true when a region is registered on the cache
     [[nodiscard]] bool IsRegionRegistered(DAddr addr, size_t size);
 
+    /// OnCPUWrite's "held" answer without the cache's lock: true when a buffer is on the region's
+    /// caching pages and the GPU has written the region. Reads the state as it is at some moment
+    /// during the call; false means "ask OnCPUWrite under the lock" (not "not held").
+    [[nodiscard]] bool IsHeldWithoutLock(DAddr addr, u64 size) const noexcept;
+
     /// Return true when a CPU region is modified from the CPU
     [[nodiscard]] bool IsRegionCpuModified(DAddr addr, size_t size);
 
