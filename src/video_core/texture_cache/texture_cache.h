@@ -244,13 +244,13 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // against the pass so they don't hold up the images behind them; large ones are still
         // collected.
         //
-        // Fortune's Eden: only while guest memory doesn't have newer contents. An image the GPU
-        // drew into and the CPU then wrote over (the game reusing a render target's memory for
-        // new data) is also not downloadable, but what it holds is stale: its next use loads it
-        // from guest memory anyway. Kept like the others, these piled up over a session (memory
-        // the next scene reuses): 5.4 -> 10.7 GB over two hours on a 16 GB card, and on an 8 GB
-        // card the hard limit all the time with DLSS failing for lack of memory (issue #31).
-        static constexpr u64 KEEP_GPU_IMAGE_BYTES = 4_MiB;
+        // Fortune's Eden: only while guest memory doesn't have newer contents (an image the CPU
+        // wrote over after the GPU drew into it is reloaded from guest memory on its next use
+        // anyway). And 1 MiB, not 4: kept images were what grew over long sessions (5.4 -> 10.7 GB
+        // in two hours on a 16 GB card; on an 8 GB card the hard limit all the time with DLSS
+        // failing for lack of memory, issue #31). Those up to 4 MiB were 744 MiB in 203 images
+        // eight minutes after boot, most unused for a minute. The sky table is 256 KiB.
+        static constexpr u64 KEEP_GPU_IMAGE_BYTES = 1_MiB;
         const bool keeps_gpu_contents = True(image.flags & ImageFlagBits::GpuModified) &&
                                         False(image.flags & ImageFlagBits::CpuModified) &&
                                         !must_download;
@@ -426,7 +426,7 @@ void TextureCache<P>::TickFrame() {
                 if (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)) {
                     return 0;
                 }
-                return image.guest_size_bytes <= 4_MiB ? 5 : 1;
+                return image.guest_size_bytes <= 1_MiB ? 5 : 1;
             }
             return True(image.flags & ImageFlagBits::CostlyLoad) ? 3 : 4;
         };
