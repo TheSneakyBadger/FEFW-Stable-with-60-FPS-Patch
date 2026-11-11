@@ -646,11 +646,12 @@ bool LoadFrameGen() {
         fg.failed = true;
         return false;
     }
-    // Reflex has to be set once, even off. EDEN_DLSSG_REFLEX=1 turns its low latency mode on.
+    // Frame generation needs Reflex on ("sl.reflex must be enabled and active");
+    // EDEN_DLSSG_REFLEX=0 turns it off (testing).
     sl::ReflexOptions reflex{};
     const char* const reflex_env = std::getenv("EDEN_DLSSG_REFLEX");
-    reflex.mode = reflex_env && reflex_env[0] == '1' ? sl::ReflexMode::eLowLatency
-                                                      : sl::ReflexMode::eOff;
+    reflex.mode = reflex_env && reflex_env[0] == '0' ? sl::ReflexMode::eOff
+                                                      : sl::ReflexMode::eLowLatency;
     if (const sl::Result result = fg.reflex_set_options(reflex); result != sl::Result::eOk) {
         LOG_WARNING(Render_Vulkan, "Streamline rejected the Reflex options (result {})",
                     static_cast<int>(result));

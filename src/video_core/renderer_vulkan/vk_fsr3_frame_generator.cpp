@@ -519,7 +519,8 @@ void Fsr3FrameGenerator::CreateDisplayResources(VkExtent2D display_size, VkForma
         texture = CreateTexture(format, w, h);
     }
     for (Texture& texture : ui_alpha) {
-        texture = CreateTexture(VK_FORMAT_R8_UNORM, w, h);
+        // 16-bit float: Streamline doesn't know R8_UNORM ("Cannot have undefined format").
+        texture = CreateTexture(VK_FORMAT_R16_SFLOAT, w, h);
     }
     std::array<VkExtent2D, FLOW_LEVELS> flow_sizes{};
     flow_sizes[0] = {(w + FLOW_BLOCK_SIZE - 1) / FLOW_BLOCK_SIZE,
@@ -1013,7 +1014,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                                *frame.dilated_motion_vectors.view, VK_FORMAT_R16G16_SFLOAT,
                                render_extent},
             .hudless = {*ui_less_now.image, *ui_less_now.view, display_format, display_extent},
-            .ui_alpha = {*ui_alpha_now.image, *ui_alpha_now.view, VK_FORMAT_R8_UNORM,
+            .ui_alpha = {*ui_alpha_now.image, *ui_alpha_now.view, VK_FORMAT_R16_SFLOAT,
                          display_extent},
             .jitter = frame.jitter,
             .reset = reset,
