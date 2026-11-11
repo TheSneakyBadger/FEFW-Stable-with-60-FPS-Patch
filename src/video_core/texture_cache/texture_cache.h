@@ -64,7 +64,14 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
     void(slot_samplers.insert(runtime, sampler_descriptor));
 
     if constexpr (HAS_DEVICE_MEMORY_INFO) {
-        const s64 device_local_memory = static_cast<s64>(runtime.GetDeviceLocalMemory());
+        s64 device_local_memory = static_cast<s64>(runtime.GetDeviceLocalMemory());
+        // Testing: EDEN_TC_MEMORY_LIMIT_MIB sets the thresholds as for a smaller card.
+        if (const char* limit = std::getenv("EDEN_TC_MEMORY_LIMIT_MIB"); limit != nullptr) {
+            const s64 mib = static_cast<s64>(std::strtoull(limit, nullptr, 10));
+            if (mib >= 2048) {
+                device_local_memory = (std::min)(device_local_memory, mib << 20);
+            }
+        }
         const s64 min_spacing_expected = device_local_memory - 1_GiB;
         const s64 min_spacing_critical = device_local_memory - 512_MiB;
         const s64 mem_threshold = (std::min)(device_local_memory, TARGET_THRESHOLD);
