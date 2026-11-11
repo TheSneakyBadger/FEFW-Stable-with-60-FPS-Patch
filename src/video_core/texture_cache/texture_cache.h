@@ -375,6 +375,14 @@ u32 TextureCache<P>::RunGarbageCollector() {
 
 template <class P>
 void TextureCache<P>::TickFrame() {
+    fg_ui_image = {};
+    fg_ui_watch = false;
+    if (fg_trace_active) {
+        FlushRenderTargetTrace();
+        LOG_INFO(HW_GPU, "Draw trace: frame end");
+        fg_trace_active = false;
+        fg_trace_done = true;
+    }
     // If we can obtain the memory info, use it instead of the estimate.
     if (runtime.CanReportMemoryUsage()) {
         total_used_memory = runtime.GetDeviceMemoryUsage();
@@ -844,6 +852,12 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
         }
         const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
         PrepareImageView(depth_buffer_id, true, is_clear && IsFullClear(depth_buffer_id));
+        if (fg_trace_active) [[unlikely]] {
+            TraceRenderTargets();
+        }
+        if (fg_ui_watch) [[unlikely]] {
+            WatchUiLayer();
+        }
         return;
     }
 
@@ -898,6 +912,83 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
     }
 
     flags[Dirty::DepthBiasGlobal] = true;
+    if (fg_trace_active) [[unlikely]] {
+        TraceRenderTargets();
+    }
+    if (fg_ui_watch) [[unlikely]] {
+        WatchUiLayer();
+    }
+}
+
+template <class P>
+void TextureCache<P>::WatchUiLayer() {
+    const ImageViewId view_id = render_targets.color_buffer_ids[0];
+    if (!view_id) {
+        return;
+    }
+    const ImageId image_id = slot_image_views[view_id].image_id;
+    if (!image_id || image_id == fg_ui_exclude) {
+        return;
+    }
+    const ImageBase& image = slot_images[image_id];
+    const PixelFormat format = image.info.format;
+    const bool rgba8 = format == PixelFormat::A8B8G8R8_SRGB ||
+                       format == PixelFormat::A8B8G8R8_UNORM ||
+                       format == PixelFormat::B8G8R8A8_SRGB || format == PixelFormat::B8G8R8A8_UNORM;
+    if (!rgba8 || image.info.size.width != fg_ui_size.width ||
+        image.info.size.height != fg_ui_size.height || image.info.num_samples != 1) {
+        return;
+    }
+    // The first full-size 8-bit colour target drawn after the evaluation.
+    fg_ui_image = image_id;
+    fg_ui_addr = image.gpu_addr;
+    fg_ui_watch = false;
+}
+
+template <class P>
+typename P::ImageView* TextureCache<P>::FrameGenUiLayer() {
+    if (!fg_ui_image || slot_images[fg_ui_image].gpu_addr != fg_ui_addr) {
+        return nullptr;
+    }
+    const ImageBase& image = slot_images[fg_ui_image];
+    const ImageViewId view = FindOrEmplaceImageView(
+        fg_ui_image, ImageViewInfo(ImageViewType::e2D, image.info.format,
+                                   SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
+    return &slot_image_views[view];
+}
+
+template <class P>
+void TextureCache<P>::TraceRenderTargets() {
+    std::string line;
+    for (size_t index = 0; index < NUM_RT; ++index) {
+        const ImageViewId id = render_targets.color_buffer_ids[index];
+        if (!id) {
+            continue;
+        }
+        const ImageViewBase& view = slot_image_views[id];
+        const ImageBase& image = slot_images[view.image_id];
+        line += fmt::format("rt{} {:#x} {}x{} format {}; ", index, image.gpu_addr,
+                            image.info.size.width, image.info.size.height,
+                            static_cast<u32>(view.format));
+    }
+    if (const ImageViewId id = render_targets.depth_buffer_id) {
+        const ImageBase& image = slot_images[slot_image_views[id].image_id];
+        line += fmt::format("depth {:#x}", image.gpu_addr);
+    }
+    if (line != fg_trace_last) {
+        FlushRenderTargetTrace();
+        fg_trace_last = line;
+    }
+    ++fg_trace_count;
+}
+
+template <class P>
+void TextureCache<P>::FlushRenderTargetTrace() {
+    if (fg_trace_count != 0 && fg_trace_lines < 400) {
+        ++fg_trace_lines;
+        LOG_INFO(HW_GPU, "Draw trace: {} draws to {}", fg_trace_count, fg_trace_last);
+    }
+    fg_trace_count = 0;
 }
 
 template <class P>
@@ -1297,10 +1388,25 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
             dst_id, ImageViewInfo(ImageViewType::e2D, ImageInfo(dst).format, *dst_range));
         // After the views: creating them may reallocate the framebuffer slots.
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
-        return runtime.TemporalUpscale(dst_framebuffer, slot_image_views[dst_view],
+        // Frame generation: watch for the UI layer the game draws next.
+        fg_ui_watch = true;
+        fg_ui_image = {};
+        fg_ui_exclude = dst_id;
+        fg_ui_size = slot_images[dst_id].info.size;
+        // Testing: trace the draws that follow, once, 30 s or more into the game.
+        static const bool trace_wanted = std::getenv("EDEN_FG_TRACE") != nullptr;
+        if (trace_wanted && !fg_trace_done && !fg_trace_active && frame_tick > 1800) {
+            fg_trace_active = true;
+            fg_trace_last.clear();
+            fg_trace_count = 0;
+            LOG_INFO(HW_GPU, "Draw trace: DLSS evaluation, output {:#x} {}x{}", dst.Address(),
+                     slot_images[dst_id].info.size.width, slot_images[dst_id].info.size.height);
+        }
+        const bool upscaled = runtime.TemporalUpscale(dst_framebuffer, slot_image_views[dst_view],
                                        slot_image_views[src_view], slot_image_views[motion_view],
                                        slot_image_views[depth_view], render_size, jitter,
                                        motion_scale);
+        return upscaled;
     }
 }
 

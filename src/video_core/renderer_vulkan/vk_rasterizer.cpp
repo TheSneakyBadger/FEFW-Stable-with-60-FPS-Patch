@@ -1243,6 +1243,12 @@ bool RasterizerVulkan::AccelerateTemporalUpscale(
     return texture_cache.TemporalUpscale(dst, src, motion_vectors, depth, jitter, motion_scale);
 }
 
+VkImageView RasterizerVulkan::FrameGenUiLayer() {
+    std::scoped_lock lock{texture_cache.mutex};
+    ImageView* const view = texture_cache.FrameGenUiLayer();
+    return view ? view->Handle(Shader::TextureType::Color2D) : VK_NULL_HANDLE;
+}
+
 bool RasterizerVulkan::UsesReplacementUpscaler() const {
     return texture_cache_runtime.UsesReplacementUpscaler();
 }

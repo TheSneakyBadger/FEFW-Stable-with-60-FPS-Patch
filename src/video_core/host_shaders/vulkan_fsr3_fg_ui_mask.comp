@@ -1,0 +1,56 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Frame generation's UI mask: where the game's UI layer (drawn on its own before it is combined
+// with the 3D picture) covers the screen, the generated frame takes the real frame's pixels, so
+// the UI isn't moved along with the scene behind it (ghosting, flicker).
+
+#version 460
+#extension GL_EXT_shader_image_load_formatted : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform texture2D ui_layer;
+layout(set = 0, binding = 1) uniform texture2D current_frame;
+layout(set = 0, binding = 2) uniform image2D output_frame;
+layout(set = 0, binding = 3, std140) uniform Constants {
+    ivec2 rect_base;
+    ivec2 rect_size;
+    float threshold;
+    uint show_mask;
+    vec2 pad;
+} c;
+layout(set = 0, binding = 1000) uniform sampler linear_sampler;
+
+void main() {
+    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pos, imageSize(output_frame)))) {
+        return;
+    }
+    const ivec2 local = pos - c.rect_base;
+    if (any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, c.rect_size))) {
+        return;
+    }
+    const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
+    const vec2 step = 2.0 / vec2(textureSize(sampler2D(ui_layer, linear_sampler), 0));
+    // The UI's coverage, widened by a couple of texels for its soft edges and glows.
+    float alpha = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            alpha = max(alpha, textureLod(sampler2D(ui_layer, linear_sampler),
+                                          uv + vec2(x, y) * step, 0.0).a);
+        }
+    }
+    const float mask = smoothstep(c.threshold, c.threshold * 4.0 + 0.02, alpha);
+    if (c.show_mask != 0) {
+        imageStore(output_frame, pos, vec4(vec3(mask), 1.0));
+        return;
+    }
+    if (mask <= 0.0) {
+        return;
+    }
+    const vec4 current = texelFetch(current_frame, pos, 0);
+    const vec4 generated = imageLoad(output_frame, pos);
+    imageStore(output_frame, pos, vec4(mix(generated.rgb, current.rgb, mask), generated.a));
+}

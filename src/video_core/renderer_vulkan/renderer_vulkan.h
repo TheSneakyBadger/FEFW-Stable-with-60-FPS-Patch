@@ -117,6 +117,7 @@ private:
     std::optional<std::chrono::steady_clock::time_point> fsr_fg_report_start;
     u32 fsr_fg_made{};
     u32 fsr_fg_skipped{};
+    u32 fsr_fg_ui{};
 
     Frame applet_frame;
 };

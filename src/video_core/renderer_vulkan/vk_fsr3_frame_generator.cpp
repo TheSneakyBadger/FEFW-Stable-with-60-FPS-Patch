@@ -27,6 +27,7 @@
 #include "video_core/host_shaders/fsr3_fg_of_scd_divergence_comp_spv.h"
 #include "video_core/host_shaders/fsr3_fg_of_scd_histogram_comp_spv.h"
 #include "video_core/host_shaders/fsr3_fg_of_search_comp_spv.h"
+#include "video_core/host_shaders/vulkan_fsr3_fg_ui_mask_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_fsr3_frame_generator.h"
@@ -138,6 +139,16 @@ constexpr auto SCD_DIVERGENCE = Sequential(std::array{I, I, I, I, U});
 constexpr auto SEARCH = Sequential(std::array{T, T, I, I, U});
 constexpr auto FILTER = Sequential(std::array{T, I, U});
 constexpr auto SCALE = Sequential(std::array{T, T, T, I, I, U});
+// The UI mask (vulkan_fsr3_fg_ui_mask.comp; linear clamp sampler at 1000).
+constexpr auto UI_MASK = Sequential(std::array{T, T, I, U});
+
+struct UiMaskConstants {
+    std::array<s32, 2> rect_base;
+    std::array<s32, 2> rect_size;
+    f32 threshold;
+    u32 show_mask;
+    std::array<f32, 2> pad;
+};
 
 enum PassId : size_t {
     PassReconstructAndDilate,
@@ -157,6 +168,7 @@ enum PassId : size_t {
     PassSearch,
     PassFilter,
     PassScale,
+    PassUiMask,
     PassCount,
 };
 
@@ -381,6 +393,7 @@ Fsr3FrameGenerator::Fsr3FrameGenerator(const Device& device_, Scheduler& schedul
     passes[PassSearch] = pass(SEARCH, FSR3_FG_OF_SEARCH_COMP_SPV, false);
     passes[PassFilter] = pass(FILTER, FSR3_FG_OF_FILTER_COMP_SPV, false);
     passes[PassScale] = pass(SCALE, FSR3_FG_OF_SCALE_COMP_SPV, false);
+    passes[PassUiMask] = pass(UI_MASK, VULKAN_FSR3_FG_UI_MASK_COMP_SPV, true);
 
     distortion_field = CreateTexture(VK_FORMAT_R8G8_UNORM, 1, 1);
     zero_uint = CreateTexture(VK_FORMAT_R32_UINT, 1, 1);
@@ -726,7 +739,9 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     const VkDeviceSize pyramid_slot = align(sizeof(PyramidConstants));
     const VkDeviceSize of_slot = align(sizeof(OfConstants));
     const VkDeviceSize spd_slot = align(sizeof(OfSpdConstants));
-    const VkDeviceSize total = fi_slot + 2 * pyramid_slot + (FLOW_LEVELS + 1) * of_slot + spd_slot;
+    const VkDeviceSize ui_slot = align(sizeof(UiMaskConstants));
+    const VkDeviceSize total =
+        fi_slot + 2 * pyramid_slot + (FLOW_LEVELS + 1) * of_slot + spd_slot + ui_slot;
     const StagingBufferRef uniforms = staging_buffer_pool.Request(total, MemoryUsage::Upload);
     VkDeviceSize offset = 0;
     const auto stage = [&](const void* data, size_t size, VkDeviceSize slot_size) {
@@ -747,6 +762,15 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     }
     const Resource cb_of_common = cb_of[FLOW_LEVELS];
     const Resource cb_of_spd = stage(&of_spd, sizeof(of_spd), spd_slot);
+    const UiMaskConstants ui_constants{
+        .rect_base = {in.interpolation_rect.offset.x, in.interpolation_rect.offset.y},
+        .rect_size = {static_cast<s32>(in.interpolation_rect.extent.width),
+                      static_cast<s32>(in.interpolation_rect.extent.height)},
+        .threshold = 0.02f,
+        .show_mask = in.show_ui_mask ? 1U : 0U,
+        .pad = {},
+    };
+    const Resource cb_ui = stage(&ui_constants, sizeof(ui_constants), ui_slot);
 
     // Clears: every new image, the optical flow's history on a reset.
     std::vector<VkImage> initialize;
@@ -963,6 +987,12 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         scheduler, descriptor_queue,
         std::array{tex(scd_output), tex(inpainting_pyramid), current, current, output, cb_fi},
         groups(dw, 8), groups(dh, 8));
+    if (in.ui_layer) {
+        passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
+                                     std::array{Resource{.view = in.ui_layer}, current, output,
+                                                cb_ui},
+                                     groups(dw, 8), groups(dh, 8));
+    }
 
     // Keep this frame for the next interpolation; hand the output to the presentation.
     scheduler.Record([source = in.current_image, destination = *previous_source.image, dw,

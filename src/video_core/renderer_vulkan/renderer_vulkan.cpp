@@ -236,6 +236,15 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 
     RenderScreenshot(framebuffers);
+    // Testing (EDEN_FG_TRACE=1): which image is presented, around the traced frame.
+    {
+        static const bool trace = std::getenv("EDEN_FG_TRACE") != nullptr;
+        static u32 composites = 0;
+        if (trace && ++composites >= 1795 && composites <= 1815 && !framebuffers.empty()) {
+            LOG_INFO(Render_Vulkan, "Draw trace: presenting {:#x} {}x{}", framebuffers[0].address,
+                     framebuffers[0].width, framebuffers[0].height);
+        }
+    }
     Frame* frame = present_manager.GetRenderFrame();
 
     scheduler.RequestOutsideRenderPassOperationContext();
@@ -296,9 +305,10 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         fsr_fg_report_start = now;
     } else if (now - *fsr_fg_report_start >= std::chrono::seconds{10}) {
         LOG_INFO(Render_Vulkan,
-                 "Frame generation, last 10 s: {} frames made, {} game frames without one; game "
-                 "frames {:.1f} ms apart",
-                 fsr_fg_made, fsr_fg_skipped, fsr_fg_interval_ms);
+                 "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
+                 "{} game frames without one; game frames {:.1f} ms apart",
+                 fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms);
+        fsr_fg_ui = 0;
         fsr_fg_report_start = now;
         fsr_fg_made = 0;
         fsr_fg_skipped = 0;
@@ -333,7 +343,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     const u32 height =
         (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
     // Testing: EDEN_FG_DEBUG=1 presents a copy of the real frame in the generated one's place
-    // (the pacing alone), 2 shows only generated frames (the real one is overwritten with it).
+    // (the pacing alone), 2 shows only generated frames (the real one is overwritten with it), 3
+    // shows the UI mask that way, 4 generated frames without the UI mask.
     static const int debug_mode = [] {
         const char* value = std::getenv("EDEN_FG_DEBUG");
         return value != nullptr ? std::atoi(value) : 0;
@@ -371,6 +382,10 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         present_manager.Present(generated);
         return;
     }
+    const VkImageView ui_layer = debug_mode == 4 ? VkImageView{} : rasterizer.FrameGenUiLayer();
+    if (ui_layer) {
+        ++fsr_fg_ui;
+    }
     generator->Generate({
         .current_image = *frame->image,
         .current_view = *frame->storage_view,
@@ -383,8 +398,10 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         .reset = false,
         .transfer_function = transfer_function,
         .min_max_luminance = {0.0f, 1000.0f},
+        .ui_layer = ui_layer,
+        .show_ui_mask = debug_mode == 3,
     });
-    if (debug_mode == 2) {
+    if (debug_mode >= 2) {
         scheduler.Record([source = *generated->image, destination = *frame->image,
                           w = frame->width, h = frame->height](vk::CommandBuffer cmdbuf) {
             cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,

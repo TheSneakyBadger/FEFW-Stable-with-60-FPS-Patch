@@ -146,6 +146,9 @@ public:
     Fsr3FrameGenerator* FrameGenerator() {
         return texture_cache_runtime.FrameGenerator();
     }
+
+    /// The game's UI layer this frame, for frame generation's UI mask, or null.
+    VkImageView FrameGenUiLayer();
     Tegra::Engines::AccelerateDMAInterface& AccessAccelerateDMA() override;
     void AccelerateInlineToMemory(GPUVAddr address, size_t copy_size,
                                   std::span<const u8> memory) override;

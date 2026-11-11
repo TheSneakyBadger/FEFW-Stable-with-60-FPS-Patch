@@ -47,6 +47,10 @@ public:
         bool reset;
         u32 transfer_function; ///< 0 sRGB, 1 PQ, 2 scRGB.
         std::array<f32, 2> min_max_luminance;
+        /// The game's UI layer for this frame (sampled; covers the interpolation rect), or null.
+        /// Where it has UI, the generated frame keeps the real frame's pixels.
+        VkImageView ui_layer;
+        bool show_ui_mask; ///< Testing: writes the UI mask instead.
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,

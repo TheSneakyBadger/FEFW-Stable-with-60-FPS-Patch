@@ -13,6 +13,7 @@
 #include <limits>
 #include <mutex>
 #include <span>
+#include <string>
 #include <type_traits>
 // TODO: find out which don't require stable iters
 #include <unordered_map>
@@ -503,6 +504,30 @@ private:
 
     RenderTargets render_targets;
     u64 render_targets_serial = 0;
+
+    // Testing (EDEN_FG_TRACE=1): one frame's draws after the DLSS evaluation, by render target,
+    // to find where the game starts drawing its UI.
+    void TraceRenderTargets();
+
+public:
+    /// Frame generation: the game's UI layer this frame (Fortune's Weave draws its UI into its own
+    /// full-size RGBA8 image right after the DLSS evaluation, and combines it with the 3D picture
+    /// at the end), or null.
+    [[nodiscard]] ImageView* FrameGenUiLayer();
+
+private:
+    void WatchUiLayer();
+    bool fg_ui_watch = false;
+    ImageId fg_ui_image{};
+    ImageId fg_ui_exclude{};
+    GPUVAddr fg_ui_addr = 0;
+    Extent3D fg_ui_size{};
+    void FlushRenderTargetTrace();
+    bool fg_trace_active = false;
+    bool fg_trace_done = false;
+    std::string fg_trace_last;
+    u32 fg_trace_count = 0;
+    u32 fg_trace_lines = 0;
     u32 rt_active_mask = 0;
     std::array<ImageId, 8> rt_image_id{};
     ImageId rt_depth_image_id{};
