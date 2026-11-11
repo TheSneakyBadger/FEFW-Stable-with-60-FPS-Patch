@@ -248,6 +248,23 @@ MemoryAllocator::MemoryAllocator(const Device &device_)
 
 MemoryAllocator::~MemoryAllocator() = default;
 
+bool MemoryAllocator::IsDeviceLocalOverBudget() const {
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    const auto heaps = device.GetPhysical().GetMemoryProperties().memoryProperties;
+    for (u32 heap = 0; heap < heaps.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if ((heaps.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0 ||
+            budgets[heap].budget == 0) {
+            continue;
+        }
+        // Within 2% counts: the failing allocation is what pushes it over.
+        if (budgets[heap].usage + budgets[heap].budget / 50 >= budgets[heap].budget) {
+            return true;
+        }
+    }
+    return false;
+}
+
 vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci) const
 {
     // Large images get their own memory allocation, so freeing one returns its memory to the

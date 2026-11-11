@@ -1483,6 +1483,11 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
     if (dlss_retry_at && now < *dlss_retry_at) {
         return false;
     }
+    if (dlss_retry_at && memory_allocator.IsDeviceLocalOverBudget()) {
+        // DLSS failed for lack of video memory and there still isn't any: look again later.
+        dlss_retry_at = now + std::chrono::seconds{30};
+        return false;
+    }
     if (!dlss_upscaler) {
         // Off in the settings, or Streamline didn't start: it has said why.
         if (!Streamline::IsDlssAvailable()) {
@@ -1552,6 +1557,16 @@ bool TextureCacheRuntime::NvidiaDlssUpscale(Framebuffer* dst_framebuffer, ImageV
         dlss_upscaler.reset();
         dlss_last_evaluation.reset();
         constexpr u32 MaxFailures = 3;
+        if (memory_allocator.IsDeviceLocalOverBudget()) {
+            // Out of video memory (Streamline: "Exceeded VRAM budget"): not DLSS's own fault, so
+            // it doesn't count towards giving up on it. Tried again once memory is back under
+            // the budget (#31: a 2-hour session on an 8 GB card ended on FSR for good).
+            LOG_WARNING(Render_Vulkan,
+                        "NVIDIA DLSS failed with video memory over budget; AMD FSR 3.1 stands in "
+                        "until there is room again");
+            dlss_retry_at = now + std::chrono::seconds{30};
+            return false;
+        }
         if (++dlss_failures >= MaxFailures) {
             LOG_WARNING(Render_Vulkan,
                         "NVIDIA DLSS failed {} times; AMD FSR 3.1 runs for the rest of the session",

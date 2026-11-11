@@ -105,6 +105,10 @@ namespace Vulkan {
 
         vk::Image CreateImage(const VkImageCreateInfo &ci) const;
 
+        /// A device-local heap is at or above its budget (the driver's, through VMA): new video
+        /// memory would spill to system memory.
+        [[nodiscard]] bool IsDeviceLocalOverBudget() const;
+
         vk::Buffer CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsage usage) const;
 
         vk::Buffer CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsage usage,
