@@ -23,6 +23,9 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 
 ## What's new
 
+- **v1.6.8:** frame generation (experimental): AMD FSR 3.1 on any card, or NVIDIA DLSS on GeForce RTX 40/50, so 60 FPS shows as 120. The game's UI stays still.
+- **v1.6.8:** the main settings are on the launch screen, beside Play: 60 FPS, Ultrawide, HDR, upscaler, quality and frame generation.
+- **v1.6.8:** video memory no longer creeps up over long sessions ([#35](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/35), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37), [#38](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/38)), and 60 FPS mode works with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30)).
 - **v1.6.7.4:** a real 60 FPS mode (*Settings → Performance*): game speed follows your frame rate from 30 to 60 FPS, so no slow motion below 60, and capes and hair move smoothly.
 - **v1.6.7.4:** new *Performance* page: Reflections, Ambient occlusion and Reduced crowd detail.
 - **v1.6.7.4:** video memory creeps up far less in long sessions.
@@ -40,14 +43,15 @@ v1.6.7 brought the new look (theme, icon and launch screen) and a much shorter S
 
 | Feature | What you get |
 |---|---|
-| 🎮 **Launch screen** | The game's card with **Play**, **Game Settings**, **Settings** and **Check for Updates** |
+| 🎮 **Launch screen** | The game's card with **Play** and the main settings beside it: 60 FPS, Ultrawide, HDR, upscaler, quality and frame generation |
 | ✨ **Upscalers** | AMD FSR 3.1 (default, any card), AMD FSR 4 (Radeon), NVIDIA DLSS (GeForce RTX), with quality modes from Native/DLAA to Performance |
 | 🖱️ **Mouse mode** | Your PC mouse as the game's Joy-Con mouse cursor, with its own controls and sensitivity |
 | 🖥️ **Ultrawide** | Optional 21:9 (3440x1440) with the HUD and menus kept at 16:9, using [Kompas9](https://github.com/Kompas9/Switch-Game-Patches)'s patch (game version 1.1.0) |
 | 🌈 **HDR** | The game's own Switch 2 HDR mode, with its brightness options |
 | ⚡ **Runs well** | PGO-optimised for this game, fewer shader stutters, smoother busy scenes |
 | 🎞️ **60 FPS mode** | Built in, off by default: game speed follows your real frame rate (30–60 FPS) |
-| 🎛️ **Performance options** | Lighter reflections, ambient occlusion and crowd detail for slower PCs |
+| 🚀 **Frame generation** | Experimental: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50) doubles the frames shown, with the UI kept still |
+| 🎛️ **Performance options** | Lighter reflections, ambient occlusion, crowd and scenery detail for slower PCs |
 | 🔄 **Auto-updates** | Asks first, checks the download, never touches saves or settings |
 | 💾 **Portable** | Settings, saves and shader cache live next to the .exe |
 
@@ -94,17 +98,28 @@ NVIDIA DLSS and FSR 4 fall back to FSR 3.1 if they can't start. The status bar a
 
 **Upscaler quality** (at **1X** resolution) sets how big the 3D scene is drawn before upscaling, while menus and text stay sharp at 1440p: **Native** (DLAA with DLSS), **Ultra Quality**, **Quality**, **Balanced** (default) or **Performance**. Higher looks better and costs more GPU time. With the game's own DLSS it always runs at Performance.
 
+## Frame generation (experimental)
+
+**Frame generation** makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as 60). Choose it on the launch screen or in *Settings → Graphics → Frame generation*; it's off by default and applies when the game starts.
+
+| Option | Cards | Notes |
+|---|---|---|
+| **AMD FSR 3.1** | Any | AMD's FidelityFX SDK frame interpolation and optical flow, built in. |
+| **NVIDIA DLSS** | GeForce RTX 40/50 | Needs hardware-accelerated GPU scheduling on in Windows. Choose it, then click **Download from NVIDIA** in the panel below the setting and accept NVIDIA's licences (NVIDIA's files aren't included). Falls back to AMD's if it can't start. |
+
+It works with any upscaler, HDR and ultrawide. The game's UI is kept still, so menus, prompts and the minimap don't ghost when the camera moves. It only runs in the 3D scenes (menus and movies have no motion data), needs a display faster than the game's frame rate (120 Hz or more for 60 FPS), and adds about half a frame of input delay. The status bar shows which one is running.
+
 ## HDR
 
-Fortune's Weave has an HDR mode on Switch 2. Turn on HDR in Windows (*Settings → System → Display → Use HDR*), tick **HDR output (HDR10)** in *Settings → Graphics*, and start the game. Its *Brightness* and *UI Brightness* options then adjust the picture. The game checks for HDR once when it starts, so restart it after changing either setting.
+Fortune's Weave has an HDR mode on Switch 2. Turn on HDR in Windows (*Settings → System → Display → Use HDR*), tick **HDR output (HDR10)** in *Settings → Graphics* (or **HDR** on the launch screen), and start the game. **Paper white** sets how bright the game's white is. Its *Brightness* and *UI Brightness* options then adjust the picture. The game checks for HDR once when it starts, so restart it after changing either setting.
 
 ## 60 FPS mode
 
 **30 FPS is how Fortune's Weave runs on Switch 2**, and it's how this build runs by default. The built-in **60 FPS mode** is off by default: turn it on in *Settings → Performance → 60 FPS mode* and start the game.
 
-Unlike the old 60 FPS cheat, which forced a fixed 60 and made the whole game run in slow motion whenever a PC fell below it, game speed follows your real frame rate anywhere from 30 to 60 FPS. About 50 places in the game that counted per frame (the map cursor and markers, menus, physics, cutscene shake, character creation and more) were traced and fixed so they keep their normal speed, and capes and hair are simulated every frame with physics scaled to the frame time. It's only for game version 1.1.0. An old `60fps` add-on folder still turns it on too; you can delete it.
+Unlike the old 60 FPS cheat, which forced a fixed 60 and made the whole game run in slow motion whenever a PC fell below it, game speed follows your real frame rate anywhere from 30 to 60 FPS. About 50 places in the game that counted per frame (the map cursor and markers, menus, physics, cutscene shake, character creation and more) were traced and fixed so they keep their normal speed, and capes and hair are simulated every frame with physics scaled to the frame time. It was made for game version 1.1.0; on other versions it turns on when every place it changes is found. It works alongside mods, and turns itself off (the mod still works) if a mod changes the same game code. An old `60fps` add-on folder becomes the setting.
 
-The same page has **Reflections**, **Ambient occlusion** and **Reduced crowd detail**, lighter versions of the game's own effects for PCs that can't hold the frame rate.
+The same page has **Reflections**, **Ambient occlusion**, **Reduced crowd detail** and **Reduced scenery detail**, lighter versions of the game's own effects for PCs that can't hold the frame rate.
 
 ## Saves
 

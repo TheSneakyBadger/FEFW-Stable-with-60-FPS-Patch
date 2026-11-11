@@ -385,9 +385,11 @@ cmake_language(DEFER CALL eden_render_isa_options)
 - 60 FPS mode (off by default): the game runs at up to 60 FPS instead of its native 30. Game
   speed follows your real frame rate, so it stays correct anywhere between 30 and 60 FPS
   (no slow motion when your PC can't hold 60). Capes and hair are simulated every frame.
-  Takes effect when the game starts. Only for game version 1.1.0 (build ID DB93B0125F485060).
-  The older "60fps" add-on folder still turns it on too; you can delete it.
-- Reflections (Full / Reduced / Off), Ambient occlusion and Reduced crowd detail: lighter
+  Takes effect when the game starts. Made for game version 1.1.0 (build ID DB93B0125F485060);
+  on other versions it turns on when every place it changes is found. With a mod that changes
+  the same code it stays off. The older "60fps" add-on folder becomes the setting.
+- Reflections (Full / Reduced / Off), Ambient occlusion, Reduced crowd detail and Reduced
+  scenery detail: lighter
   versions of the game's own effects for PCs that can't hold the frame rate. Nothing on disk
   is changed. Take effect when the game starts.
 "@
@@ -400,7 +402,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.7.4 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -427,6 +429,8 @@ Usage Mode Conservative are the defaults. Settings has seven pages (General, Sys
 Performance, Audio, Controls, Advanced); Game Settings only has the game's add-ons and input profiles.
 Pick the resolution so the output matches your screen (1.5X for 4K).
 Only controls need setting: Emulation > Configure > Controls.
+The launch screen has the main ones beside Play: 60 FPS, Ultrawide, HDR (with paper white),
+Upscaler, Upscaler quality, Frame generation, and a button to the Performance page.
 
 Upscaler: Emulation > Configure > Graphics > Upscaler. Takes effect when the game starts.
 - AMD FSR 3.1 (default, any card): replaces the game's own DLSS network, which takes work off
@@ -447,7 +451,29 @@ FSR 4; on a laptop or older card, Performance may run better.
 
 HDR (optional): turn on HDR in Windows, tick "HDR output (HDR10)" in Graphics and start the
 game; its Brightness and UI Brightness options then work. Restart the game after changing it.
+
+Frame generation (experimental, off by default): Graphics > Frame generation, or the launch
+screen. Makes a frame between each two of the game's, so 60 FPS shows as 120, in the 3D scenes.
+Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
+- AMD FSR 3.1: any card (AMD's FidelityFX SDK, MIT).
+- NVIDIA DLSS: GeForce RTX 40/50 and hardware-accelerated GPU scheduling on in Windows. Choose
+  it, then click "Download from NVIDIA" in the panel below the setting (NVIDIA's files aren't
+  included). Falls back to AMD's.
+The status bar names the one running, next to the upscaler.
 $fpsText$optionalText
+
+New in v1.6.8:
+- Frame generation: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50). The game's UI is kept
+  still, so it doesn't ghost when the camera moves.
+- The main settings are on the launch screen, beside Play.
+- Video memory no longer creeps up over long sessions (drops to 10 FPS, red/green garbage or
+  a crash after an hour or two, mostly on 8 GB cards): images the GPU drew into that can't be
+  written back are freed when unused. NVIDIA DLSS stays on when memory is over budget.
+- 60 FPS mode works with mods (it goes only where no mod writes, and turns itself off if a mod
+  changes the same code), and on other game versions when all its places are found.
+- About 30% less game CPU time in busy scenes; cutscene video decoding on its own thread;
+  Reduced scenery detail (Performance) and Audio buffer (Audio) settings; HDR paper white;
+  rumble on its own thread; the updater resumes dropped downloads.
 
 New in v1.6.7.4:
 - 60 FPS mode is built in (Settings > Performance). Game speed follows the real frame rate

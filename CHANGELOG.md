@@ -1,5 +1,67 @@
 # Changelog
 
+## v1.6.8
+
+Frame generation (AMD and NVIDIA), the main settings on the launch screen, and video memory that no longer creeps up over long sessions.
+
+#### 🎞️ Frame generation (experimental)
+
+A frame made between each two of the game's, so **60 FPS shows as 120** (or 30 as 60). Choose it on the launch screen or in **Settings → Graphics → Frame generation**. It's off by default and applies when the game starts.
+
+| Option | What it needs |
+|---|---|
+| **AMD FSR 3.1** | Any graphics card. |
+| **NVIDIA DLSS** | A GeForce RTX 40 or 50 card, hardware-accelerated GPU scheduling on in Windows, and NVIDIA's frame generation files: **Settings → Graphics → Frame generation** has a **Download from NVIDIA** button for them (NVIDIA's files aren't included). If it can't run, AMD's is used instead. |
+
+- **Works with any upscaler**, and with HDR and the ultrawide patch.
+- **The UI stays still.** The game draws its UI separately, so frame generation moves only the 3D scene. Menus, prompts and the minimap don't ghost or shimmer when the camera moves.
+- **Each shown frame gets its own motion.** The game presents a frame after it has already started the next two; frame generation matches every frame to the motion and UI it was drawn with.
+- **Only in the 3D scenes.** It uses the game's own motion data, which menus and movies don't have, and pauses there.
+- **Needs a display faster than the game's frame rate**: 120 Hz or more for 60 FPS. It adds about half a frame of input delay.
+- **The status bar shows which one is running**, next to the upscaler (for example *NVIDIA DLSS Frame Gen*).
+- Built on AMD's FidelityFX SDK 1.1.4 (FSR 3.1 frame interpolation and optical flow, MIT) and NVIDIA Streamline 2.14 (DLSS frame generation, loaded from your own DLLs: none are included).
+
+#### 🏠 The main settings on the launch screen
+
+Beside **Play**, so nobody misses them:
+
+- **60 FPS**, **Ultrawide** and **HDR** (with its **paper white** slider) checkboxes.
+- **Upscaler**, **Upscaler quality** and **Frame generation** drop-downs.
+- A **Performance Settings** button that opens the Performance page.
+
+They're the same settings as in the Settings window and take effect when the game starts.
+
+#### 🧠 Video memory over long sessions ([#31](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/31), [#35](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/35), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37), [#38](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/38))
+
+Over an hour or two, video memory crept up until the card was full. On 8 GB cards that meant drops to 10 FPS or red and green garbage and a crash; on bigger cards, slowdown after a couple of hours.
+
+- **The cause:** images the GPU had drawn into but couldn't copy back to the game were never cleaned up. These were mostly render targets from earlier scenes, and they piled up.
+- **Now** those unused for 30 seconds are freed once memory passes the cleanup level, so memory levels off.
+- **On low-memory cards**, cleanup no longer copies back and frees images used in the last 2 seconds, which caused stretches of 20 FPS on 6 GB cards.
+- **NVIDIA DLSS stays on** if it fails while video memory is over budget, instead of switching to AMD FSR 3.1 for the rest of the session. It also falls back to FSR 3.1 when it fails inside NVIDIA's code.
+
+#### 🎛️ 60 FPS mode
+
+- **Works with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30), [#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).** It's applied after mods and only into space no mod uses, so the two no longer crash together. If a mod changes the same instructions, 60 FPS mode turns itself off and the mod still works.
+- **Other game versions:** 60 FPS mode turns on when all 57 places it changes are found unchanged (it was made for 1.1.0).
+- The old **60fps** add-on folder becomes the setting.
+
+#### ⚡ Speed and sound
+
+- **About 30% less game CPU time** in busy scenes such as the Saramis hub: the game's writes to memory the GPU wrote no longer wait for the draw thread.
+- **Cutscenes ([#22](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/22)):** the video decoder runs on its own thread.
+- **New: Settings → Performance → Reduced scenery detail**, for slower PCs.
+- **New: Settings → Audio → Audio buffer** (Low, Medium, High) for crackling sound ([#29](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/29)).
+- **Controller rumble** is sent from its own thread, so it no longer holds up the game ([#36](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/36)).
+
+#### 🔧 Other changes
+
+- **HDR paper white** setting ([#33](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/33)).
+- **The updater resumes dropped downloads** ([#32](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/32)).
+- **Mouse mode:** the hint next to its button points at the button (right-click it for the sensitivity).
+- The log says what the emulator built during slow frames, and what the cached images are every 5 minutes, to help with reports.
+- **Linux (test build):** updated to v1.6.8: **[Fortunes-Eden-linux-x86_64.tar.gz](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/raw/test-builds/Fortunes-Eden-linux-x86_64.tar.gz)**. NVIDIA DLSS (upscaling and frame generation) is Windows-only; AMD FSR 3.1 frame generation is included but untested on Linux so far.
+
 ## v1.6.7.4
 
 A proper 60 FPS mode, a new Performance page, and video memory that stays put in long sessions.
