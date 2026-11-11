@@ -940,6 +940,9 @@ void TextureCache<P>::WatchUiLayer() {
     // that frame's DLSS evaluation): copy it.
     for (auto& [address, seq] : fg_present_marks) {
         if (address != 0 && address == image.cpu_addr) {
+            if (seq != fg_seq && FrameGenOrderTrace()) {
+                LOG_INFO(HW_GPU, "FG order: draw into presented {:#x} (frame {})", address, fg_seq);
+            }
             seq = fg_seq;
             FrameGenCopyUi();
         }
@@ -992,6 +995,10 @@ typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr
             info.previous = seq != fg_seq;
         }
     }
+    if (FrameGenOrderTrace()) {
+        LOG_INFO(HW_GPU, "FG order: present {:#x}: frame {} (latest {}), known {}", presented,
+                 info.seq, fg_seq, info.known);
+    }
     if (!found && presented != 0) {
         fg_present_marks[fg_present_next] = {presented, 0};
         fg_present_next = (fg_present_next + 1) % fg_present_marks.size();
@@ -1000,6 +1007,12 @@ typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr
         info.layers = FrameGenUiLayers();
     }
     return info;
+}
+
+template <class P>
+bool TextureCache<P>::FrameGenOrderTrace() const {
+    static const bool trace = std::getenv("EDEN_FG_TRACE") != nullptr;
+    return trace && frame_tick >= 1800 && frame_tick < 1840;
 }
 
 template <class P>
@@ -1480,6 +1493,9 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
         // (Copied here if the frame was never seen combined.)
         FrameGenCopyUi();
         ++fg_seq;
+        if (FrameGenOrderTrace()) {
+            LOG_INFO(HW_GPU, "FG order: DLSS evaluation, frame {}", fg_seq);
+        }
         runtime.FrameGenBeginFrame(fg_seq);
         fg_ui_count_size = 0;
         fg_ui_watch = true;

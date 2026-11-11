@@ -83,6 +83,17 @@ public:
         return seq != 0 && frame.ready && frame.seq == seq;
     }
 
+    /// The newest frame prepared and not generated yet (0: none).
+    [[nodiscard]] u64 NewestPrepared() const noexcept {
+        u64 newest = 0;
+        for (const PreparedFrame& frame : prepared_frames) {
+            if (frame.ready && frame.seq > newest) {
+                newest = frame.seq;
+            }
+        }
+        return newest;
+    }
+
     /// No frame is generated for frame seq: the next generation starts over.
     void Skip(u64 seq) noexcept {
         for (PreparedFrame& frame : prepared_frames) {

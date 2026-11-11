@@ -536,6 +536,8 @@ private:
     size_t fg_present_next = 0;
     /// The last frame whose UI layer was copied.
     u64 fg_ui_copied = 0;
+    /// Testing (EDEN_FG_TRACE=1): frame order events around 30 s in.
+    [[nodiscard]] bool FrameGenOrderTrace() const;
     void FrameGenCopyUi();
     bool fg_ui_watch = false;     ///< Counting draws (the game evaluated DLSS last frame or this).
     bool fg_ui_dlss_seen = false; ///< DLSS evaluated this frame.

@@ -323,12 +323,14 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
                  "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
                  "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
-                 "started the next, {} not matched to a game frame",
+                 "started the next, {} not matched to a game frame, {} given the newest motion",
+
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
                              : 0.0f,
-                 fsr_fg_late, fsr_fg_unknown);
+                 fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback);
+        fsr_fg_fallback = 0;
         fsr_fg_ui_layers = 0;
         fsr_fg_late = 0;
         fsr_fg_unknown = 0;
@@ -342,7 +344,24 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
     // rate where it helps: not above ~120 FPS (already smooth) or below ~15 (too far apart).
     // Which of the game's frames this is: the game may present a frame after it has started
     // the next (its motion and UI then come from what was kept for it).
-    const RasterizerVulkan::FrameGenFrameInfo game_frame = rasterizer.FrameGenFrame(presented);
+    RasterizerVulkan::FrameGenFrameInfo game_frame = rasterizer.FrameGenFrame(presented);
+    if (!generator->HasPrepared(game_frame.seq)) {
+        // Its frame wasn't prepared (or was used already): the newest prepared frame, as before
+        // frames were matched, rather than none.
+        const u64 newest = generator->NewestPrepared();
+        static const bool trace = std::getenv("EDEN_FG_TRACE") != nullptr;
+        static u32 traced = 0;
+        if (trace && fsr_fg_generated > 1500 && traced++ < 40) {
+            LOG_INFO(Render_Vulkan, "FG order: frame {} not prepared, newest {}",
+                     game_frame.seq, newest);
+        }
+        if (newest != 0) {
+            ++fsr_fg_fallback;
+            game_frame.seq = newest;
+            game_frame.previous = false;
+            game_frame.layers = rasterizer.FrameGenFrame(0).layers;
+        }
+    }
     const bool prepared = generator->HasPrepared(game_frame.seq);
     if (prepared) {
         fsr_fg_late += game_frame.previous ? 1 : 0;
