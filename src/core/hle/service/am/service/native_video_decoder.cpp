@@ -156,25 +156,18 @@ struct NativeVideoMapping {
     u32 references{1};
 };
 
-struct NativeVideoState {
-    Core::System& system;
-    std::shared_ptr<Nvidia::Module> module;
-    Kernel::KProcess* process;
-    std::shared_ptr<void> memory_owner;
-    std::mutex mutex;
-    std::vector<std::shared_ptr<NativeVideoImagePool>> pools;
-    std::vector<std::shared_ptr<NativeVideoMapping>> mappings;
-
-    // The decoder sessions' own server, on a host thread (made with the first decoder). AM's
-    // services all run on one emulated core thread, and the decoder's calls wait for decoding
-    // and convert 1440p frames: in Fortune's Weave's heavy cutscenes they kept that thread busy
-    // almost all the time (ReleaseImage and Submit ~10 s of every 10 s), so the game's rendering
-    // thread queued its nvdrv:gsv GPU calls behind them (up to 180 ms each) and presentation
-    // fell to 5-7 FPS while the movie itself kept up (issue #22).
-    Service::ServerManager* DecoderServer() {
-        std::call_once(decoder_server_once, [this] {
+// The decoder sessions' own server, on a host thread (made with the first decoder, then kept for
+// the rest of the boot). AM's services all run on one emulated core thread, and the decoder's calls
+// wait for decoding and convert 1440p frames: in Fortune's Weave's heavy cutscenes they kept that
+// thread busy almost all the time (ReleaseImage and Submit ~10 s of every 10 s), so the game's
+// rendering thread queued its nvdrv:gsv GPU calls behind them (up to 180 ms each) and presentation
+// fell to 5-7 FPS while the movie itself kept up (issue #22).
+struct NativeVideoServer {
+    explicit NativeVideoServer(Core::System& system_) : system{system_} {}
+    Service::ServerManager* Get() {
+        std::call_once(once, [this] {
             auto manager = std::make_unique<Service::ServerManager>(system);
-            decoder_server = manager.get();
+            server = manager.get();
             auto holder = std::make_shared<std::unique_ptr<Service::ServerManager>>(std::move(manager));
             system.Kernel()
                 .RunOnHostCoreProcess("NativeVideo",
@@ -182,10 +175,26 @@ struct NativeVideoState {
                 .detach();
             LOG_INFO(Service_AM, "Native video decoder calls are served on their own host thread");
         });
-        return decoder_server;
+        return server;
     }
-    std::once_flag decoder_server_once;
-    Service::ServerManager* decoder_server{};
+    Core::System& system;
+    std::once_flag once;
+    Service::ServerManager* server{};
+};
+
+std::shared_ptr<NativeVideoServer> MakeNativeVideoServer(Core::System& system) {
+    return std::make_shared<NativeVideoServer>(system);
+}
+
+struct NativeVideoState {
+    Core::System& system;
+    std::shared_ptr<Nvidia::Module> module;
+    Kernel::KProcess* process;
+    std::shared_ptr<void> memory_owner;
+    std::shared_ptr<NativeVideoServer> server;
+    std::mutex mutex;
+    std::vector<std::shared_ptr<NativeVideoImagePool>> pools;
+    std::vector<std::shared_ptr<NativeVideoMapping>> mappings;
 };
 
 namespace {
@@ -1500,7 +1509,7 @@ private:
             }();
             auto codec = std::make_shared<INativeVideoCodec>(system, state, kind);
             result = own_thread
-                         ? CreateGraphicsSessionOn(system, *state->DecoderServer(), std::move(codec), &client)
+                         ? CreateGraphicsSessionOn(system, *state->server->Get(), std::move(codec), &client)
                          : CreateGraphicsSession(system, ctx, std::move(codec), &client);
         }
         LOG_DEBUG(Service_AM, "native video decoder create result={:#x}", result.raw);
@@ -1515,8 +1524,10 @@ private:
 } // namespace
 
 NativeVideoService::NativeVideoService(Core::System& system, std::shared_ptr<Nvidia::Module> module,
-                                       Kernel::KProcess* process, std::shared_ptr<void> memory_owner)
-    : state{std::make_shared<NativeVideoState>(system, std::move(module), process, std::move(memory_owner))} {}
+                                       Kernel::KProcess* process, std::shared_ptr<void> memory_owner,
+                                       std::shared_ptr<NativeVideoServer> server)
+    : state{std::make_shared<NativeVideoState>(system, std::move(module), process, std::move(memory_owner),
+                                               std::move(server))} {}
 
 std::shared_ptr<SessionRequestHandler> NativeVideoService::CreateContext(NativeVideoKind kind) {
     return std::make_shared<INativeVideoContext>(state->system, state, kind);

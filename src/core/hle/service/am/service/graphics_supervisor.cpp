@@ -2102,7 +2102,8 @@ void IGraphicsSupervisor::InitializeVideoService(HLERequestContext& ctx) {
                     m_image_registry->module = m_nv_module;
                     m_image_registry->memory_session = m_nv_module->GetContainer().OpenSession(m_process);
                 }
-                m_video_service = std::make_shared<NativeVideoService>(system, m_nv_module, m_process, m_image_registry);
+                if (!m_video_server) m_video_server = MakeNativeVideoServer(system);
+                m_video_service = std::make_shared<NativeVideoService>(system, m_nv_module, m_process, m_image_registry, m_video_server);
             }
             if (ctx.GetCommand() == 901) m_video_decoder_initialized = true;
             else m_video_encoder_initialized = true;
@@ -2683,8 +2684,9 @@ void IGraphicsSupervisor::CreateChatImagePool(HLERequestContext& ctx) {
                                     m_image_registry->memory_session =
                                         m_nv_module->GetContainer().OpenSession(m_process);
                                 }
+                                if (!m_video_server) m_video_server = MakeNativeVideoServer(system);
                                 m_video_service = std::make_shared<NativeVideoService>(
-                                    system, m_nv_module, m_process, m_image_registry);
+                                    system, m_nv_module, m_process, m_image_registry, m_video_server);
                             }
                             std::array<u32, 16> video_preference{};
                             video_preference[1] = 5;

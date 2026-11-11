@@ -26,6 +26,7 @@ class Module;
 namespace Service::AM {
 struct NativeImageRegistry;
 class NativeVideoService;
+struct NativeVideoServer;
 
 class IGpuSession;
 
@@ -106,6 +107,7 @@ private:
     bool m_sequence_session_returned{};
     bool m_sequence_finished{};
     std::shared_ptr<NativeVideoService> m_video_service;
+    std::shared_ptr<NativeVideoServer> m_video_server;
     bool m_video_decoder_initialized{};
     bool m_video_encoder_initialized{};
     Phase m_phase{Phase::Created};

@@ -15,12 +15,18 @@ namespace Service::Nvidia { class Module; }
 namespace Service::Nvidia::Devices { class nvhost_as_gpu; }
 namespace Service::AM {
 enum class NativeVideoKind { Decoder, Encoder };
+
+// The decoder sessions' own server on a host thread. One per graphics supervisor (so one per boot):
+// the video service itself is made again for every cutscene.
+struct NativeVideoServer;
+std::shared_ptr<NativeVideoServer> MakeNativeVideoServer(Core::System& system);
 struct NativeVideoState;
 
 class NativeVideoService {
 public:
     NativeVideoService(Core::System& system, std::shared_ptr<Nvidia::Module> module,
-                       Kernel::KProcess* process, std::shared_ptr<void> memory_owner);
+                       Kernel::KProcess* process, std::shared_ptr<void> memory_owner,
+                       std::shared_ptr<NativeVideoServer> server);
     std::shared_ptr<SessionRequestHandler> CreateContext(NativeVideoKind kind);
     Result MapGpuImage(std::shared_ptr<Nvidia::Devices::nvhost_as_gpu> address_space,
                        u32 image_id, u64& address, u64& size);
