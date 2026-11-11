@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <atomic>
 #include <deque>
 #include <limits>
@@ -588,6 +589,9 @@ private:
 #endif
     DelayedDestructionRing<Image, TICKS_TO_DESTROY> sentenced_images;
     u64 memory_limit = ~0ULL;        ///< Video memory the emulator may use
+    /// Bytes freed by recent cleanup passes (frame, bytes): images are destroyed, and stop
+    /// counting in the memory in use, TICKS_TO_DESTROY frames after a pass frees them.
+    std::array<std::pair<u64, u64>, 16> recent_frees{};
     u64 collect_quiet_until = 0;     ///< No cleanup pass before this frame unless over the limit
     u64 texture_memory_estimate = 0; ///< Bytes of the cached images (diagnostics)
     u32 minute_passes = 0;           ///< Cleanup since the last "Video memory in use" report

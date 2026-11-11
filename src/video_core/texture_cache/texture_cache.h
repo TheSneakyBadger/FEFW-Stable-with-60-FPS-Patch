@@ -154,8 +154,17 @@ u32 TextureCache<P>::RunGarbageCollector() {
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 800 : (high_priority_mode ? 400 : 10);
-        // Free down to 256 MiB below the expected level (pending frees still count in use).
-        target_free = high_priority_mode ? total_used_memory - expected_memory + 256_MiB : 0;
+        // Free down to 256 MiB below the expected level. Images freed in the last few frames
+        // still count in use until they are destroyed: over the hard limit a pass runs every
+        // frame, so without taking them off each pass would free the same excess again.
+        u64 pending = 0;
+        for (const auto& [frame, bytes] : recent_frees) {
+            if (frame + TICKS_TO_DESTROY + 2 > frame_tick) {
+                pending += bytes;
+            }
+        }
+        const u64 excess = total_used_memory - expected_memory + 256_MiB;
+        target_free = high_priority_mode ? (excess > pending ? excess - pending : 1) : 0;
         was_high_priority = was_high_priority || high_priority_mode;
         was_aggressive = was_aggressive || aggressive_mode;
     };
@@ -290,6 +299,11 @@ u32 TextureCache<P>::RunGarbageCollector() {
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
         FlushWritebacks();
     }
+    auto& slot = recent_frees[frame_tick % recent_frees.size()];
+    if (slot.first != frame_tick) {
+        slot = {frame_tick, 0};
+    }
+    slot.second += freed_bytes;
     // Log the passes long enough to show as a hitch (each image written back to guest memory
     // waits for the GPU), at most 200 times a session.
     const auto pass_ms = std::chrono::duration<double, std::milli>(
