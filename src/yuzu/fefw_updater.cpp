@@ -6,10 +6,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include <QApplication>
@@ -54,7 +56,7 @@ QString Tr(const char* text) {
 std::unique_ptr<httplib::Client> MakeClient(const std::string& host) {
     auto client = std::make_unique<httplib::Client>(host);
     client->set_connection_timeout(15);
-    client->set_read_timeout(30);
+    client->set_read_timeout(60);
     client->set_write_timeout(30);
 #ifdef YUZU_BUNDLED_OPENSSL
     client->load_ca_cert_store(kCert, sizeof(kCert));
@@ -132,68 +134,110 @@ void SkipTag(const std::string& tag) {
 }
 
 /// Downloads url to path, following redirects (GitHub sends assets to its storage host).
-/// progress(bytes) returns false to cancel.
-bool Download(std::string url, const QString& path, const std::function<bool(u64)>& progress,
-              std::string& error) {
+/// progress(bytes) returns false to cancel. A connection that drops part way (#32: "Failed to
+/// read connection" at 93% every time on one PC) is resumed where it stopped, with a Range
+/// request from the start address (GitHub signs a fresh storage link each time), up to 5 times.
+bool Download(const std::string& start_url, const QString& path,
+              const std::function<bool(u64)>& progress, std::string& error) {
     QFile file(path);
-    for (int redirect = 0; redirect < 8; ++redirect) {
-        const size_t scheme = url.find("://");
-        const size_t slash = scheme == std::string::npos ? std::string::npos : url.find('/', scheme + 3);
-        if (slash == std::string::npos || url.compare(0, 8, "https://") != 0) {
-            error = "unexpected download address";
-            return false;
-        }
-        const std::string host = url.substr(0, slash);
-        const std::string target = url.substr(slash);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            error = "cannot write the download";
-            return false;
-        }
-        int status = 0;
-        std::string location;
-        u64 received = 0;
-        bool canceled = false;
-        const auto result = MakeClient(host)->Get(
-            target, httplib::Headers{{"User-Agent", kUserAgent}, {"Accept", "application/octet-stream"}},
-            [&](const httplib::Response& response) {
-                status = response.status;
-                location = response.get_header_value("Location");
-                return true;
-            },
-            [&](const char* data, size_t length) {
-                if (status != 200) {
-                    return true; // a redirect's body
-                }
-                if (file.write(data, static_cast<qint64>(length)) != static_cast<qint64>(length)) {
-                    return false;
-                }
-                received += length;
-                if (progress && !progress(received)) {
-                    canceled = true;
-                    return false;
-                }
-                return true;
-            });
-        file.close();
-        if (canceled) {
-            error = "canceled";
-            return false;
-        }
-        if (!result) {
-            error = httplib::to_string(result.error());
-            return false;
-        }
-        if (status >= 300 && status < 400 && !location.empty()) {
-            url = location;
-            continue;
-        }
-        if (status != 200) {
-            error = fmt::format("HTTP {}", status);
-            return false;
-        }
-        return true;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        error = "cannot write the download";
+        return false;
     }
-    error = "too many redirects";
+    file.close();
+    u64 have = 0;
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        if (attempt != 0) {
+            LOG_WARNING(Frontend, "Update: download interrupted after {} bytes ({}), resuming",
+                        have, error);
+            std::this_thread::sleep_for(std::chrono::seconds{2});
+        }
+        std::string url = start_url;
+        bool retry = false;
+        for (int redirect = 0; redirect < 8; ++redirect) {
+            const size_t scheme = url.find("://");
+            const size_t slash =
+                scheme == std::string::npos ? std::string::npos : url.find('/', scheme + 3);
+            if (slash == std::string::npos || url.compare(0, 8, "https://") != 0) {
+                error = "unexpected download address";
+                return false;
+            }
+            const std::string host = url.substr(0, slash);
+            const std::string target = url.substr(slash);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                error = "cannot write the download";
+                return false;
+            }
+            httplib::Headers headers{{"User-Agent", kUserAgent},
+                                     {"Accept", "application/octet-stream"}};
+            if (have != 0) {
+                headers.emplace("Range", fmt::format("bytes={}-", have));
+            }
+            int status = 0;
+            std::string location;
+            bool canceled = false;
+            bool write_failed = false;
+            const auto result = MakeClient(host)->Get(
+                target, headers,
+                [&](const httplib::Response& response) {
+                    status = response.status;
+                    location = response.get_header_value("Location");
+                    if (status == 200 && have != 0) {
+                        // The server sent the whole file again instead of the rest.
+                        file.resize(0);
+                        file.seek(0);
+                        have = 0;
+                    }
+                    return true;
+                },
+                [&](const char* data, size_t length) {
+                    if (status != 200 && status != 206) {
+                        return true; // a redirect's body
+                    }
+                    if (file.write(data, static_cast<qint64>(length)) !=
+                        static_cast<qint64>(length)) {
+                        write_failed = true;
+                        return false;
+                    }
+                    have += length;
+                    if (progress && !progress(have)) {
+                        canceled = true;
+                        return false;
+                    }
+                    return true;
+                });
+            file.close();
+            if (canceled) {
+                error = "canceled";
+                return false;
+            }
+            if (write_failed) {
+                error = "cannot write the download";
+                return false;
+            }
+            if (!result) {
+                error = httplib::to_string(result.error());
+                retry = true;
+                break;
+            }
+            if (status >= 300 && status < 400 && !location.empty()) {
+                url = location;
+                continue;
+            }
+            if (status == 416 && have != 0) {
+                return true; // the range starts at the end: the file was already complete
+            }
+            if (status != 200 && status != 206) {
+                error = fmt::format("HTTP {}", status);
+                return false;
+            }
+            return true;
+        }
+        if (!retry) {
+            error = "too many redirects";
+            return false;
+        }
+    }
     return false;
 }
 
