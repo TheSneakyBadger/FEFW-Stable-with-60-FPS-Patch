@@ -224,6 +224,8 @@ add_library(core STATIC
     hle/kernel/board/nintendo/nx/secure_monitor.h
     hle/kernel/code_set.cpp
     hle/kernel/code_set.h
+    hle/kernel/fefw_cpu_stats.cpp
+    hle/kernel/fefw_cpu_stats.h
     hle/kernel/fefw_wait_stats.cpp
     hle/kernel/fefw_wait_stats.h
     hle/kernel/global_scheduler_context.cpp

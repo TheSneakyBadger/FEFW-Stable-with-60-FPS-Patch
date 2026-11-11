@@ -7,6 +7,7 @@
 #include <optional>
 #include <utility>
 #include "core/fefw_frame_rate.h"
+#include "core/hle/kernel/fefw_cpu_stats.h"
 #include "core/hle/kernel/fefw_wait_stats.h"
 #include "core/hle/service/am/service/native_video_layout.h"
 #include "core/hle/service/am/service/native_video_decoder.h"
@@ -1163,6 +1164,7 @@ private:
     void PresentClientBuffer(HLERequestContext& ctx) {
         FefwWaitStats::MarkThread(FefwWaitStats::Role::Render, &ctx.GetThread());
         FefwWaitStats::MaybeReport();
+        FefwCpuStats::MaybeReport(&ctx.GetThread());
         const auto* packet = ctx.CommandBuffer();
         const u64 token = u64{packet[2]} | (u64{packet[3]} << 32);
         RefreshReleasedBuffers();
