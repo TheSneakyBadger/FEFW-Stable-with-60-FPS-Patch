@@ -21,6 +21,13 @@ A frame made between each two of the game's, so **60 FPS shows as 120** (or 30 a
 - **The status bar shows which one is running**, next to the upscaler (for example *NVIDIA DLSS Frame Gen*).
 - Built on AMD's FidelityFX SDK 1.1.4 (FSR 3.1 frame interpolation and optical flow, MIT) and NVIDIA Streamline 2.14 (DLSS frame generation, loaded from your own DLLs: none are included).
 
+#### 🐧 Linux (test build)
+
+Updated to v1.6.8: **[Fortunes-Eden-linux-x86_64.tar.gz](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/raw/test-builds/Fortunes-Eden-linux-x86_64.tar.gz)**
+
+- NVIDIA DLSS (upscaling and frame generation) is Windows-only.
+- AMD FSR 3.1 frame generation is included, but untested on Linux so far.
+
 #### 🏠 The main settings on the launch screen
 
 Beside **Play**, so nobody misses them:
@@ -60,7 +67,6 @@ Over an hour or two, video memory crept up until the card was full. On 8 GB card
 - **The updater resumes dropped downloads** ([#32](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/32)).
 - **Mouse mode:** the hint next to its button points at the button (right-click it for the sensitivity).
 - The log says what the emulator built during slow frames, and what the cached images are every 5 minutes, to help with reports.
-- **Linux (test build):** updated to v1.6.8: **[Fortunes-Eden-linux-x86_64.tar.gz](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/raw/test-builds/Fortunes-Eden-linux-x86_64.tar.gz)**. NVIDIA DLSS (upscaling and frame generation) is Windows-only; AMD FSR 3.1 frame generation is included but untested on Linux so far.
 
 ## v1.6.7.4
 
