@@ -2,12 +2,13 @@
 
 ## v1.6.8.1
 
-A quick fix for two frame generation problems in v1.6.8.
+A quick fix for three frame generation problems in v1.6.8.
 
 #### 🔧 Fixes
 
 - **Frame generation is back in Settings → Graphics.** In v1.6.8 it only showed on the launch screen, so the **Download from NVIDIA** button for NVIDIA's frame generation files was missing too. Choose **NVIDIA DLSS** there to see the button.
 - **No more UI ghosting with HDR on.** With AMD FSR 3.1 frame generation and HDR, the UI moved with the scene and left trails when the camera moved. The UI now stays still, as it does without HDR.
+- **NVIDIA DLSS frame generation works when you start a game again.** After you stopped a game, starting it again fell back to AMD FSR 3.1 for both the upscaler and frame generation. NVIDIA's software can't be set up twice in one run, so after NVIDIA frame generation has run, **Play** now reopens Fortune's Eden straight into the game.
 - **Clearer log when NVIDIA frame generation can't start.** If NVIDIA's frame generation files are missing, the log now names them. Before, it blamed the graphics card or Windows.
 
 Everything else is as in [v1.6.8](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8).

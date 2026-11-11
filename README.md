@@ -23,7 +23,7 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 
 ## What's new
 
-- **v1.6.8.1:** Frame generation is back in *Settings → Graphics* (with NVIDIA's download button), and the UI no longer ghosts with AMD frame generation and HDR.
+- **v1.6.8.1:** Frame generation is back in *Settings → Graphics* (with NVIDIA's download button), the UI no longer ghosts with AMD frame generation and HDR, and NVIDIA DLSS frame generation works when a game is started again.
 - **v1.6.8:** frame generation (experimental): AMD FSR 3.1 on any card, or NVIDIA DLSS on GeForce RTX 40/50, so 60 FPS shows as 120. The game's UI stays still.
 - **v1.6.8:** the main settings are on the launch screen, beside Play: 60 FPS, Ultrawide, HDR, upscaler, quality and frame generation.
 - **v1.6.8:** video memory no longer creeps up over long sessions ([#35](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/35), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37), [#38](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/38)), and 60 FPS mode works with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30)).

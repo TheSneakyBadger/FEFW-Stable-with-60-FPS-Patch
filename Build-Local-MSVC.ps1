@@ -466,6 +466,8 @@ New in v1.6.8.1:
 - Frame generation is back in Settings > Graphics (it only showed on the launch screen), with
   the "Download from NVIDIA" button for NVIDIA's frame generation files.
 - AMD frame generation with HDR on: the UI no longer ghosts when the camera moves.
+- NVIDIA DLSS frame generation works when a game is started again: after it has run, Play
+  reopens Fortune's Eden into the game (NVIDIA's software can't be set up twice in one run).
 
 New in v1.6.8:
 - Frame generation: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50). The game's UI is kept
