@@ -1566,6 +1566,7 @@ void MainWindow::ConnectWidgetEvents() {
             });
     connect(fefw_home, &FefwHome::SettingsRequested, this, &MainWindow::OnConfigure);
     connect(fefw_home, &FefwHome::UpdateCheckRequested, this, &MainWindow::CheckForFefwUpdateNow);
+    connect(fefw_home, &FefwHome::SixtyFpsChanged, this, [this] { config->SaveAllValues(); });
     connect(game_list, &GameList::SaveConfig, this, &MainWindow::OnSaveConfig);
 
     connect(game_list, &GameList::OpenPerGameGeneralRequested, this,
@@ -4524,9 +4525,10 @@ void MainWindow::UpdateMouseButton() {
     mouse_status_button->setText(enabled ? tr("Click to turn mouse mode off")
                                          : tr("Click to turn mouse mode on"));
     if (mouse_hint_label != nullptr) {
-        mouse_hint_label->setText(enabled ? tr("Ctrl + Enter to turn mouse mode off  ·  "
-                                               "Right-click to alter sensitivity")
-                                          : tr("Right-click to alter sensitivity"));
+        // The arrow points at the button (the hint itself isn't clickable).
+        mouse_hint_label->setText(enabled ? tr("← Right-click it to alter sensitivity  ·  "
+                                               "Ctrl + Enter to turn mouse mode off")
+                                          : tr("← Right-click it to alter sensitivity"));
     }
 }
 

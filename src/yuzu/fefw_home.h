@@ -9,13 +9,14 @@
 
 #include "common/common_types.h"
 
+class QCheckBox;
 class QLabel;
 class QPushButton;
 class QStandardItemModel;
 
 /// Fortune's Eden's launch screen: a card above the game list with Fire Emblem: Fortune's
-/// Weave's icon, title and version, the upscaler in use and Play / Game Settings / Settings /
-/// Check for Updates. Shown and hidden with the game list (it holds the list), and only while
+/// Weave's icon, title and version, the upscaler in use and Play (with the 60 FPS mode beside it)
+/// / Game Settings / Settings / Check for Updates. Shown and hidden with the game list (it holds the list), and only while
 /// the game is in the list.
 class FefwHome : public QWidget {
     Q_OBJECT
@@ -27,7 +28,7 @@ public:
 
     /// Looks for Fortune's Weave in the game list's model and shows or hides the card.
     void Refresh(const QStandardItemModel& model);
-    /// Re-reads the upscaler line (after the settings change).
+    /// Re-reads the upscaler line and the 60 FPS box (after the settings change).
     void UpdateStatusLine();
 
 signals:
@@ -35,6 +36,8 @@ signals:
     void GameSettingsRequested(u64 title_id, const QString& path);
     void SettingsRequested();
     void UpdateCheckRequested();
+    /// The 60 FPS box was ticked or unticked (the setting is already changed; save it).
+    void SixtyFpsChanged();
 
 protected:
     bool eventFilter(QObject* object, QEvent* event) override;
@@ -46,5 +49,6 @@ private:
     QLabel* version_label{};
     QLabel* status_label{};
     QPushButton* play_button{};
+    QCheckBox* sixty_fps{};
     QString game_path;
 };

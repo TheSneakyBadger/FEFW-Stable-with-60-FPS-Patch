@@ -4,6 +4,7 @@
 #include "yuzu/fefw_home.h"
 
 #include <QBoxLayout>
+#include <QCheckBox>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -13,6 +14,7 @@
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStandardItemModel>
 
 #include "common/fefw_version.h"
@@ -122,7 +124,8 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         "#fefwHomePlay { padding: 4px 28px;"
         " color: #1b1824; background-color: #e0b04a; border: 1px solid #e0b04a; border-radius: 9px; }"
         "#fefwHomePlay:hover { background-color: #f0c463; }"
-        "#fefwHomePlay:pressed { background-color: #c39232; }"));
+        "#fefwHomePlay:pressed { background-color: #c39232; }"
+        "#fefwHome60 { color: #ece8f3; background: transparent; }"));
 
     icon_label = new QLabel(card);
     icon_label->setObjectName(QStringLiteral("fefwHomeIcon"));
@@ -153,6 +156,13 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         QStringLiteral("min-height: %1px;").arg(play_text_height + 8));
     play_button->setMinimumHeight(play_text_height + 18);
     play_button->setCursor(Qt::PointingHandCursor);
+    // The 60 FPS mode, beside Play (it takes effect when the game starts).
+    sixty_fps = new QCheckBox(tr("60 FPS"), card);
+    sixty_fps->setObjectName(QStringLiteral("fefwHome60"));
+    sixty_fps->setCursor(Qt::PointingHandCursor);
+    sixty_fps->setToolTip(tr("Fortune's Weave runs at up to 60 FPS instead of 30 (game version "
+                             "1.1.0). Takes effect when the game starts."));
+    sixty_fps->setChecked(Settings::values.fefw_60fps.GetValue());
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), card);
     QPushButton* const settings = new QPushButton(tr("Settings"), card);
     QPushButton* const updates = new QPushButton(tr("Check for Updates"), card);
@@ -163,7 +173,9 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     QHBoxLayout* const buttons = new QHBoxLayout;
     buttons->setSpacing(8);
     buttons->addWidget(play_button);
-    buttons->addSpacing(6);
+    buttons->addSpacing(4);
+    buttons->addWidget(sixty_fps);
+    buttons->addSpacing(10);
     buttons->addWidget(game_settings);
     buttons->addWidget(settings);
     buttons->addWidget(updates);
@@ -203,6 +215,12 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     connect(game_settings, &QPushButton::clicked, this, [this] {
         if (!game_path.isEmpty()) {
             emit GameSettingsRequested(TitleId, game_path);
+        }
+    });
+    connect(sixty_fps, &QCheckBox::toggled, this, [this](bool checked) {
+        if (Settings::values.fefw_60fps.GetValue() != checked) {
+            Settings::values.fefw_60fps.SetValue(checked);
+            emit SixtyFpsChanged();
         }
     });
     connect(settings, &QPushButton::clicked, this, &FefwHome::SettingsRequested);
@@ -258,4 +276,6 @@ void FefwHome::UpdateStatusLine() {
             QualityName(quality, upscaler == Settings::Upscaler::NvidiaDlss));
     }
     status_label->setText(line);
+    const QSignalBlocker blocker{sixty_fps};
+    sixty_fps->setChecked(Settings::values.fefw_60fps.GetValue());
 }
