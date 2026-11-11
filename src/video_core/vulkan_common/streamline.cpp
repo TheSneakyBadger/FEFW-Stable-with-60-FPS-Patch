@@ -359,6 +359,10 @@ bool Start() {
     preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking |
                         sl::PreferenceFlags::eUseManualHooking | sl::PreferenceFlags::eAllowOTA |
                         sl::PreferenceFlags::eLoadDownloadedPlugins;
+    if (frame_gen_wanted) {
+        // Frame generation's inputs are tagged per frame (slSetTagForFrame).
+        preferences.flags |= sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    }
     preferences.featuresToLoad = features.data();
     preferences.numFeaturesToLoad = static_cast<u32>(features.size());
     preferences.engine = sl::EngineType::eCustom;
