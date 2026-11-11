@@ -274,9 +274,12 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 #endif
 
-    GenerateFsrFrame(frame, framebuffers.empty()
-                                ? DAddr{}
-                                : framebuffers[0].address + framebuffers[0].offset);
+    if (framebuffers.empty()) {
+        GenerateFsrFrame(frame, DAddr{}, 0, 0);
+    } else {
+        GenerateFsrFrame(frame, framebuffers[0].address + framebuffers[0].offset,
+                         framebuffers[0].width, framebuffers[0].height);
+    }
 
     scheduler.Flush(*frame->render_ready);
 
@@ -290,7 +293,8 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     rasterizer.TickFrame();
 }
 
-void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
+void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
+                                      u32 presented_height) {
     frame->present_delay = {};
     Fsr3FrameGenerator* const generator = rasterizer.FrameGenerator();
     if (!generator) {
@@ -344,7 +348,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
     // rate where it helps: not above ~120 FPS (already smooth) or below ~15 (too far apart).
     // Which of the game's frames this is: the game may present a frame after it has started
     // the next (its motion and UI then come from what was kept for it).
-    RasterizerVulkan::FrameGenFrameInfo game_frame = rasterizer.FrameGenFrame(presented);
+    RasterizerVulkan::FrameGenFrameInfo game_frame = rasterizer.FrameGenFrame(presented, presented_width, presented_height);
     if (!generator->HasPrepared(game_frame.seq)) {
         // Its frame wasn't prepared (or was used already): the newest prepared frame, as before
         // frames were matched, rather than none.
@@ -359,7 +363,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
             ++fsr_fg_fallback;
             game_frame.seq = newest;
             game_frame.previous = false;
-            game_frame.layers = rasterizer.FrameGenFrame(0).layers;
+            game_frame.layers = rasterizer.FrameGenFrame(0, 0, 0).layers;
         }
     }
     const bool prepared = generator->HasPrepared(game_frame.seq);

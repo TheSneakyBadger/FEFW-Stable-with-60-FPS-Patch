@@ -524,15 +524,24 @@ public:
         bool previous; ///< The game already evaluated DLSS for its next frame.
         std::array<ImageView*, 4> layers; ///< The UI layers (null when previous).
     };
-    [[nodiscard]] FrameGenFrameInfo FrameGenFrame(DAddr presented);
+    [[nodiscard]] FrameGenFrameInfo FrameGenFrame(DAddr presented, u32 width, u32 height);
 
 private:
     void WatchUiLayer();
     [[nodiscard]] std::array<ImageId, 4> FrameGenUiLayerIds();
     /// DLSS evaluations so far (each starts a frame).
     u64 fg_seq = 0;
-    /// Presented buffers (device address) and the frame last drawn into each.
-    std::array<std::pair<DAddr, u64>, 4> fg_present_marks{};
+    /// Presented buffers and the frame last drawn into each. Only draws to an image of the
+    /// buffer's own size count: Fortune's Weave also uses the buffers' memory as a smaller
+    /// scratch target (2560x1440 in a 3840x2160 buffer) right after each DLSS evaluation, while
+    /// the buffer still holds a frame two evaluations old waiting to be presented.
+    struct PresentMark {
+        DAddr address;
+        u32 width;
+        u32 height;
+        u64 seq;
+    };
+    std::array<PresentMark, 4> fg_present_marks{};
     size_t fg_present_next = 0;
     /// The last frame whose UI layer was copied.
     u64 fg_ui_copied = 0;

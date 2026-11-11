@@ -66,9 +66,9 @@ public:
     /// Whether the device has what the passes need.
     [[nodiscard]] static bool IsSupported(const Device& device);
 
-    /// Frames kept (prepared motion, UI copies): the game may be up to two frames ahead of the
-    /// one presented.
-    static constexpr size_t KEPT_FRAMES = 3;
+    /// Frames kept (prepared motion, UI copies): Fortune's Weave presents a frame after two more
+    /// DLSS evaluations (one more kept for safety).
+    static constexpr size_t KEPT_FRAMES = 4;
 
     /// Records the reconstruct-and-dilate pass on frame seq's depth and motion vectors.
     void Prepare(const PrepareInputs& inputs, u64 seq);

@@ -379,7 +379,9 @@ void TextureCache<P>::TickFrame() {
     // UI may be drawn before the evaluation).
     // (The draw counts start over at each evaluation: the game may present a frame after it has
     // started the next one.)
-    fg_ui_watch = fg_ui_dlss_seen;
+    // (Once the game has evaluated DLSS, draws stay watched: the frame is combined after the
+    // composite that follows its evaluation.)
+    fg_ui_watch = fg_ui_watch || fg_ui_dlss_seen;
     fg_ui_dlss_seen = false;
     if (fg_trace_active) {
         FlushRenderTargetTrace();
@@ -938,12 +940,14 @@ void TextureCache<P>::WatchUiLayer() {
     // A presented buffer being drawn (the game combining its picture and UI): it will show this
     // frame, and the UI layer is complete now (the game clears it early in the next frame, before
     // that frame's DLSS evaluation): copy it.
-    for (auto& [address, seq] : fg_present_marks) {
-        if (address != 0 && address == image.cpu_addr) {
-            if (seq != fg_seq && FrameGenOrderTrace()) {
-                LOG_INFO(HW_GPU, "FG order: draw into presented {:#x} (frame {})", address, fg_seq);
+    for (PresentMark& mark : fg_present_marks) {
+        if (mark.address != 0 && mark.address == image.cpu_addr &&
+            image.info.size.width == mark.width && image.info.size.height == mark.height) {
+            if (mark.seq != fg_seq && FrameGenOrderTrace()) {
+                LOG_INFO(HW_GPU, "FG order: draw into presented {:#x} (frame {})", mark.address,
+                         fg_seq);
             }
-            seq = fg_seq;
+            mark.seq = fg_seq;
             FrameGenCopyUi();
         }
     }
@@ -981,14 +985,19 @@ std::array<typename P::ImageView*, 4> TextureCache<P>::FrameGenUiLayers() {
 }
 
 template <class P>
-typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr presented) {
+typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr presented,
+                                                                           u32 width, u32 height) {
     FrameGenFrameInfo info{.seq = fg_seq, .known = false, .previous = false, .layers = {}};
     bool found = false;
-    for (const auto& [address, seq] : fg_present_marks) {
-        if (address != presented) {
+    for (PresentMark& mark : fg_present_marks) {
+        if (presented == 0 || mark.address != presented) {
             continue;
         }
         found = true;
+        if (mark.width != width || mark.height != height) {
+            mark = {presented, width, height, 0};
+        }
+        const u64 seq = mark.seq;
         if (seq != 0) {
             info.known = true;
             info.seq = seq;
@@ -1000,7 +1009,7 @@ typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr
                  info.seq, fg_seq, info.known);
     }
     if (!found && presented != 0) {
-        fg_present_marks[fg_present_next] = {presented, 0};
+        fg_present_marks[fg_present_next] = {presented, width, height, 0};
         fg_present_next = (fg_present_next + 1) % fg_present_marks.size();
     }
     if (!info.previous) {

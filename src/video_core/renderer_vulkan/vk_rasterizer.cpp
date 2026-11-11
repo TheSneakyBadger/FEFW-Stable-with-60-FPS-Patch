@@ -1243,9 +1243,10 @@ bool RasterizerVulkan::AccelerateTemporalUpscale(
     return texture_cache.TemporalUpscale(dst, src, motion_vectors, depth, jitter, motion_scale);
 }
 
-RasterizerVulkan::FrameGenFrameInfo RasterizerVulkan::FrameGenFrame(DAddr presented) {
+RasterizerVulkan::FrameGenFrameInfo RasterizerVulkan::FrameGenFrame(DAddr presented, u32 width,
+                                                                   u32 height) {
     std::scoped_lock lock{texture_cache.mutex};
-    const auto info = texture_cache.FrameGenFrame(presented);
+    const auto info = texture_cache.FrameGenFrame(presented, width, height);
     FrameGenFrameInfo result{
         .seq = info.seq, .known = info.known, .previous = info.previous, .layers = {}};
     for (size_t i = 0; i < info.layers.size(); ++i) {

@@ -155,7 +155,7 @@ public:
         bool previous;
         std::array<VkImageView, 4> layers;
     };
-    FrameGenFrameInfo FrameGenFrame(DAddr presented);
+    FrameGenFrameInfo FrameGenFrame(DAddr presented, u32 width, u32 height);
     Tegra::Engines::AccelerateDMAInterface& AccessAccelerateDMA() override;
     void AccelerateInlineToMemory(GPUVAddr address, size_t copy_size,
                                   std::span<const u8> memory) override;
