@@ -142,13 +142,20 @@ u32 TextureCache<P>::RunGarbageCollector() {
     const u64 used_before = total_used_memory;
     u32 num_deleted = 0;
     u32 num_downloaded = 0;
+    // Fortune's Eden: over the expected level a pass frees until the excess is covered, not a
+    // fixed 20 images. A scene that made new large images (render targets) faster than 20 per
+    // pass pushed use from the expected level to the hard limit before old ones were cleared.
+    u64 freed_bytes = 0;
+    u64 target_free = 0;
     bool was_high_priority = false;
     bool was_aggressive = false;
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
-        num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
+        num_iterations = aggressive_mode ? 800 : (high_priority_mode ? 400 : 10);
+        // Free down to 256 MiB below the expected level (pending frees still count in use).
+        target_free = high_priority_mode ? total_used_memory - expected_memory + 256_MiB : 0;
         was_high_priority = was_high_priority || high_priority_mode;
         was_aggressive = was_aggressive || aggressive_mode;
     };
@@ -195,8 +202,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
                           &evict_old_costly, &num_deleted, &num_downloaded, &writebacks,
-                          &writeback_bytes, &UsedMemory](ImageId image_id) {
-        if (num_iterations == 0) {
+                          &writeback_bytes, &UsedMemory, &freed_bytes,
+                          &target_free](ImageId image_id) {
+        if (num_iterations == 0 || (target_free != 0 && freed_bytes >= target_free)) {
             return true;
         }
         --num_iterations;
@@ -222,9 +230,15 @@ u32 TextureCache<P>::RunGarbageCollector() {
             ++num_iterations;
             return false;
         }
+        // Each image written back waits for the GPU copy: keep a pass's write-backs to 256 MiB
+        // so a big pass doesn't become one long hitch (the rest go in the next passes).
+        if (must_download && writeback_bytes >= 256_MiB) {
+            return false;
+        }
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
+        freed_bytes += ImageMemoryEstimate(image);
         UnregisterImage(image_id);
         if (must_download) {
             writebacks.push_back(image_id);
