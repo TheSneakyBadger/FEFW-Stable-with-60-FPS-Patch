@@ -417,6 +417,10 @@ struct Values {
     // loads them (file_sys/fefw_romfs_tweaks.cpp; nothing is written to disk): screen-space
     // reflections (the hubs: 32 rays per pixel), ambient occlusion (SSAO), and how soon crowd
     // characters switch to simpler models. Take effect when the game starts.
+    // Fortune's Eden's 60 FPS mode for Fortune's Weave 1.1.0 (core/fefw_frame_rate.cpp and the
+    // built-in game patch): the game steps by the real frame time, 30-60 FPS. The older way to
+    // turn it on, an add-on folder named "60fps", still works too. Takes effect at game start.
+    SwitchableSetting<bool> fefw_60fps{linkage, false, "fefw_60fps", Category::Renderer};
     SwitchableSetting<FefwReflections, true> fefw_reflections{
         linkage, FefwReflections::Full, "fefw_reflections", Category::Renderer};
     SwitchableSetting<bool> fefw_ambient_occlusion{linkage, true, "fefw_ambient_occlusion",

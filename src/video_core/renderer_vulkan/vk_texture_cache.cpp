@@ -2276,11 +2276,11 @@ void TextureCacheRuntime::TickFrame() {
         return scheduler.IsFree(pending.first);
     });
 
-    // Diagnostics, about once a minute next to the texture cache's report: where the video
+    // Diagnostics, about every five minutes: where the video
     // memory the driver reports goes. VMA blocks hold every image and buffer allocation (the
     // gap between block and allocation bytes is free space inside blocks); what the driver
     // reports beyond the blocks is memory allocated outside VMA (swapchain, upscalers, driver).
-    if (++diagnostics_frame % 3600 == 0) {
+    if (++diagnostics_frame % 18000 == 0) {
         VmaTotalStatistics stats{};
         vmaCalculateStatistics(device.GetAllocator(), &stats);
         const auto& total = stats.total.statistics;

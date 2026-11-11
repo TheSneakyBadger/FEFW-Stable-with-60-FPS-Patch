@@ -28,7 +28,8 @@ ConfigurePerformance::ConfigurePerformance(
     box_layout->addWidget(intro);
 
     for (Settings::BasicSetting* const setting :
-         {static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reflections),
+         {static_cast<Settings::BasicSetting*>(&Settings::values.fefw_60fps),
+          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reflections),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_ambient_occlusion),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_crowd_detail)}) {
         auto* const widget = builder.BuildWidget(setting, apply_funcs);
@@ -61,7 +62,8 @@ ConfigurePerformance::ConfigurePerformance(
 ConfigurePerformance::~ConfigurePerformance() = default;
 
 bool ConfigurePerformance::Shows(u32 setting_id) {
-    return setting_id == Settings::values.fefw_reflections.Id() ||
+    return setting_id == Settings::values.fefw_60fps.Id() ||
+           setting_id == Settings::values.fefw_reflections.Id() ||
            setting_id == Settings::values.fefw_ambient_occlusion.Id() ||
            setting_id == Settings::values.fefw_reduced_crowd_detail.Id();
 }
@@ -84,10 +86,10 @@ void ConfigurePerformance::changeEvent(QEvent* event) {
 
 void ConfigurePerformance::RetranslateUI() {
     setAccessibleName(tr("Performance"));
-    intro->setText(tr("Lighter versions of the game's own graphics effects, for PCs that can't "
-                      "hold the frame rate. Nothing is changed on disk."));
+    intro->setText(tr("60 FPS mode, and lighter versions of the game's own graphics effects for "
+                      "PCs that can't hold the frame rate. Nothing is changed on disk."));
     restart_note->setText(
         tr("<i>Changes take effect the next time the game starts.</i>"));
-    sixty_note->setText(tr("60 FPS mode is turned on with the game's \"60fps\" add-on "
-                           "(right-click the game, Properties, Add-Ons)."));
+    sixty_note->setText(tr("60 FPS mode is for game version 1.1.0; other versions run at 30 FPS "
+                           "as usual."));
 }

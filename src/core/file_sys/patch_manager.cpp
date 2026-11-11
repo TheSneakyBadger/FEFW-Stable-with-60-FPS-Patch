@@ -493,7 +493,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             LOG_ERROR(Loader, "    - The built-in mouse patch could not be applied");
         }
         if (FefwSixtyEnabled()) {
-            LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60fps add-on)");
+            LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60 FPS mode)");
             const auto sixty = std::make_shared<VectorVfsFile>(
                 std::vector<u8>(FefwSixtyPatch::Ips.begin(), FefwSixtyPatch::Ips.end()),
                 "60fps.ips");
@@ -556,6 +556,9 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
 bool PatchManager::FefwSixtyEnabled() const {
     if (title_id != FefwRomfsTweaks::TitleId) {
         return false;
+    }
+    if (Settings::values.fefw_60fps.GetValue()) {
+        return true;
     }
     const auto load_dir = GetModificationLoadRoot();
     if (load_dir == nullptr) {
