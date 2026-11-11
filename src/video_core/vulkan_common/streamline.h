@@ -48,6 +48,11 @@ struct DlssFiles {
 /// signature) and starts Streamline for DLSS. Call before creating the renderer's instance.
 bool Start();
 
+/// False once NVIDIA DLSS frame generation has run and stopped in this process: NVIDIA's
+/// Streamline throws an exception setting up the next game's device after that, so the next game
+/// needs a new process to use NVIDIA DLSS.
+[[nodiscard]] bool CanStartAgain();
+
 /// Streamline's proxy for a Vulkan function it hooks (vkCreateWin32SurfaceKHR, ...) while it is
 /// running, else null.
 [[nodiscard]] void* HookedFunction(const char* name);

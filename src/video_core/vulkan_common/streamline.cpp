@@ -611,6 +611,14 @@ namespace {
 void ResetFrameGen();
 }
 
+namespace {
+std::atomic<bool> frame_gen_stopped{false};
+}
+
+bool CanStartAgain() {
+    return !frame_gen_stopped.load(std::memory_order_relaxed);
+}
+
 void Stop() {
     // A game started again in the same session starts Streamline again: its plugins (and the
     // functions taken from them, and the Reflex options set on them) are new then.
@@ -618,6 +626,9 @@ void Stop() {
     State& state = GetState();
     if (!state.started) {
         return;
+    }
+    if (state.attached && state.frame_gen_available) {
+        frame_gen_stopped.store(true, std::memory_order_relaxed);
     }
     const sl::Result result = state.api.shutdown();
     state.started = false;
