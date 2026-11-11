@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Frame generation's UI mask: where the game's UI layer (drawn on its own before it is combined
-// with the 3D picture) covers the screen, the generated frame takes the real frame's pixels, so
-// the UI isn't moved along with the scene behind it (ghosting, flicker).
+// Frame generation and the game's UI. Fortune's Weave draws its UI into a layer of its own and then
+// combines it with the 3D picture: in linear light, frame = ui.rgb + ui.a * scene (ui.a is the
+// scene's share, 1 where there is no UI). That makes the UI removable:
+//  - mode 0 (before interpolation) takes the UI out of the real frame, so frame generation moves
+//    only the scene, even behind see-through panels: scene = (frame - ui.rgb) / ui.a;
+//  - mode 1 (after it) puts this frame's UI back over the generated scene, unmoved.
+// Where the UI is nearly opaque the scene can't be recovered, and the real frame's pixels are kept.
+// Layers past the first are only masked (the generated frame takes the real frame's pixels), and
+// mode 2 (HDR frames, where the combine isn't known) masks every layer, the first included.
 
 #version 460
 #extension GL_EXT_shader_image_load_formatted : require
@@ -17,16 +23,31 @@ layout(set = 0, binding = 1) uniform texture2D ui_layer1;
 layout(set = 0, binding = 2) uniform texture2D ui_layer2;
 layout(set = 0, binding = 3) uniform texture2D ui_layer3;
 layout(set = 0, binding = 4) uniform texture2D current_frame;
-layout(set = 0, binding = 5) uniform image2D output_frame;
+// Mode 0: the UI-less frame. Mode 1: the generated frame, finished in place.
+layout(set = 0, binding = 5) uniform image2D target;
 layout(set = 0, binding = 6, std140) uniform Constants {
     ivec2 rect_base;
     ivec2 rect_size;
     float threshold;
     uint show_mask;
     uint layer_count;
-    float pad;
+    uint mode;
 } c;
 layout(set = 0, binding = 1000) uniform sampler linear_sampler;
+
+// Below this scene share the UI hides the scene (recovering it would only amplify noise).
+const float OPAQUE_SHARE = 0.06;
+const float CLEAR_SHARE = 0.2;
+
+vec3 ToLinear(vec3 v) {
+    v = clamp(v, 0.0, 1.0);
+    return mix(v / 12.92, pow((v + 0.055) / 1.055, vec3(2.4)), greaterThan(v, vec3(0.04045)));
+}
+
+vec3 ToSrgb(vec3 v) {
+    v = clamp(v, 0.0, 1.0);
+    return mix(v * 12.92, 1.055 * pow(v, vec3(1.0 / 2.4)) - 0.055, greaterThan(v, vec3(0.0031308)));
+}
 
 float coverage(texture2D layer, vec2 uv) {
     const vec2 step = 3.0 / vec2(textureSize(sampler2D(layer, linear_sampler), 0));
@@ -42,36 +63,66 @@ float coverage(texture2D layer, vec2 uv) {
 
 void main() {
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(pos, imageSize(output_frame)))) {
-        return;
-    }
-    const ivec2 local = pos - c.rect_base;
-    if (any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, c.rect_size))) {
-        return;
-    }
-    const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
-    // The UI's coverage, widened by a couple of texels for its soft edges and glows. Fortune's
-    // Weave keeps the scene's share in alpha (1 where there is no UI), so coverage is 1 - alpha.
-    float alpha = coverage(ui_layer0, uv);
-    if (c.layer_count > 1) {
-        alpha = max(alpha, coverage(ui_layer1, uv));
-    }
-    if (c.layer_count > 2) {
-        alpha = max(alpha, coverage(ui_layer2, uv));
-    }
-    if (c.layer_count > 3) {
-        alpha = max(alpha, coverage(ui_layer3, uv));
-    }
-    // Faint panels count too (the button prompts' backdrop fades to a few percent).
-    const float mask = smoothstep(c.threshold, c.threshold * 8.0, alpha);
-    if (c.show_mask != 0) {
-        imageStore(output_frame, pos, vec4(vec3(mask), 1.0));
-        return;
-    }
-    if (mask <= 0.0) {
+    if (any(greaterThanEqual(pos, imageSize(target)))) {
         return;
     }
     const vec4 current = texelFetch(current_frame, pos, 0);
-    const vec4 generated = imageLoad(output_frame, pos);
-    imageStore(output_frame, pos, vec4(mix(generated.rgb, current.rgb, mask), generated.a));
+    const ivec2 local = pos - c.rect_base;
+    if (any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, c.rect_size))) {
+        if (c.mode == 0) {
+            imageStore(target, pos, current);
+        }
+        return;
+    }
+    const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
+    const vec4 ui = textureLod(sampler2D(ui_layer0, linear_sampler), uv, 0.0);
+    const float share = clamp(ui.a, 0.0, 1.0);
+    // How much of the scene can be recovered here (0 under opaque UI).
+    const float recover = smoothstep(OPAQUE_SHARE, CLEAR_SHARE, share);
+    const vec3 current_linear = ToLinear(current.rgb);
+
+    if (c.mode == 0) {
+        const vec3 scene = (current_linear - ui.rgb) / max(share, OPAQUE_SHARE);
+        imageStore(target, pos, vec4(ToSrgb(mix(current_linear, scene, recover)), current.a));
+        return;
+    }
+
+    // Other layers: keep the real frame where they have UI (widened for soft edges and glows).
+    float other = 0.0;
+    if (c.layer_count > 1) {
+        other = coverage(ui_layer1, uv);
+    }
+    if (c.layer_count > 2) {
+        other = max(other, coverage(ui_layer2, uv));
+    }
+    if (c.layer_count > 3) {
+        other = max(other, coverage(ui_layer3, uv));
+    }
+    if (c.mode == 2) {
+        other = max(other, coverage(ui_layer0, uv));
+    }
+    const float mask = smoothstep(c.threshold, c.threshold * 8.0, other);
+    if (c.mode == 2) {
+        if (c.show_mask != 0) {
+            imageStore(target, pos, vec4(vec3(mask), 1.0));
+        } else if (mask > 0.0) {
+            const vec4 generated = imageLoad(target, pos);
+            imageStore(target, pos, vec4(mix(generated.rgb, current.rgb, mask), generated.a));
+        }
+        return;
+    }
+    if (c.show_mask != 0) {
+        // Red: the first layer's UI (put back over the generated scene); green: kept from the
+        // real frame (opaque UI); blue: other layers (kept from the real frame).
+        imageStore(target, pos, vec4(1.0 - share, 1.0 - recover, mask, 1.0));
+        return;
+    }
+    if (share >= 0.999 && mask <= 0.0) {
+        return; // No UI: the generated scene as it is.
+    }
+    const vec4 generated = imageLoad(target, pos);
+    const vec3 with_ui = ui.rgb + share * ToLinear(generated.rgb);
+    vec3 result = mix(current_linear, with_ui, recover);
+    result = mix(result, current_linear, mask);
+    imageStore(target, pos, vec4(ToSrgb(result), generated.a));
 }

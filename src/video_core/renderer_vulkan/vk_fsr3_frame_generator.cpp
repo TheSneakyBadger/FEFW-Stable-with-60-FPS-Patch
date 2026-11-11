@@ -148,7 +148,8 @@ struct UiMaskConstants {
     f32 threshold;
     u32 show_mask;
     u32 layer_count;
-    f32 pad;
+    /// 0: take the UI out of the real frame; 1: put it back over the generated one; 2: mask it.
+    u32 mode;
 };
 
 enum PassId : size_t {
@@ -453,7 +454,7 @@ Fsr3FrameGenerator::Texture Fsr3FrameGenerator::CreateTexture(VkFormat format, u
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -510,6 +511,7 @@ void Fsr3FrameGenerator::CreateDisplayResources(VkExtent2D display_size, VkForma
     inpainting_pyramid = CreateTexture(VK_FORMAT_R16G16B16A16_SFLOAT, w / 2, h / 2,
                                        (std::min)(pyramid_levels, PYRAMID_BINDINGS));
     previous_source = CreateTexture(format, w, h);
+    ui_less = CreateTexture(format, w, h);
     std::array<VkExtent2D, FLOW_LEVELS> flow_sizes{};
     flow_sizes[0] = {(w + FLOW_BLOCK_SIZE - 1) / FLOW_BLOCK_SIZE,
                      (h + FLOW_BLOCK_SIZE - 1) / FLOW_BLOCK_SIZE};
@@ -742,7 +744,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     const VkDeviceSize spd_slot = align(sizeof(OfSpdConstants));
     const VkDeviceSize ui_slot = align(sizeof(UiMaskConstants));
     const VkDeviceSize total =
-        fi_slot + 2 * pyramid_slot + (FLOW_LEVELS + 1) * of_slot + spd_slot + ui_slot;
+        fi_slot + 2 * pyramid_slot + (FLOW_LEVELS + 1) * of_slot + spd_slot + 2 * ui_slot;
     const StagingBufferRef uniforms = staging_buffer_pool.Request(total, MemoryUsage::Upload);
     VkDeviceSize offset = 0;
     const auto stage = [&](const void* data, size_t size, VkDeviceSize slot_size) {
@@ -763,7 +765,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     }
     const Resource cb_of_common = cb_of[FLOW_LEVELS];
     const Resource cb_of_spd = stage(&of_spd, sizeof(of_spd), spd_slot);
-    const UiMaskConstants ui_constants{
+    UiMaskConstants ui_constants{
         .rect_base = {in.interpolation_rect.offset.x, in.interpolation_rect.offset.y},
         .rect_size = {static_cast<s32>(in.interpolation_rect.extent.width),
                       static_cast<s32>(in.interpolation_rect.extent.height)},
@@ -771,9 +773,15 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         .show_mask = in.show_ui_mask ? 1U : 0U,
         .layer_count = static_cast<u32>(std::count_if(in.ui_layers.begin(), in.ui_layers.end(),
                                                       [](VkImageView v) { return v != VkImageView{}; })),
-        .pad = {},
+        .mode = 0,
     };
-    const Resource cb_ui = stage(&ui_constants, sizeof(ui_constants), ui_slot);
+    const Resource cb_ui_remove = stage(&ui_constants, sizeof(ui_constants), ui_slot);
+    // With the game's UI layer (and an SDR frame), frame generation works on the frame without
+    // its UI, which goes back on afterwards. HDR frames only mask it.
+    const bool has_ui = in.ui_layers[0] != VkImageView{};
+    const bool remove_ui = has_ui && in.transfer_function == 0;
+    ui_constants.mode = remove_ui ? 1 : 2;
+    const Resource cb_ui_finish = stage(&ui_constants, sizeof(ui_constants), ui_slot);
 
     // Clears: every new image, the optical flow's history on a reset.
     std::vector<VkImage> initialize;
@@ -785,6 +793,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     }
     if (display_resources_new) {
         std::vector<VkImage> images{*inpainting_pyramid.image, *previous_source.image,
+                                    *ui_less.image,
                                     *flow_vector.image,        *scd_histogram.image,
                                     *scd_previous_histogram.image, *scd_temp.image,
                                     *scd_output.image};
@@ -847,8 +856,19 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
 
     const auto tex = [](const Texture& texture) { return Resource{.view = *texture.view}; };
     const auto groups = [](u32 size, u32 tile) { return (size + tile - 1) / tile; };
-    const Resource current{.view = in.current_view};
+    const Resource real_current{.view = in.current_view};
     const Resource output{.view = in.output_view};
+    const auto layer = [&](size_t i) {
+        return Resource{.view = in.ui_layers[i] ? in.ui_layers[i] : in.ui_layers[0]};
+    };
+    if (remove_ui) {
+        passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
+                                     std::array{layer(0), layer(1), layer(2), layer(3),
+                                                real_current, tex(ui_less), cb_ui_remove},
+                                     groups(dw, 8), groups(dh, 8));
+    }
+    // What frame generation works on: this frame, without its UI where it could be taken out.
+    const Resource current = remove_ui ? tex(ui_less) : real_current;
     const Resource counters_buffer{.buffer = *counters, .offset = 0, .size = 16};
 
     // Optical flow on the current frame (ffxOpticalflowContextDispatch).
@@ -990,18 +1010,18 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         scheduler, descriptor_queue,
         std::array{tex(scd_output), tex(inpainting_pyramid), current, current, output, cb_fi},
         groups(dw, 8), groups(dh, 8));
-    if (in.ui_layers[0]) {
-        const auto layer = [&](size_t i) {
-            return Resource{.view = in.ui_layers[i] ? in.ui_layers[i] : in.ui_layers[0]};
-        };
+    if (has_ui) {
         passes[PassUiMask]->Dispatch(
             scheduler, descriptor_queue,
-            std::array{layer(0), layer(1), layer(2), layer(3), current, output, cb_ui},
+            std::array{layer(0), layer(1), layer(2), layer(3), real_current, output,
+                       cb_ui_finish},
             groups(dw, 8), groups(dh, 8));
     }
 
-    // Keep this frame for the next interpolation; hand the output to the presentation.
-    scheduler.Record([source = in.current_image, destination = *previous_source.image, dw,
+    // Keep this frame (as frame generation saw it) for the next interpolation; hand the output to
+    // the presentation.
+    scheduler.Record([source = remove_ui ? *ui_less.image : in.current_image,
+                      destination = *previous_source.image, dw,
                       dh](vk::CommandBuffer cmdbuf) {
         const VkImageCopy copy{
             .srcSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},

@@ -24,7 +24,8 @@ class StagingBufferPool;
 /// frames. The host side follows the SDK's ffx_frameinterpolation.cpp and ffx_opticalflow.cpp
 /// (the same passes, internal images and constants) and is recorded through the scheduler, like
 /// the FSR 3.1 upscaler. The game's motion vectors and depth come from its DLSS evaluation
-/// (Prepare, render size); the colour is the presented frame, with its HUD (no HUD-less copy).
+/// (Prepare, render size); the colour is the presented frame, with the game's UI layer taken out
+/// (and put back over the generated frame) when it is known.
 class Fsr3FrameGenerator {
 public:
     struct PrepareInputs {
@@ -47,8 +48,8 @@ public:
         bool reset;
         u32 transfer_function; ///< 0 sRGB, 1 PQ, 2 scRGB.
         std::array<f32, 2> min_max_luminance;
-        /// The game's UI layer for this frame (sampled; covers the interpolation rect), or null.
-        /// Where it has UI, the generated frame keeps the real frame's pixels.
+        /// The game's UI layers for this frame (sampled; cover the interpolation rect). The first is
+        /// taken out before interpolation and put back after; the rest are masked.
         std::array<VkImageView, 4> ui_layers; ///< Null-padded; [0] null: no mask.
         bool show_ui_mask; ///< Testing: writes the UI mask instead.
     };
@@ -116,6 +117,7 @@ private:
     // Display size.
     Texture inpainting_pyramid;
     Texture previous_source;
+    Texture ui_less; ///< This frame without the game's UI (what frame generation works on).
     std::array<std::array<Texture, 7>, 2> flow_input; ///< Luma pyramids, ping-pong.
     std::array<std::array<Texture, 7>, 2> flow;       ///< Optical flow per level, ping-pong.
     Texture flow_vector;    ///< The optical flow result (display / 8).
