@@ -49,7 +49,7 @@ public:
         std::array<f32, 2> min_max_luminance;
         /// The game's UI layer for this frame (sampled; covers the interpolation rect), or null.
         /// Where it has UI, the generated frame keeps the real frame's pixels.
-        VkImageView ui_layer;
+        std::array<VkImageView, 4> ui_layers; ///< Null-padded; [0] null: no mask.
         bool show_ui_mask; ///< Testing: writes the UI mask instead.
     };
 

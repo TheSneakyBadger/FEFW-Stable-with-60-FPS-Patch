@@ -320,9 +320,12 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         LOG_INFO(Render_Vulkan,
                  "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
-                 "for free frames",
+                 "for free frames; {:.2f} UI layers a frame",
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
-                 fsr_fg_minute_wait_ms);
+                 fsr_fg_minute_wait_ms,
+                 fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
+                             : 0.0f);
+        fsr_fg_ui_layers = 0;
         fsr_fg_minute_wait_ms = 0.0f;
         fsr_fg_ui = 0;
         fsr_fg_report_start = now;
@@ -402,9 +405,15 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         present_manager.Present(generated);
         return;
     }
-    const VkImageView ui_layer = debug_mode == 4 ? VkImageView{} : rasterizer.FrameGenUiLayer();
-    if (ui_layer) {
+    std::array<VkImageView, 4> ui_layers{};
+    if (debug_mode != 4) {
+        ui_layers = rasterizer.FrameGenUiLayers();
+    }
+    if (ui_layers[0]) {
         ++fsr_fg_ui;
+    }
+    for (const VkImageView layer : ui_layers) {
+        fsr_fg_ui_layers += layer ? 1 : 0;
     }
     generator->Generate({
         .current_image = *frame->image,
@@ -418,7 +427,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         .reset = false,
         .transfer_function = transfer_function,
         .min_max_luminance = {0.0f, 1000.0f},
-        .ui_layer = ui_layer,
+        .ui_layers = ui_layers,
         .show_ui_mask = debug_mode == 3,
     });
     if (debug_mode >= 2) {

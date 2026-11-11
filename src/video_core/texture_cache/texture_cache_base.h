@@ -513,7 +513,7 @@ public:
     /// Frame generation: the game's UI layer this frame (Fortune's Weave draws its UI into its own
     /// full-size RGBA8 image right after the DLSS evaluation, and combines it with the 3D picture
     /// at the end), or null.
-    [[nodiscard]] ImageView* FrameGenUiLayer();
+    [[nodiscard]] std::array<ImageView*, 4> FrameGenUiLayers();
 
 private:
     void WatchUiLayer();

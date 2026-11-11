@@ -954,25 +954,28 @@ void TextureCache<P>::WatchUiLayer() {
 }
 
 template <class P>
-typename P::ImageView* TextureCache<P>::FrameGenUiLayer() {
-    // The UI layer gets dozens of draws a frame (94 in a traced frame); the target the game
-    // combines it into, the same size and format, gets about three. The most drawn one, then.
-    ImageId best{};
-    u32 best_count = 0;
-    for (size_t i = 0; i < fg_ui_count_size; ++i) {
-        if (fg_ui_counts[i].second > best_count) {
-            best = fg_ui_counts[i].first;
-            best_count = fg_ui_counts[i].second;
+std::array<typename P::ImageView*, 4> TextureCache<P>::FrameGenUiLayers() {
+    // Every full-size 8-bit colour target drawn this frame, most drawn first: the game may draw
+    // its UI into more than one (taking only the most drawn, the mask lost part of the UI on the
+    // frames where another won). The target the UI is combined into is opaque (no coverage), so
+    // including it does no harm.
+    std::array<std::pair<ImageId, u32>, 8> sorted = fg_ui_counts;
+    std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(fg_ui_count_size),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::array<ImageView*, 4> result{};
+    size_t count = 0;
+    for (size_t i = 0; i < fg_ui_count_size && count < result.size(); ++i) {
+        const ImageId id = sorted[i].first;
+        if (sorted[i].second < 2) {
+            continue;
         }
+        const ImageBase& image = slot_images[id];
+        const ImageViewId view = FindOrEmplaceImageView(
+            id, ImageViewInfo(ImageViewType::e2D, image.info.format,
+                              SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
+        result[count++] = &slot_image_views[view];
     }
-    if (!best || best_count < 5) {
-        return nullptr;
-    }
-    const ImageBase& image = slot_images[best];
-    const ImageViewId view = FindOrEmplaceImageView(
-        best, ImageViewInfo(ImageViewType::e2D, image.info.format,
-                            SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
-    return &slot_image_views[view];
+    return result;
 }
 
 template <class P>

@@ -140,14 +140,15 @@ constexpr auto SEARCH = Sequential(std::array{T, T, I, I, U});
 constexpr auto FILTER = Sequential(std::array{T, I, U});
 constexpr auto SCALE = Sequential(std::array{T, T, T, I, I, U});
 // The UI mask (vulkan_fsr3_fg_ui_mask.comp; linear clamp sampler at 1000).
-constexpr auto UI_MASK = Sequential(std::array{T, T, I, U});
+constexpr auto UI_MASK = Sequential(std::array{T, T, T, T, T, I, U});
 
 struct UiMaskConstants {
     std::array<s32, 2> rect_base;
     std::array<s32, 2> rect_size;
     f32 threshold;
     u32 show_mask;
-    std::array<f32, 2> pad;
+    u32 layer_count;
+    f32 pad;
 };
 
 enum PassId : size_t {
@@ -768,6 +769,8 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                       static_cast<s32>(in.interpolation_rect.extent.height)},
         .threshold = 0.004f,
         .show_mask = in.show_ui_mask ? 1U : 0U,
+        .layer_count = static_cast<u32>(std::count_if(in.ui_layers.begin(), in.ui_layers.end(),
+                                                      [](VkImageView v) { return v != VkImageView{}; })),
         .pad = {},
     };
     const Resource cb_ui = stage(&ui_constants, sizeof(ui_constants), ui_slot);
@@ -987,11 +990,14 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         scheduler, descriptor_queue,
         std::array{tex(scd_output), tex(inpainting_pyramid), current, current, output, cb_fi},
         groups(dw, 8), groups(dh, 8));
-    if (in.ui_layer) {
-        passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
-                                     std::array{Resource{.view = in.ui_layer}, current, output,
-                                                cb_ui},
-                                     groups(dw, 8), groups(dh, 8));
+    if (in.ui_layers[0]) {
+        const auto layer = [&](size_t i) {
+            return Resource{.view = in.ui_layers[i] ? in.ui_layers[i] : in.ui_layers[0]};
+        };
+        passes[PassUiMask]->Dispatch(
+            scheduler, descriptor_queue,
+            std::array{layer(0), layer(1), layer(2), layer(3), current, output, cb_ui},
+            groups(dw, 8), groups(dh, 8));
     }
 
     // Keep this frame for the next interpolation; hand the output to the presentation.

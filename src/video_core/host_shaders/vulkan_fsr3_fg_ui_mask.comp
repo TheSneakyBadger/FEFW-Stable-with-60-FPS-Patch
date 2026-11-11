@@ -11,17 +11,34 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(set = 0, binding = 0) uniform texture2D ui_layer;
-layout(set = 0, binding = 1) uniform texture2D current_frame;
-layout(set = 0, binding = 2) uniform image2D output_frame;
-layout(set = 0, binding = 3, std140) uniform Constants {
+// Up to four UI layers (the game may draw its UI into more than one); unused ones repeat the first.
+layout(set = 0, binding = 0) uniform texture2D ui_layer0;
+layout(set = 0, binding = 1) uniform texture2D ui_layer1;
+layout(set = 0, binding = 2) uniform texture2D ui_layer2;
+layout(set = 0, binding = 3) uniform texture2D ui_layer3;
+layout(set = 0, binding = 4) uniform texture2D current_frame;
+layout(set = 0, binding = 5) uniform image2D output_frame;
+layout(set = 0, binding = 6, std140) uniform Constants {
     ivec2 rect_base;
     ivec2 rect_size;
     float threshold;
     uint show_mask;
-    vec2 pad;
+    uint layer_count;
+    float pad;
 } c;
 layout(set = 0, binding = 1000) uniform sampler linear_sampler;
+
+float coverage(texture2D layer, vec2 uv) {
+    const vec2 step = 3.0 / vec2(textureSize(sampler2D(layer, linear_sampler), 0));
+    float result = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            result = max(result, 1.0 - textureLod(sampler2D(layer, linear_sampler),
+                                                  uv + vec2(x, y) * step, 0.0).a);
+        }
+    }
+    return result;
+}
 
 void main() {
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
@@ -33,15 +50,17 @@ void main() {
         return;
     }
     const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
-    const vec2 step = 3.0 / vec2(textureSize(sampler2D(ui_layer, linear_sampler), 0));
     // The UI's coverage, widened by a couple of texels for its soft edges and glows. Fortune's
     // Weave keeps the scene's share in alpha (1 where there is no UI), so coverage is 1 - alpha.
-    float alpha = 0.0;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            alpha = max(alpha, 1.0 - textureLod(sampler2D(ui_layer, linear_sampler),
-                                                uv + vec2(x, y) * step, 0.0).a);
-        }
+    float alpha = coverage(ui_layer0, uv);
+    if (c.layer_count > 1) {
+        alpha = max(alpha, coverage(ui_layer1, uv));
+    }
+    if (c.layer_count > 2) {
+        alpha = max(alpha, coverage(ui_layer2, uv));
+    }
+    if (c.layer_count > 3) {
+        alpha = max(alpha, coverage(ui_layer3, uv));
     }
     // Faint panels count too (the button prompts' backdrop fades to a few percent).
     const float mask = smoothstep(c.threshold, c.threshold * 8.0, alpha);
