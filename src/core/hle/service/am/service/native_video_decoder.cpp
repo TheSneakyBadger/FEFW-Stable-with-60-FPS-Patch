@@ -45,6 +45,8 @@
 #include "core/hle/service/am/service/native_video_decoder.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/service.h"
+#include "core/hle/service/server_manager.h"
+#include "core/hle/kernel/kernel.h"
 
 namespace {
 // Threads libgav1 decodes AV1 with. Fortune's Weave's 1440p cutscenes took up to ~40 ms a frame
@@ -162,6 +164,28 @@ struct NativeVideoState {
     std::mutex mutex;
     std::vector<std::shared_ptr<NativeVideoImagePool>> pools;
     std::vector<std::shared_ptr<NativeVideoMapping>> mappings;
+
+    // The decoder sessions' own server, on a host thread (made with the first decoder). AM's
+    // services all run on one emulated core thread, and the decoder's calls wait for decoding
+    // and convert 1440p frames: in Fortune's Weave's heavy cutscenes they kept that thread busy
+    // almost all the time (ReleaseImage and Submit ~10 s of every 10 s), so the game's rendering
+    // thread queued its nvdrv:gsv GPU calls behind them (up to 180 ms each) and presentation
+    // fell to 5-7 FPS while the movie itself kept up (issue #22).
+    Service::ServerManager* DecoderServer() {
+        std::call_once(decoder_server_once, [this] {
+            auto manager = std::make_unique<Service::ServerManager>(system);
+            decoder_server = manager.get();
+            auto holder = std::make_shared<std::unique_ptr<Service::ServerManager>>(std::move(manager));
+            system.Kernel()
+                .RunOnHostCoreProcess("NativeVideo",
+                                      [&system = system, holder] { system.RunServer(std::move(*holder)); })
+                .detach();
+            LOG_INFO(Service_AM, "Native video decoder calls are served on their own host thread");
+        });
+        return decoder_server;
+    }
+    std::once_flag decoder_server_once;
+    Service::ServerManager* decoder_server{};
 };
 
 namespace {
@@ -1469,8 +1493,15 @@ private:
         Kernel::KClientSession* client{};
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0x11 && packet[1] == 0) {
-            result = CreateGraphicsSession(system, ctx,
-                std::make_shared<INativeVideoCodec>(system, state, kind), &client);
+            // EDEN_VIDEO_OWN_THREAD=0 serves the decoder from AM's thread, as before.
+            static const bool own_thread = [] {
+                const char* const value = std::getenv("EDEN_VIDEO_OWN_THREAD");
+                return value == nullptr || value[0] != '0';
+            }();
+            auto codec = std::make_shared<INativeVideoCodec>(system, state, kind);
+            result = own_thread
+                         ? CreateGraphicsSessionOn(system, *state->DecoderServer(), std::move(codec), &client)
+                         : CreateGraphicsSession(system, ctx, std::move(codec), &client);
         }
         LOG_DEBUG(Service_AM, "native video decoder create result={:#x}", result.raw);
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
