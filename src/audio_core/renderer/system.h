@@ -319,6 +319,11 @@ private:
     bool adsp_behind{};
     /// Number of voices dropped
     u32 num_voices_dropped{};
+    /// Voice drop diagnostics (logged every 2000 updates)
+    u32 frames_since_drop_log{};
+    u32 frames_over_time_limit{};
+    u32 worst_estimated_time{};
+    u32 voices_dropped_logged{};
     /// Tick that rendering started
     u64 render_start_tick{};
     /// Parameter to control the threshold for dropping voices if the audio graph gets too large

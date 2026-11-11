@@ -5,8 +5,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <cstdlib>
+#include <string>
 #include <span>
 
+#include <fmt/format.h>
+#include "common/logging.h"
 #include "audio_core/adsp/apps/audio_renderer/audio_renderer.h"
 #include "audio_core/adsp/apps/audio_renderer/command_buffer.h"
 #include "audio_core/audio_core.h"
@@ -360,6 +364,8 @@ Result System::Initialize(const AudioRendererParameterInternal& params,
 
     render_time_limit_percent = 100;
     drop_voice = params.voice_drop_enabled && params.execution_mode == ExecutionMode::Auto;
+    LOG_INFO(Service_Audio, "Audio renderer: {} voices, voice drop {}", params.voices,
+             drop_voice ? "requested by the game" : "off");
     drop_voice_param = 1.0f;
     num_voices_dropped = 0;
 
@@ -725,8 +731,42 @@ u64 System::GenerateCommand(std::span<u8> in_command_buffer,
         const auto estimated_time{start_estimated_time - end_estimated_time};
 
         const auto time_limit{static_cast<u32>((std::max)(dsp_time_limit + estimated_time, 0.0f))};
-        num_voices_dropped =
-            DropVoices(command_buffer, static_cast<u32>(start_estimated_time), time_limit);
+        // Fortune's Eden: the time estimates are for the console's audio DSP, and the mix runs on
+        // the PC's CPU with time to spare, so voices are not dropped by default (in Fortune's
+        // Weave's busy cutscenes the dialogue went silent while the music played, issue #22).
+        // EDEN_AUDIO_VOICE_DROP=1 drops them as the console would. Either way, how often the
+        // estimate goes over the limit is logged.
+        static const bool allow_drop = [] {
+            const char* value = std::getenv("EDEN_AUDIO_VOICE_DROP");
+            return value != nullptr && value[0] == '1';
+        }();
+        const bool over_limit = static_cast<u32>(start_estimated_time) > time_limit;
+        if (over_limit) {
+            ++frames_over_time_limit;
+            worst_estimated_time = (std::max)(worst_estimated_time,
+                                              static_cast<u32>(start_estimated_time));
+        }
+        if (allow_drop) {
+            num_voices_dropped =
+                DropVoices(command_buffer, static_cast<u32>(start_estimated_time), time_limit);
+            voices_dropped_logged += num_voices_dropped;
+        }
+        if (++frames_since_drop_log >= 2000) {
+            if (frames_over_time_limit != 0) {
+                LOG_INFO(Service_Audio,
+                         "Audio mix over the console DSP's time estimate in {} of the last {} "
+                         "updates (worst {} vs limit {}); {}",
+                         frames_over_time_limit, frames_since_drop_log, worst_estimated_time,
+                         time_limit,
+                         allow_drop ? fmt::format("{} voices dropped", voices_dropped_logged)
+                                    : std::string{"no voices dropped (EDEN_AUDIO_VOICE_DROP=1 "
+                                                  "drops them)"});
+            }
+            frames_since_drop_log = 0;
+            frames_over_time_limit = 0;
+            worst_estimated_time = 0;
+            voices_dropped_logged = 0;
+        }
     }
 
     command_list_header->buffer_size = command_buffer.size;
