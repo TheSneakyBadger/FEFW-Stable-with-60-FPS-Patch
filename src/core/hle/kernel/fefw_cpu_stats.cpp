@@ -40,6 +40,7 @@ double IntervalSeconds() {
 struct State {
     std::mutex mutex;
     Clock::time_point window_start{};
+    u64 process_id = ~0ULL;                      // the game the figures below belong to
     std::unordered_map<u64, s64> last_cpu_time; // thread id -> ticks at the window start
     std::unordered_map<u64, std::string> names;  // thread id -> name, read once
 };
@@ -93,6 +94,13 @@ void MaybeReport(const Kernel::KThread* render_thread) {
     if (!lock.owns_lock()) {
         return;
     }
+    if (state.process_id != process->GetProcessId()) {
+        // A new boot: thread ids and CPU times start over, so drop everything from the last one.
+        state.process_id = process->GetProcessId();
+        state.window_start = {};
+        state.last_cpu_time.clear();
+        state.names.clear();
+    }
     const auto now = Clock::now();
     const bool first = state.window_start == Clock::time_point{};
     const double seconds = std::chrono::duration<double>(now - state.window_start).count();
@@ -126,7 +134,7 @@ void MaybeReport(const Kernel::KThread* render_thread) {
                 continue;
             }
             const auto last = state.last_cpu_time.find(id);
-            const s64 delta = cpu - (last != state.last_cpu_time.end() ? last->second : 0);
+            const s64 delta = std::max<s64>(0, cpu - (last != state.last_cpu_time.end() ? last->second : 0));
             const double share = static_cast<double>(delta) /
                                  (static_cast<double>(Core::Hardware::CNTFREQ) * seconds);
             const s32 core = thread.GetActiveCore();
