@@ -117,9 +117,6 @@ void SetFoundLayout(std::string_view build_id, u64 app_object, u64 table) {
 }
 
 bool KnowsBuild(std::string_view build_id) {
-    if (SameBuild(build_id, MainBuildId)) {
-        return true;
-    }
     std::scoped_lock lock{found_mutex};
     return SameBuild(build_id, found_build);
 }
@@ -127,17 +124,12 @@ bool KnowsBuild(std::string_view build_id) {
 void OnMainLoaded(const std::array<u8, 32>& build_id, u64 base) {
     const std::string hex = Common::HexToString(build_id, true);
     main_base = 0;
-    if (SameBuild(hex, MainBuildId)) {
-        app_object_pointer = AppObjectPointer110;
-        table_offset = TableOffset110;
-    } else {
-        std::scoped_lock lock{found_mutex};
-        if (!SameBuild(hex, found_build)) {
-            return;
-        }
-        app_object_pointer = found_app_object;
-        table_offset = found_table;
+    std::scoped_lock lock{found_mutex};
+    if (!SameBuild(hex, found_build)) {
+        return;
     }
+    app_object_pointer = found_app_object;
+    table_offset = found_table;
     main_base = base;
     measure = {};
 }

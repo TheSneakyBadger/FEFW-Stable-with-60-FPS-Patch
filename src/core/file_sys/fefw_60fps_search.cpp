@@ -198,15 +198,30 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
         return std::nullopt;
     }
 
-    // The routines: at the end of the .text page padding (the start of it is left to mods).
-    const u64 cave_end = Align(text_size, 0x1000);
-    const u64 cave_start = (cave_end - Cave.size()) & ~u64{0xF};
-    if (cave_end > image.size() || cave_start < Align(text_size, 4) ||
-        std::any_of(image.begin() + cave_start, image.begin() + cave_end,
-                    [](u8 b) { return b != 0; })) {
-        why = "there is no free room after the game's code for the patch's routines";
+    // The routines: in the .text page padding, as high as it is still all zero (built-in
+    // patches and mods put their own code at its start).
+    const u64 padding_end = Align(text_size, 0x1000);
+    const u64 padding_start = Align(text_size, 16);
+    std::optional<u64> free_start;
+    if (padding_end <= image.size()) {
+        for (u64 start = (padding_end - Cave.size()) & ~u64{0xF};
+             start >= padding_start && start + Cave.size() <= padding_end; start -= 16) {
+            if (std::all_of(image.begin() + start, image.begin() + start + Cave.size(),
+                            [](u8 b) { return b == 0; })) {
+                free_start = start;
+                break;
+            }
+            if (start < 16) {
+                break;
+            }
+        }
+    }
+    if (!free_start) {
+        why = fmt::format("the {} bytes of free space after the game's code it needs are in use",
+                          Cave.size());
         return std::nullopt;
     }
+    const u64 cave_start = *free_start;
 
     std::vector<u8> cave(Cave.begin(), Cave.end());
     for (const Reloc& reloc : Relocs) {

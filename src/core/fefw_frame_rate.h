@@ -29,12 +29,12 @@ namespace FefwFrameRate {
 /// main's build ID for 1.1.0 (the version the patch and these addresses were made for).
 inline constexpr std::string_view MainBuildId = "DB93B0125F4850601D61C3EDDE012F8EB2ECFE77";
 
-/// Another game version the 60 FPS patch was placed in (FefwSixtySearch): its build ID (hex, as
-/// PatchManager prints it) and where that version keeps the application object pointer and the
-/// patch's table (main-relative).
+/// The game version the 60 FPS patch was applied to at this boot (PatchManager::PatchNSO): its
+/// build ID (hex) and where it keeps the application object pointer and the patch's table
+/// (main-relative). An empty build ID: the patch wasn't applied.
 void SetFoundLayout(std::string_view build_id, u64 app_object, u64 table);
 
-/// True for 1.1.0, and for a version the patch was placed in this session.
+/// True for the version the patch was applied to at this boot.
 [[nodiscard]] bool KnowsBuild(std::string_view build_id);
 
 /// The main module was loaded at `base` (only kept for a build KnowsBuild).

@@ -183,6 +183,82 @@ std::string GetUpdateVersionStringFromSlot(const ContentProvider* provider, u64 
 YUZU_NO_INLINE std::optional<u64> GetParentApplicationId(const ContentProvider* provider, u64 title_id) {
     return provider == nullptr ? std::nullopt : provider->GetParentApplicationId(title_id);
 }
+
+// The built-in 60 FPS patch's ranges (IPS32 records, NSO header included) still hold the game's
+// own bytes in `out`: no mod wrote to its sites or to the padding its routines go in.
+bool FefwSixtyRangesUntouched(const std::vector<u8>& original, const std::vector<u8>& out) {
+    const auto& ips = FefwSixtyPatch::Ips;
+    std::size_t at = 5; // "IPS32"
+    while (at + 4 <= ips.size()) {
+        if (ips[at] == 'E' && ips[at + 1] == 'E' && ips[at + 2] == 'O' && ips[at + 3] == 'F') {
+            return true;
+        }
+        if (at + 6 > ips.size()) {
+            return false;
+        }
+        const std::size_t offset = (std::size_t{ips[at]} << 24) | (std::size_t{ips[at + 1]} << 16) |
+                                   (std::size_t{ips[at + 2]} << 8) | ips[at + 3];
+        const std::size_t length = (std::size_t{ips[at + 4]} << 8) | ips[at + 5];
+        at += 6 + length;
+        if (offset + length > original.size() || offset + length > out.size() ||
+            !std::equal(original.begin() + offset, original.begin() + offset + length,
+                        out.begin() + offset)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
+                    const Loader::NSOHeader& header, const std::string& build_id) {
+    const bool reference = build_id == FefwUltrawide::MainBuildId;
+    // EDEN_60FPS_SEARCH=2: place the patch by searching on 1.1.0 too (a test of that path).
+    const char* const search = std::getenv("EDEN_60FPS_SEARCH");
+    const bool force_search = search != nullptr && search[0] == '2';
+    if (reference && !force_search && FefwSixtyRangesUntouched(original, out)) {
+        LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60 FPS mode)");
+        const auto sixty = std::make_shared<VectorVfsFile>(
+            std::vector<u8>(FefwSixtyPatch::Ips.begin(), FefwSixtyPatch::Ips.end()), "60fps.ips");
+        if (const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), sixty)) {
+            out = patched->ReadAllBytes();
+            FefwFrameRate::SetFoundLayout(build_id, 0x21E60D8, 0x22B3E00);
+        } else {
+            LOG_ERROR(Loader, "    - The built-in 60 FPS patch could not be applied");
+        }
+        return;
+    }
+    // Another version, or 1.1.0 with a mod in the patch's usual space: find every spot again
+    // and put the routines in whatever padding is still free.
+    std::string why;
+    const std::span<u8> image(out.data() + sizeof(Loader::NSOHeader),
+                              out.size() - sizeof(Loader::NSOHeader));
+    if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why)) {
+        FefwFrameRate::SetFoundLayout(build_id, layout->app_object, layout->table);
+        if (reference) {
+            LOG_INFO(Loader,
+                     "    - Applying the built-in 60 FPS patch (60 FPS mode), routines moved to "
+                     "{:#x}: a mod uses the space they usually go in",
+                     layout->routines);
+        } else {
+            LOG_WARNING(Loader,
+                        "    - 60 FPS mode on a game version it wasn't made for (build {}): all "
+                        "the code it changes was found as in 1.1.0, so it is applied (routines "
+                        "at {:#x}). Untested on this version: if anything looks wrong, turn 60 "
+                        "FPS mode off.",
+                        build_id, layout->routines);
+        }
+    } else if (reference) {
+        LOG_WARNING(Loader,
+                    "    - 60 FPS mode is off: a mod changes the same game code or fills the free "
+                    "space its routines need ({}). Turn that mod or 60 FPS mode off.",
+                    why);
+    } else {
+        LOG_WARNING(Loader,
+                    "    - 60 FPS mode is off: it was made for game version 1.1.0, and this "
+                    "version's code differs ({}). The game runs at 30 FPS as usual.",
+                    why);
+    }
+}
 } // Anonymous namespace
 
 PatchManager::PatchManager(u64 title_id_,
@@ -495,54 +571,6 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         } else {
             LOG_ERROR(Loader, "    - The built-in mouse patch could not be applied");
         }
-        if (FefwSixtyEnabled()) {
-            LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60 FPS mode)");
-            const auto sixty = std::make_shared<VectorVfsFile>(
-                std::vector<u8>(FefwSixtyPatch::Ips.begin(), FefwSixtyPatch::Ips.end()),
-                "60fps.ips");
-            const auto sixty_patched = PatchIPS(std::make_shared<VectorVfsFile>(out), sixty);
-            if (sixty_patched != nullptr) {
-                out = sixty_patched->ReadAllBytes();
-            } else {
-                LOG_ERROR(Loader, "    - The built-in 60 FPS patch could not be applied");
-            }
-        }
-    }
-    // Other game versions: the same 60 FPS patch, placed by finding every spot it changes in
-    // this version's code (fefw_60fps_search.cpp); left off if any is missing or different.
-    if (name == "main" && build_id != FefwUltrawide::MainBuildId && FefwSixtyEnabled() &&
-        out.size() > sizeof(Loader::NSOHeader)) {
-        std::string why;
-        std::span<u8> image(out.data() + sizeof(Loader::NSOHeader),
-                            out.size() - sizeof(Loader::NSOHeader));
-        if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why)) {
-            FefwFrameRate::SetFoundLayout(build_id, layout->app_object, layout->table);
-            LOG_WARNING(Loader,
-                        "    - 60 FPS mode on a game version it wasn't made for (build {}): all "
-                        "the code it changes was found as in 1.1.0, so it is applied (routines "
-                        "at {:#x}). Untested on this version: if anything looks wrong, turn 60 "
-                        "FPS mode off.",
-                        build_id, layout->routines);
-        } else {
-            LOG_WARNING(Loader,
-                        "    - 60 FPS mode is off: it was made for game version 1.1.0, and this "
-                        "version's code differs ({}). The game runs at 30 FPS as usual.",
-                        why);
-        }
-    }
-    // EDEN_60FPS_SEARCH=1 on 1.1.0: check that the search finds every spot where 1.1.0's own
-    // patch puts it (nothing is changed by the check).
-    if (name == "main" && build_id == FefwUltrawide::MainBuildId && FefwSixtyEnabled()) {
-        if (const char* value = std::getenv("EDEN_60FPS_SEARCH"); value && value[0] == '1') {
-            std::string why;
-            const std::span<const u8> image(nso.data() + sizeof(Loader::NSOHeader),
-                                            nso.size() - sizeof(Loader::NSOHeader));
-            if (FefwSixtySearch::MatchesReference(image, header.segments[0].size, why)) {
-                LOG_INFO(Loader, "    - 60 FPS search check: every spot found at 1.1.0's address");
-            } else {
-                LOG_ERROR(Loader, "    - 60 FPS search check failed: {}", why);
-            }
-        }
     }
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
@@ -558,6 +586,28 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             const auto patched = compiler.Apply(std::make_shared<VectorVfsFile>(out));
             if (patched != nullptr)
                 out = patched->ReadAllBytes();
+        }
+    }
+
+    // 60 FPS mode, after the mods: its routines go only where no mod wrote, and its sites only
+    // where no mod changed the game's instruction. If a mod needs the same space, 60 FPS mode
+    // stays off (the mod still applies), rather than leaving branches into the mod's code.
+    if (name == "main" && title_id == FefwRomfsTweaks::TitleId) {
+        FefwFrameRate::SetFoundLayout({}, 0, 0);
+        if (FefwSixtyEnabled() && out.size() > sizeof(Loader::NSOHeader)) {
+            ApplyFefwSixty(nso, out, header, build_id);
+        }
+        if (const char* value = std::getenv("EDEN_60FPS_SEARCH");
+            value && value[0] != '0' && build_id == FefwUltrawide::MainBuildId) {
+            // A check of the search on 1.1.0 (nothing is changed by it).
+            std::string why;
+            const std::span<const u8> image(nso.data() + sizeof(Loader::NSOHeader),
+                                            nso.size() - sizeof(Loader::NSOHeader));
+            if (FefwSixtySearch::MatchesReference(image, header.segments[0].size, why)) {
+                LOG_INFO(Loader, "    - 60 FPS search check: every spot found at 1.1.0's address");
+            } else {
+                LOG_ERROR(Loader, "    - 60 FPS search check failed: {}", why);
+            }
         }
     }
 
