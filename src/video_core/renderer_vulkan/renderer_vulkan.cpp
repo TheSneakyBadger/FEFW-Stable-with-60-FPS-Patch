@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 #include <memory>
@@ -290,6 +291,18 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
                                  : fsr_fg_interval_ms * 0.9f + interval * 0.1f;
     }
     fsr_fg_last_composite = now;
+    // About every 10 s: how many frames were made, and the game's frame interval.
+    if (!fsr_fg_report_start) {
+        fsr_fg_report_start = now;
+    } else if (now - *fsr_fg_report_start >= std::chrono::seconds{10}) {
+        LOG_INFO(Render_Vulkan,
+                 "Frame generation, last 10 s: {} frames made, {} game frames without one; game "
+                 "frames {:.1f} ms apart",
+                 fsr_fg_made, fsr_fg_skipped, fsr_fg_interval_ms);
+        fsr_fg_report_start = now;
+        fsr_fg_made = 0;
+        fsr_fg_skipped = 0;
+    }
     // Only with the game's motion for this frame (3D scenes), storage-capable frames, and a frame
     // rate where it helps: not above ~120 FPS (already smooth) or below ~15 (too far apart).
     const bool wanted = generator->HasPrepared() && frame->storage_view &&
@@ -304,6 +317,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
                      static_cast<bool>(frame->storage_view), fsr_fg_interval_ms);
         }
         generator->Skip();
+        ++fsr_fg_skipped;
         return;
     }
     const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
@@ -318,8 +332,14 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     const u32 width = (std::min)(layout.screen.GetWidth(), frame->width - static_cast<u32>(left));
     const u32 height =
         (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
+    // Testing: EDEN_FG_DEBUG=1 presents a copy of the real frame in the generated one's place
+    // (the pacing alone), 2 shows only generated frames (the real one is overwritten with it).
+    static const int debug_mode = [] {
+        const char* value = std::getenv("EDEN_FG_DEBUG");
+        return value != nullptr ? std::atoi(value) : 0;
+    }();
     if (!generated->storage_view || generated->width != frame->width ||
-        generated->height != frame->height || width == 0 || height == 0) {
+        generated->height != frame->height || width == 0 || height == 0 || debug_mode == 1) {
         // Shouldn't happen (the frames are made alike); show the real frame twice.
         generator->Skip();
         scheduler.Record([source = *frame->image, destination = *generated->image,
@@ -364,13 +384,36 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         .transfer_function = transfer_function,
         .min_max_luminance = {0.0f, 1000.0f},
     });
-    // Each frame shows for half the game's interval (a little less, so a late frame catches up).
-    const auto half = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.5f * 0.95f));
-    generated->present_delay = half;
-    frame->present_delay = half;
+    if (debug_mode == 2) {
+        scheduler.Record([source = *generated->image, destination = *frame->image,
+                          w = frame->width, h = frame->height](vk::CommandBuffer cmdbuf) {
+            cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,
+                             VkImageCopy{
+                                 .srcSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .srcOffset{},
+                                 .dstSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .dstOffset{},
+                                 .extent{w, h, 1},
+                             });
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   0, VkMemoryBarrier{
+                                          .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                          .pNext = nullptr,
+                                          .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                          .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                                      });
+        });
+    }
+    // The generated frame goes up as soon as it is ready, the real one about half the game's
+    // interval later (a little less, so a late frame catches up). Only the real one waits: when
+    // both did, the emulated GPU waited for free frames behind the waits, the game slowed, the
+    // measured interval grew and the waits with it (60 FPS settled at 30).
+    generated->present_delay = {};
+    frame->present_delay = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.45f));
     scheduler.Flush(*generated->render_ready);
     present_manager.Present(generated);
+    ++fsr_fg_made;
     if (++fsr_fg_generated == 1) {
         LOG_INFO(Render_Vulkan, "AMD FSR 3.1 frame generation: first frame made ({:.1f} ms apart)",
                  fsr_fg_interval_ms);

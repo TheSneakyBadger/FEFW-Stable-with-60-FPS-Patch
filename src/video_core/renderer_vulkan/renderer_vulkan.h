@@ -114,6 +114,9 @@ private:
     std::optional<std::chrono::steady_clock::time_point> fsr_fg_last_composite;
     f32 fsr_fg_interval_ms{};
     u64 fsr_fg_generated{};
+    std::optional<std::chrono::steady_clock::time_point> fsr_fg_report_start;
+    u32 fsr_fg_made{};
+    u32 fsr_fg_skipped{};
 
     Frame applet_frame;
 };

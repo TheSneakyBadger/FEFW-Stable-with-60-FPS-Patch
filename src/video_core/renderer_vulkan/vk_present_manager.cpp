@@ -391,7 +391,10 @@ void PresentManager::SetImageCount() {
         std::clamp<size_t>((generations + 1) * queued_composites, swapchain.GetImageCount(),
                            MAX_FRAMES_IN_FLIGHT);
 #else
-    image_count = std::min<size_t>(swapchain.GetImageCount(), MAX_FRAMES_IN_FLIGHT);
+    // AMD FSR 3.1 frame generation presents two frames per game frame: two more to render into,
+    // so the emulated GPU doesn't wait for the presentation.
+    const size_t extra = Settings::values.fsr_frame_generation.GetValue() ? 2 : 0;
+    image_count = std::min<size_t>(swapchain.GetImageCount() + extra, MAX_FRAMES_IN_FLIGHT);
 #endif
     swapchain_image_count = swapchain.GetImageCount();
     swapchain_image_format = swapchain.GetImageFormat();
