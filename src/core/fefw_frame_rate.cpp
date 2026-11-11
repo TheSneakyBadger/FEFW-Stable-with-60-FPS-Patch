@@ -45,8 +45,11 @@ bool SameBuild(std::string_view a, std::string_view b) {
     };
     std::string x{trim(a)};
     std::string y{trim(b)};
-    std::transform(x.begin(), x.end(), x.begin(), ::toupper);
-    std::transform(y.begin(), y.end(), y.begin(), ::toupper);
+    const auto upper = [](char c) {
+        return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+    };
+    std::transform(x.begin(), x.end(), x.begin(), upper);
+    std::transform(y.begin(), y.end(), y.begin(), upper);
     return !x.empty() && x == y;
 }
 std::atomic<bool> enabled{false};
