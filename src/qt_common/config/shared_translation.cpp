@@ -218,8 +218,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("NVIDIA's frame generation in place of AMD's: GeForce RTX 40 and 50 cards, with "
               "NVIDIA Streamline's DLLs (sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, "
               "sl.reflex.dll, sl.pcl.dll) and nvngx_dlssg.dll in the user folder's streamline "
-              "folder.
-Works with any upscaler. Where it can't run, AMD's frame generation is "
+              "folder.\nWorks with any upscaler. Where it can't run, AMD's frame generation is "
               "used if that is on. Takes effect when a game starts. Experimental."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
