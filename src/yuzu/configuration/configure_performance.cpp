@@ -31,7 +31,8 @@ ConfigurePerformance::ConfigurePerformance(
          {static_cast<Settings::BasicSetting*>(&Settings::values.fefw_60fps),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reflections),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_ambient_occlusion),
-          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_crowd_detail)}) {
+          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_crowd_detail),
+          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_scenery_detail)}) {
         auto* const widget = builder.BuildWidget(setting, apply_funcs);
         if (widget == nullptr) {
             continue;
@@ -65,7 +66,8 @@ bool ConfigurePerformance::Shows(u32 setting_id) {
     return setting_id == Settings::values.fefw_60fps.Id() ||
            setting_id == Settings::values.fefw_reflections.Id() ||
            setting_id == Settings::values.fefw_ambient_occlusion.Id() ||
-           setting_id == Settings::values.fefw_reduced_crowd_detail.Id();
+           setting_id == Settings::values.fefw_reduced_crowd_detail.Id() ||
+           setting_id == Settings::values.fefw_reduced_scenery_detail.Id();
 }
 
 void ConfigurePerformance::SetConfiguration() {}

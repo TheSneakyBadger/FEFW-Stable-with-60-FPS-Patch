@@ -446,6 +446,12 @@ struct Values {
                                                    Category::Renderer};
     SwitchableSetting<bool> fefw_reduced_crowd_detail{linkage, false, "fefw_reduced_crowd_detail",
                                                       Category::Renderer};
+    // Scenery (map models) switches to its simpler models at 60% of the game's distances, and
+    // the farthest scenery hides at 600 m instead of 1000 m: fewer draws for the game and the
+    // emulator to prepare (CPU) and less to render (GPU).
+    SwitchableSetting<bool> fefw_reduced_scenery_detail{linkage, false,
+                                                        "fefw_reduced_scenery_detail",
+                                                        Category::Renderer};
     // Sensitivity of the PC mouse when presented as a Joy-Con mouse (Fortune's Weave's mouse
     // controls), 1-20: 1 moves the cursor across the game picture as far as the PC pointer moves
     // across the game window, 20 twenty times as far.

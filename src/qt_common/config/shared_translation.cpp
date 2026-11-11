@@ -171,6 +171,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, fefw_reduced_crowd_detail, tr("Reduced crowd detail"),
            tr("Crowd characters switch to their simpler models twice as soon, which lightens busy "
               "towns and battles. Takes effect when the game starts."));
+    INSERT(Settings, fefw_reduced_scenery_detail, tr("Reduced scenery detail"),
+           tr("Buildings and scenery switch to their simpler models sooner (at 60% of the "
+              "distance), and the farthest scenery is hidden sooner. Fewer objects to draw, which "
+              "helps slower CPUs most, and GPUs too. Takes effect when the game starts."));
     INSERT(Settings, fefw_mouse_sensitivity, tr("Mouse sensitivity (mouse mode):"),
            tr("How fast the mouse moves the cursor in Fortune's Weave's mouse controls "
               "(Options > Controls > Mouse Controls), from 1 to 20. Turn mouse mode on with the "

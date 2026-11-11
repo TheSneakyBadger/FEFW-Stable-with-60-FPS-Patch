@@ -195,7 +195,49 @@ struct Changes {
     int ssr_rays = 0;
     int ssao_off = 0;
     int lod = 0;
+    int scenery = 0;
 };
+
+// Scales a number in place, keeping its MessagePack encoding (and so the file's layout): positive
+// fixint, uint8/16/32 and float32/64. False when it can't (other types, or out of range).
+bool ScaleInPlace(std::vector<u8>& bytes, size_t offset, u8 type, double factor) {
+    const auto read_be = [&](size_t n) {
+        u64 v = 0;
+        for (size_t i = 0; i < n; ++i) {
+            v = (v << 8) | bytes[offset + 1 + i];
+        }
+        return v;
+    };
+    const auto write_be = [&](size_t n, u64 v) {
+        for (size_t i = n; i-- > 0;) {
+            bytes[offset + 1 + i] = static_cast<u8>(v);
+            v >>= 8;
+        }
+    };
+    if (type <= 0x7f) {
+        bytes[offset] = static_cast<u8>(static_cast<double>(type) * factor + 0.5);
+        return bytes[offset] <= 0x7f;
+    }
+    const size_t width = type == 0xcc ? 1 : type == 0xcd ? 2 : type == 0xce ? 4 : 0;
+    if (width != 0) {
+        const double scaled = static_cast<double>(read_be(width)) * factor + 0.5;
+        if (scaled >= static_cast<double>(u64{1} << (8 * width))) {
+            return false;
+        }
+        write_be(width, static_cast<u64>(scaled));
+        return true;
+    }
+    if (type == 0xcb) {
+        write_be(8, std::bit_cast<u64>(std::bit_cast<double>(read_be(8)) * factor));
+        return true;
+    }
+    if (type == 0xca) {
+        const float value = std::bit_cast<float>(static_cast<u32>(read_be(4)));
+        write_be(4, std::bit_cast<u32>(static_cast<float>(value * factor)));
+        return true;
+    }
+    return false;
+}
 
 // Applies the settings to one .set file; true when it changed.
 bool PatchSet(std::vector<u8>& bytes, Changes& changes) {
@@ -235,6 +277,22 @@ bool PatchLod(std::vector<u8>& bytes, Changes& changes) {
         return false;
     }
     bool changed = false;
+    // Scenery: presets.Map*.Thresholds[i] are distances in metres (CalculateType 1); scaled to
+    // 60%, so 50/100/150/200 m become 30/60/90/120 m and the hiding level's 1000 m becomes 600 m.
+    if (Settings::values.fefw_reduced_scenery_detail.GetValue()) {
+        for (const Leaf& leaf : leaves) {
+            if (leaf.path.size() == 4 && leaf.path[0] == "presets" &&
+                leaf.path[1].starts_with("Map") && leaf.path[2] == "Thresholds" &&
+                bytes[leaf.offset] != 0 &&
+                ScaleInPlace(bytes, leaf.offset, leaf.type, 0.6)) {
+                ++changes.scenery;
+                changed = true;
+            }
+        }
+    }
+    if (!Settings::values.fefw_reduced_crowd_detail.GetValue()) {
+        return changed;
+    }
     for (const Leaf& leaf : leaves) {
         if (leaf.path.size() != 4 || leaf.path[0] != "presets" ||
             (leaf.path[1] != "CharacterMob" && leaf.path[1] != "CharacterLegion") ||
@@ -288,7 +346,8 @@ void Walk(const VirtualDir& dir, const std::vector<std::string>& path,
 bool Any() {
     return Settings::values.fefw_reflections.GetValue() != Settings::FefwReflections::Full ||
            !Settings::values.fefw_ambient_occlusion.GetValue() ||
-           Settings::values.fefw_reduced_crowd_detail.GetValue();
+           Settings::values.fefw_reduced_crowd_detail.GetValue() ||
+           Settings::values.fefw_reduced_scenery_detail.GetValue();
 }
 
 VirtualDir Build(const VirtualDir& romfs) {
@@ -320,7 +379,8 @@ VirtualDir Build(const VirtualDir& romfs) {
     const bool set_files = Settings::values.fefw_reflections.GetValue() !=
                                Settings::FefwReflections::Full ||
                            !Settings::values.fefw_ambient_occlusion.GetValue();
-    const bool lod = Settings::values.fefw_reduced_crowd_detail.GetValue();
+    const bool lod = Settings::values.fefw_reduced_crowd_detail.GetValue() ||
+                     Settings::values.fefw_reduced_scenery_detail.GetValue();
     Walk(settings, {"Graphics", "Settings"},
          [&](const VirtualFile& file, const std::vector<std::string>& path) {
              const auto name = file->GetName();
@@ -337,8 +397,10 @@ VirtualDir Build(const VirtualDir& romfs) {
          });
     LOG_INFO(Loader,
              "Fortune's Weave graphics settings: {} files changed (reflections off in {}, 8 rays "
-             "in {}, ambient occlusion off in {}, {} crowd detail thresholds)",
-             files, changes.ssr_off, changes.ssr_rays, changes.ssao_off, changes.lod);
+             "in {}, ambient occlusion off in {}, {} crowd detail thresholds, {} scenery detail "
+             "distances)",
+             files, changes.ssr_off, changes.ssr_rays, changes.ssao_off, changes.lod,
+             changes.scenery);
     if (files == 0) {
         return nullptr;
     }
