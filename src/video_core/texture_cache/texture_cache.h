@@ -230,6 +230,13 @@ u32 TextureCache<P>::RunGarbageCollector() {
             ++num_iterations;
             return false;
         }
+        // Fortune's Eden: larger ones are kept too until the hard limit. Passes over the
+        // expected level now free hundreds of images, and losing what the GPU drew into a
+        // shadow map or effect buffer would show as black or flickering until it is redrawn.
+        if (True(image.flags & ImageFlagBits::GpuModified) && !must_download && !aggressive_mode) {
+            ++num_iterations;
+            return false;
+        }
         // Each image written back waits for the GPU copy: keep a pass's write-backs to 256 MiB
         // so a big pass doesn't become one long hitch (the rest go in the next passes).
         if (must_download && writeback_bytes >= 256_MiB) {
