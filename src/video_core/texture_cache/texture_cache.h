@@ -964,16 +964,27 @@ std::array<typename P::ImageView*, 4> TextureCache<P>::FrameGenUiLayers() {
               [](const auto& a, const auto& b) { return a.second > b.second; });
     std::array<ImageView*, 4> result{};
     size_t count = 0;
-    for (size_t i = 0; i < fg_ui_count_size && count < result.size(); ++i) {
-        const ImageId id = sorted[i].first;
-        if (sorted[i].second < 2) {
-            continue;
-        }
+    const auto add = [&](ImageId id) {
         const ImageBase& image = slot_images[id];
         const ImageViewId view = FindOrEmplaceImageView(
             id, ImageViewInfo(ImageViewType::e2D, image.info.format,
                               SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
         result[count++] = &slot_image_views[view];
+    };
+    for (size_t i = 0; i < fg_ui_count_size && count < result.size(); ++i) {
+        if (sorted[i].second >= 2) {
+            add(sorted[i].first);
+        }
+    }
+    if (count != 0) {
+        fg_ui_last = sorted[0].first;
+        fg_ui_last_addr = slot_images[fg_ui_last].gpu_addr;
+    } else if (fg_ui_last && slot_images[fg_ui_last].gpu_addr == fg_ui_last_addr &&
+               slot_images[fg_ui_last].info.size.width == fg_ui_size.width &&
+               slot_images[fg_ui_last].info.size.height == fg_ui_size.height) {
+        // The game didn't redraw its UI this frame (nothing in it changed): it still shows the
+        // last one (without it, the mask went off on those frames and the UI flickered).
+        add(fg_ui_last);
     }
     return result;
 }

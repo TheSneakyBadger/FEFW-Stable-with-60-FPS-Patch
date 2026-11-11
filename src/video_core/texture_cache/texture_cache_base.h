@@ -524,6 +524,9 @@ private:
     /// Full-size 8-bit colour targets drawn this frame and how many draws each got.
     std::array<std::pair<ImageId, u32>, 8> fg_ui_counts{};
     size_t fg_ui_count_size = 0;
+    /// The last frame's most drawn UI layer: frames that don't redraw the UI keep showing it.
+    ImageId fg_ui_last{};
+    GPUVAddr fg_ui_last_addr = 0;
     void FlushRenderTargetTrace();
     bool fg_trace_active = false;
     bool fg_trace_done = false;
