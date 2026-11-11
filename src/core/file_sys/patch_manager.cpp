@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <span>
 
 #include "common/assert.h"
 #include "common/hex_util.h"
@@ -20,6 +22,7 @@
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/fefw_60fps_patch.h"
+#include "core/file_sys/fefw_60fps_search.h"
 #include "core/file_sys/fefw_romfs_tweaks.h"
 #include "core/fefw_frame_rate.h"
 #include "core/file_sys/fefw_ultrawide.h"
@@ -505,6 +508,42 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             }
         }
     }
+    // Other game versions: the same 60 FPS patch, placed by finding every spot it changes in
+    // this version's code (fefw_60fps_search.cpp); left off if any is missing or different.
+    if (name == "main" && build_id != FefwUltrawide::MainBuildId && FefwSixtyEnabled() &&
+        out.size() > sizeof(Loader::NSOHeader)) {
+        std::string why;
+        std::span<u8> image(out.data() + sizeof(Loader::NSOHeader),
+                            out.size() - sizeof(Loader::NSOHeader));
+        if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why)) {
+            FefwFrameRate::SetFoundLayout(build_id, layout->app_object, layout->table);
+            LOG_WARNING(Loader,
+                        "    - 60 FPS mode on a game version it wasn't made for (build {}): all "
+                        "the code it changes was found as in 1.1.0, so it is applied (routines "
+                        "at {:#x}). Untested on this version: if anything looks wrong, turn 60 "
+                        "FPS mode off.",
+                        build_id, layout->routines);
+        } else {
+            LOG_WARNING(Loader,
+                        "    - 60 FPS mode is off: it was made for game version 1.1.0, and this "
+                        "version's code differs ({}). The game runs at 30 FPS as usual.",
+                        why);
+        }
+    }
+    // EDEN_60FPS_SEARCH=1 on 1.1.0: check that the search finds every spot where 1.1.0's own
+    // patch puts it (nothing is changed by the check).
+    if (name == "main" && build_id == FefwUltrawide::MainBuildId && FefwSixtyEnabled()) {
+        if (const char* value = std::getenv("EDEN_60FPS_SEARCH"); value && value[0] == '1') {
+            std::string why;
+            const std::span<const u8> image(nso.data() + sizeof(Loader::NSOHeader),
+                                            nso.size() - sizeof(Loader::NSOHeader));
+            if (FefwSixtySearch::MatchesReference(image, header.segments[0].size, why)) {
+                LOG_INFO(Loader, "    - 60 FPS search check: every spot found at 1.1.0's address");
+            } else {
+                LOG_ERROR(Loader, "    - 60 FPS search check failed: {}", why);
+            }
+        }
+    }
     for (const auto& patch_file : patches) {
         if (patch_file->GetExtension() == "ips") {
             LOG_INFO(Loader, "    - Applying IPS patch from mod \"{}\"",
@@ -537,6 +576,10 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
     LOG_INFO(Loader, "Querying NSO patch existence for build_id={}, name={}", build_id, name);
 
     if (build_id == FefwUltrawide::MainBuildId) {
+        return true;
+    }
+    // 60 FPS mode on other game versions (PatchNSO decides whether it can be applied).
+    if (name == "main" && FefwSixtyEnabled()) {
         return true;
     }
 
@@ -587,8 +630,8 @@ std::vector<Core::Memory::CheatEntry> PatchManager::CreateCheatList(const BuildI
 
     // Fortune's Weave 1.1.0: the "60fps" add-on turns on Fortune's Eden's 60 FPS mode instead of
     // running its cheat (a fixed rate of 60 made everything slow motion below 60 FPS).
-    const bool fefw_main =
-        Common::HexToString(build_id_).starts_with(FefwFrameRate::MainBuildId);
+    const bool fefw_main = title_id == FefwRomfsTweaks::TitleId &&
+                           FefwFrameRate::KnowsBuild(Common::HexToString(build_id_));
     const bool fefw_60fps = fefw_main && FefwSixtyEnabled();
 
     // <mod dir> / <folder> / cheats / <build id>.txt

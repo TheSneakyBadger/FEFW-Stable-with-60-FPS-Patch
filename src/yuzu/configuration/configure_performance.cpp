@@ -92,6 +92,7 @@ void ConfigurePerformance::RetranslateUI() {
                       "PCs that can't hold the frame rate. Nothing is changed on disk."));
     restart_note->setText(
         tr("<i>Changes take effect the next time the game starts.</i>"));
-    sixty_note->setText(tr("60 FPS mode is for game version 1.1.0; other versions run at 30 FPS "
-                           "as usual."));
+    sixty_note->setText(tr("60 FPS mode is made and tested for game version 1.1.0. On other "
+                           "versions it turns on only if the game's code matches (untested: turn "
+                           "it off if anything looks wrong); otherwise the game runs at 30 FPS."));
 }

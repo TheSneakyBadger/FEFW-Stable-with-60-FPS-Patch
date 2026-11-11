@@ -78,6 +78,9 @@ add_library(core STATIC
     file_sys/fssystem/fs_i_storage.h
     file_sys/fssystem/fs_types.h
     file_sys/fefw_60fps_patch.h
+    file_sys/fefw_60fps_search.cpp
+    file_sys/fefw_60fps_search.h
+    file_sys/fefw_60fps_search_data.h
     file_sys/fefw_romfs_tweaks.cpp
     file_sys/fefw_romfs_tweaks.h
     file_sys/fefw_ultrawide.h

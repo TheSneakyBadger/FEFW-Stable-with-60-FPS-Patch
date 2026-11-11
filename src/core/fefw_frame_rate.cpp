@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <mutex>
 #include <string>
 
 #include <fmt/format.h>
@@ -19,16 +20,35 @@
 
 namespace FefwFrameRate {
 namespace {
-constexpr u64 AppObjectPointer = 0x21E60D8; // main-relative: pointer to the application object
+constexpr u64 AppObjectPointer110 = 0x21E60D8; // 1.1.0, main-relative: the application object pointer
 constexpr u64 RateOffset = 0x1DC;            // int: the frames per second the game steps for
 constexpr int MinRate = 30;                  // the game's own rate; below it, it slows as on Switch
 constexpr int MaxRate = 60;
 constexpr int SnapTo60From = 59;             // vsync jitter around 60 shouldn't wobble the rate
 // The 60 FPS game patch's table (bss tail, main-relative; layout in tools/fefw/make_60fps_patch.py):
 // the value every patched site uses at the current rate.
-constexpr u64 TableOffset = 0x22B3E00;
+constexpr u64 TableOffset110 = 0x22B3E00;
 
 std::atomic<u64> main_base{0};
+std::atomic<u64> app_object_pointer{AppObjectPointer110};
+std::atomic<u64> table_offset{TableOffset110};
+// Another version's layout (FefwSixtySearch), set while its main is patched, before it loads.
+std::mutex found_mutex;
+std::string found_build;
+u64 found_app_object = 0;
+u64 found_table = 0;
+
+bool SameBuild(std::string_view a, std::string_view b) {
+    const auto trim = [](std::string_view id) {
+        const auto end = id.find_last_not_of('0');
+        return end == std::string_view::npos ? std::string_view{} : id.substr(0, end + 1);
+    };
+    std::string x{trim(a)};
+    std::string y{trim(b)};
+    std::transform(x.begin(), x.end(), x.begin(), ::toupper);
+    std::transform(y.begin(), y.end(), y.begin(), ::toupper);
+    return !x.empty() && x == y;
+}
 std::atomic<bool> enabled{false};
 
 struct Measure {
@@ -86,14 +106,37 @@ void WriteTable(Core::Memory::Memory& memory, u64 table, int rate) {
 }
 } // Anonymous namespace
 
+void SetFoundLayout(std::string_view build_id, u64 app_object, u64 table) {
+    std::scoped_lock lock{found_mutex};
+    found_build = std::string{build_id};
+    found_app_object = app_object;
+    found_table = table;
+}
+
+bool KnowsBuild(std::string_view build_id) {
+    if (SameBuild(build_id, MainBuildId)) {
+        return true;
+    }
+    std::scoped_lock lock{found_mutex};
+    return SameBuild(build_id, found_build);
+}
+
 void OnMainLoaded(const std::array<u8, 32>& build_id, u64 base) {
     const std::string hex = Common::HexToString(build_id, true);
-    if (std::string_view{hex}.substr(0, MainBuildId.size()) == MainBuildId) {
-        main_base = base;
-        measure = {};
+    main_base = 0;
+    if (SameBuild(hex, MainBuildId)) {
+        app_object_pointer = AppObjectPointer110;
+        table_offset = TableOffset110;
     } else {
-        main_base = 0;
+        std::scoped_lock lock{found_mutex};
+        if (!SameBuild(hex, found_build)) {
+            return;
+        }
+        app_object_pointer = found_app_object;
+        table_offset = found_table;
     }
+    main_base = base;
+    measure = {};
 }
 
 void SetEnabled(bool on) {
@@ -142,7 +185,7 @@ void OnPresent(Core::Memory::Memory& memory) {
     }
     rate = std::clamp(rate, MinRate, MaxRate);
 
-    const u64 object_slot = main_base + AppObjectPointer;
+    const u64 object_slot = main_base + app_object_pointer;
     if (!memory.IsValidVirtualAddress(object_slot)) {
         return;
     }
@@ -153,7 +196,7 @@ void OnPresent(Core::Memory::Memory& memory) {
     if (static_cast<int>(memory.Read32(object + RateOffset)) != rate) {
         memory.Write32(object + RateOffset, static_cast<u32>(rate));
     }
-    const u64 table = main_base + TableOffset;
+    const u64 table = main_base + table_offset;
     if (memory.IsValidVirtualAddress(table) &&
         static_cast<int>(memory.Read32(table)) != rate) {
         WriteTable(memory, table, rate);

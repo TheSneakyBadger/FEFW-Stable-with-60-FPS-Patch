@@ -22,8 +22,11 @@ SLOT = dict(T=0x00, S=0x04, STEP=0x08, DTF=0x0C, DTR=0x10, PDT=0x14, C95=0x18, B
             SUB2=0x40, SUB4=0x44, SM1=0x48, CG=0x4C, S2=0x50, STATE=0x80)
 CAVE_START, CAVE_END = 0x1A457A8, 0x1A46000
 FRAME_COUNTER = 0x22A5D28
+APP_OBJECT_POINTER = 0x21E60D8  # main + this: the application object (fefw_frame_rate.cpp)
+REF_TEXT_END = 0x1A452F0        # 1.1.0's .text size (NSO header)
+MAIN_BUILD_ID = 'DB93B0125F4850601D61C3EDDE012F8EB2ECFE77'
 
-def L(name): return TBO + SLOT[name]
+def L(name): return f':lo12:TABLE+{SLOT[name]:#x}'
 
 # --- the sites that build a per-frame constant with mov + movk ---------------------------
 # (site of the movk, register, low half, high half, table slot)
@@ -60,8 +63,8 @@ def movk_routine(name, site, reg, lo, hi, slot):
     x = 'x' + reg[1:]
     return f'''
 r_{name}:
-    adrp {x}, {TBP:#x}
-    ldr {reg}, [{x}, #{L(slot):#x}]
+    adrp {x}, TABLE
+    ldr {reg}, [{x}, {L(slot)}]
     cbnz {reg}, 1f
     mov {reg}, #{lo:#x}
     movk {reg}, #{hi:#x}, lsl #16
@@ -74,11 +77,11 @@ r_{name}:
 # racing stores agree. Uses x14-x17 (x14/x15 saved here) and the flags.
 TICK30 = f'''
     stp x14, x15, [sp, #-16]!
-    adrp x16, {FRAME_COUNTER & ~0xFFF:#x}
-    ldr w17, [x16, #{FRAME_COUNTER & 0xFFF:#x}]
+    adrp x16, FRAMECOUNTER
+    ldr w17, [x16, :lo12:FRAMECOUNTER]
     and w17, w17, #0xffff
-    adrp x15, {TBP:#x}
-    add x15, x15, #{TBO:#x}
+    adrp x15, TABLE
+    add x15, x15, :lo12:TABLE
     ldr x16, [x15, #{SLOT['STATE']:#x}]
     cmp w17, w16, uxth
     b.eq 2f
@@ -102,8 +105,8 @@ TICK30 = f'''
 # s16 = q (0..1) -> q^s for s = 30/T in [0.5, 1]: sqrt(q) + (2s - 1)(q - sqrt(q)), exact at 30 and
 # 60 FPS (within 0.1% between). Uses x16, s17, s18.
 POWQ = f'''
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('S'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S')}]
     fmov s17, #1.0
     cbz w16, 8f
     fmov s17, w16
@@ -126,8 +129,8 @@ SPECIAL = f'''
 // x16/x17 and no v16-v31, so these routines use them freely; none touches the flags.
 r_CP:
     fdiv s0, s0, s1
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('S'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S')}]
     cbz w16, 1f
     fmov s16, w16
     fmul s0, s0, s16
@@ -149,8 +152,8 @@ r_CD:
 
 r_CW:
     fadd v0.4s, v1.4s, v0.4s
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('S2'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S2')}]
     cbz w16, 1f
     fmov s16, w16
     fmul v0.4s, v0.4s, v16.s[0]
@@ -178,8 +181,8 @@ r_Q:
 // I1: CharacterIllusion clone index = frame / period (30 FPS frames): period x T / 30.
 r_I1:
     stp x15, x16, [sp, #-16]!
-    adrp x16, {TBP:#x}
-    ldr w15, [x16, #{L('T'):#x}]
+    adrp x16, TABLE
+    ldr w15, [x16, {L('T')}]
     cbz w15, 1f
     mul w12, w12, w15
     mov w15, #30
@@ -197,8 +200,8 @@ r_LA:
     str x16, [sp]
     stp d16, d17, [sp, #16]
     ldr s2, [x0, #0xa4]
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('S'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S')}]
     cbz w16, 9f
     fmov s16, w16
     fmov s17, #1.0
@@ -222,8 +225,8 @@ r_LA:
 
 // A1: map UI angle += 3 per frame (w8 is set again right after).
 r_A1:
-    adrp x8, {TBP:#x}
-    ldr w8, [x8, #{L('A3'):#x}]
+    adrp x8, TABLE
+    ldr w8, [x8, {L('A3')}]
     cbz w8, 1f
     fmov s1, w8
     b 0x133fb94
@@ -235,8 +238,8 @@ r_M2:
     sub sp, sp, #16
     str x16, [sp]
     str d16, [sp, #8]
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('M2'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('M2')}]
     cbz w16, 1f
     fmov s16, w16
     fmul s0, s0, s16
@@ -250,9 +253,9 @@ r_M2:
 // P34: PhysX substeps (2, or 4 when sped up) of the frame's step: scaled so each substep stays
 // about 1/60 s.
 r_P34:
-    adrp x9, {TBP:#x}
-    ldr w8, [x9, #{L('SUB2'):#x}]
-    ldr w9, [x9, #{L('SUB4'):#x}]
+    adrp x9, TABLE
+    ldr w8, [x9, {L('SUB2')}]
+    ldr w9, [x9, {L('SUB4')}]
     cbnz w8, 1f
     mov w8, #2
     mov w9, #4
@@ -264,8 +267,8 @@ r_BG1:
     sub sp, sp, #16
     str x16, [sp]
     str d16, [sp, #8]
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('S'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S')}]
     cbz w16, 1f
     fmov s16, w16
     fmul s11, s11, s16
@@ -278,8 +281,8 @@ r_BG1:
 r_BG2:
     csel w8, w8, w27, eq
     stp x15, x16, [sp, #-16]!
-    adrp x16, {TBP:#x}
-    ldr w15, [x16, #{L('T'):#x}]
+    adrp x16, TABLE
+    ldr w15, [x16, {L('T')}]
     cbz w15, 1f
     mul w8, w8, w15
     mov w15, #30
@@ -291,8 +294,8 @@ r_BG2:
 r_BG5:
     movi v2.2s, #0x3d, lsl #24
     str x16, [sp, #-16]!
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('BG5'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('BG5')}]
     cbz w16, 1f
     dup v2.2s, w16
 1:  ldr x16, [sp], #16
@@ -308,8 +311,8 @@ def umd_routine(i, site):
     return f'''
 r_UD{i}:
     str x16, [sp, #-16]!
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('UMD'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('UMD')}]
     cbz w16, 1f
     fmov s2, w16
     b 2f
@@ -325,8 +328,8 @@ r_UG{i}:
     sub sp, sp, #16
     str x16, [sp]
     str d16, [sp, #8]
-    adrp x16, {TBP:#x}
-    ldr w16, [x16, #{L('SM1'):#x}]
+    adrp x16, TABLE
+    ldr w16, [x16, {L('SM1')}]
     cbz w16, 1f
     fmov s16, w16
     fmadd s1, s0, s16, s1
@@ -382,12 +385,31 @@ def assemble(src, sections, work):
     script = 'SECTIONS {\n' + ''.join(f'  .{n} {a:#x} : {{ *(.{n}) }}\n' for n, a in sorted(sections, key=lambda x: x[1])) + '}\n'
     open(f'{work}/p.ld', 'w').write(script)
     defs = [f'--defsym=abs_{t:x}={t:#x}' for t in sorted(targets)]
+    defs += [f'--defsym=TABLE={TB:#x}', f'--defsym=FRAMECOUNTER={FRAME_COUNTER:#x}']
     run(['ld.lld', '-T', f'{work}/p.ld', '-static', '--no-relax', *defs, f'{work}/p.o', '-o', f'{work}/p.elf'])
     out = []
     for n, a in sections:
         run(['llvm-objcopy', '-O', 'binary', f'--only-section=.{n}', f'{work}/p.elf', f'{work}/{n}.bin'])
         out.append((a, open(f'{work}/{n}.bin', 'rb').read()))
     return out
+
+def object_info(work):
+    """The unlinked routines (.cave, relocation fields still zero) and every relocation, for the
+    search patch that places them in another game version (see search_template)."""
+    run(['llvm-objcopy', '-O', 'binary', '--only-section=.cave', f'{work}/p.o', f'{work}/cave_raw.bin'])
+    raw = open(f'{work}/cave_raw.bin', 'rb').read()
+    relocs = {}
+    section = None
+    for line in run(['llvm-readobj', '-r', f'{work}/p.o']).splitlines():
+        m = re.match(r'\s*Section \(\d+\) \.rela\.(\S+) \{', line)
+        if m:
+            section = m.group(1)
+            continue
+        m = re.match(r'\s*0x([0-9A-Fa-f]+) (R_AARCH64_\w+) (\S+) 0x([0-9A-Fa-f]+)', line)
+        if m and section:
+            relocs.setdefault(section, []).append(
+                (int(m.group(1), 16), m.group(2), m.group(3), int(m.group(4), 16)))
+    return raw, relocs
 
 def main():
     root = os.path.dirname(os.path.abspath(__file__))
@@ -407,6 +429,7 @@ def main():
         sections.append((f'x{i}', site))
     with tempfile.TemporaryDirectory() as work:
         blobs = assemble(src, sections, work)
+        cave_raw, relocs = object_info(work)
     cave_bytes = blobs[0][1]
     if CAVE_START + len(cave_bytes) > CAVE_END:
         sys.exit(f'cave too big: {len(cave_bytes)} bytes, room for {CAVE_END - CAVE_START}')
@@ -460,6 +483,38 @@ inline constexpr std::array<u8, {len(ips)}> Ips{{
 '''
     open(os.path.join(repo, 'src/core/file_sys/fefw_60fps_patch.h'), 'w').write(header)
     print(f'{len(SITES) + len(SINGLE)} sites, routines {len(cave_bytes)} of {CAVE_END - CAVE_START} bytes, IPS {len(ips)} bytes')
+
+    # Other game versions: the same patch as anchors and relocations (fefw_search.py). Needs the
+    # 1.1.0 main to make the anchors from, and checks that placing the routines where 1.1.0's
+    # patch has them gives exactly that patch.
+    if len(sys.argv) > 1:
+        sys.path.insert(0, root)
+        import fefw_search
+        image = open(sys.argv[1], 'rb').read()
+        site_rows = []
+        for i, (site, label) in enumerate(SITES):
+            (offset, kind, symbol, addend), = relocs[f's{i}']
+            assert symbol == '.cave' and offset == 0, (site, symbol)
+            site_rows.append((site, addend))
+        singles = [(a, struct.unpack('<I', data)[0]) for a, data in blobs[1 + len(SITES):]]
+        t = fefw_search.build(image, REF_TEXT_END, site_rows, singles, cave_raw, relocs,
+                              APP_OBJECT_POINTER, FRAME_COUNTER,
+                              preferred={fefw_search.DATA_APP_OBJECT: 0x7BF1B4})
+        static = bytearray(image)
+        for addr, data in blobs:
+            static[addr:addr + len(data)] = data
+        placed, layout = fefw_search.simulate(image, REF_TEXT_END, t, cave_start=CAVE_START)
+        if placed != bytes(static):
+            diff = [hex(i) for i in range(len(placed)) if placed[i] != static[i]][:10]
+            sys.exit(f'search patch differs from the 1.1.0 patch at {diff}')
+        assert layout['table'] == TB and layout['frame_counter'] == FRAME_COUNTER
+        assert layout['app_object'] == APP_OBJECT_POINTER
+        _, layout = fefw_search.simulate(image, REF_TEXT_END, t)
+        print(f"search patch: {len(t['anchors'])} anchors ({sum(len(a['pattern']) for a in t['anchors'])} "
+              f"instructions), {len(t['relocs'])} relocations; same bytes as the 1.1.0 patch; "
+              f"routines would go at {layout['cave']:#x}")
+        open(os.path.join(repo, 'src/core/file_sys/fefw_60fps_search_data.h'), 'w').write(
+            fefw_search.header(t, MAIN_BUILD_ID))
 
 if __name__ == '__main__':
     main()

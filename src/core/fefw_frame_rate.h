@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <string_view>
 
 #include "common/common_types.h"
@@ -25,10 +26,18 @@ class Memory;
 // game speed stays correct at any frame rate in between.
 namespace FefwFrameRate {
 
-/// main's build ID for 1.1.0 (the only version this knows the addresses for).
+/// main's build ID for 1.1.0 (the version the patch and these addresses were made for).
 inline constexpr std::string_view MainBuildId = "DB93B0125F4850601D61C3EDDE012F8EB2ECFE77";
 
-/// The main module was loaded at `base` (only kept for MainBuildId).
+/// Another game version the 60 FPS patch was placed in (FefwSixtySearch): its build ID (hex, as
+/// PatchManager prints it) and where that version keeps the application object pointer and the
+/// patch's table (main-relative).
+void SetFoundLayout(std::string_view build_id, u64 app_object, u64 table);
+
+/// True for 1.1.0, and for a version the patch was placed in this session.
+[[nodiscard]] bool KnowsBuild(std::string_view build_id);
+
+/// The main module was loaded at `base` (only kept for a build KnowsBuild).
 void OnMainLoaded(const std::array<u8, 32>& build_id, u64 base);
 
 /// Turned on when the "60fps" add-on is enabled for 1.1.0 (it replaces that add-on's cheat).
