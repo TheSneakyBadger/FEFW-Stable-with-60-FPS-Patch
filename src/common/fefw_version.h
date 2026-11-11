@@ -7,7 +7,7 @@ namespace Common {
 
 // One place for the version: the title is built from it, so the two can't disagree (v1.6.7.4's
 // window title still said v1.6.7.3).
-#define FEFW_VERSION_STRING "v1.6.8"
+#define FEFW_VERSION_STRING "v1.6.8.1"
 
 /// Fortune's Eden's release, shown in the window title and written at the top of the log.
 inline constexpr const char* FefwVersion = FEFW_VERSION_STRING;
