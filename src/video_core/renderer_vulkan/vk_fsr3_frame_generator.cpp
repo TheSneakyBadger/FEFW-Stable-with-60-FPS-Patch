@@ -908,14 +908,16 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         .show_mask = in.show_ui_mask ? 1U : 0U,
         .layer_count = static_cast<u32>(std::count_if(ui_layers.begin(), ui_layers.end(),
                                                       [](VkImageView v) { return v != VkImageView{}; })),
-        .mode = 0,
+        // SDR frames: the UI is taken out; HDR ones: what it covers is filled from around it.
+        .mode = in.transfer_function == 0 ? 0U : 3U,
     };
     const Resource cb_ui_remove = stage(&ui_constants, sizeof(ui_constants), ui_slot);
-    // With the game's UI layer (and an SDR frame), frame generation works on the frame without
-    // its UI, which goes back on afterwards. HDR frames only mask it.
+    // With the game's UI layer, frame generation works on the frame without its UI. An SDR
+    // frame's UI goes back over the generated scene afterwards; an HDR frame's pixels under it are
+    // the real frame's.
     const bool has_ui = ui_layers[0] != VkImageView{};
-    const bool remove_ui = has_ui && in.transfer_function == 0;
-    ui_constants.mode = remove_ui ? 1 : 2;
+    const bool remove_ui = has_ui;
+    ui_constants.mode = in.transfer_function == 0 ? 1U : 2U;
     const Resource cb_ui_finish = stage(&ui_constants, sizeof(ui_constants), ui_slot);
 
     // Clears: every new image, the optical flow's history on a reset.
