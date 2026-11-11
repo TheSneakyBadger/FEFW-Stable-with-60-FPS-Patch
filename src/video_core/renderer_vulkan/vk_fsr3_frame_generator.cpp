@@ -690,10 +690,18 @@ void Fsr3FrameGenerator::StashUi(VkImage image, VkFormat format, VkExtent2D size
     if (!image || size.width == 0 || size.height == 0) {
         return;
     }
+    // Retired copies go once the GPU is done with them (no wait).
+    std::erase_if(retired_ui_copies, [&](const RetiredUiCopy& retired) {
+        return scheduler.IsFree(retired.tick);
+    });
     if (!copy_slot.image || format != copy_slot.format || size.width != copy_slot.extent.width ||
         size.height != copy_slot.extent.height) {
         if (copy_slot.image) {
-            scheduler.Finish();
+            // The game's UI layer changed format or size (it may alternate between layers):
+            // waiting for the GPU here stalled every such frame.
+            retired_ui_copies.push_back({scheduler.CurrentTick(), std::move(copy_slot.image),
+                                         std::move(copy_slot.view)});
+            ++ui_copies_recreated;
         }
         copy_slot.image = memory_allocator.CreateImage(VkImageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "common/common_types.h"
@@ -163,6 +164,21 @@ private:
         bool fresh{};
     };
     std::array<UiCopy, KEPT_FRAMES> ui_copies;
+    struct RetiredUiCopy {
+        u64 tick;
+        vk::Image image;
+        vk::ImageView view;
+    };
+    std::vector<RetiredUiCopy> retired_ui_copies;
+
+public:
+    /// UI copies made again (another format or size) since the last call.
+    [[nodiscard]] u32 TakeUiCopiesRecreated() noexcept {
+        return std::exchange(ui_copies_recreated, 0U);
+    }
+
+private:
+    u32 ui_copies_recreated{};
     std::array<std::array<Texture, 7>, 2> flow_input; ///< Luma pyramids, ping-pong.
     std::array<std::array<Texture, 7>, 2> flow;       ///< Optical flow per level, ping-pong.
     Texture flow_vector;    ///< The optical flow result (display / 8).

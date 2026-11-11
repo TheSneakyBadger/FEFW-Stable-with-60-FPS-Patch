@@ -327,13 +327,15 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                  "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
                  "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
-                 "started the next, {} not matched to a game frame, {} given the newest motion",
+                 "started the next, {} not matched to a game frame, {} given the newest motion; UI "
+                 "copies made again {}",
 
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
                              : 0.0f,
-                 fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback);
+                 fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback,
+                 generator->TakeUiCopiesRecreated());
         fsr_fg_fallback = 0;
         fsr_fg_ui_layers = 0;
         fsr_fg_late = 0;
