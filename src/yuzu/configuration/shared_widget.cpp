@@ -782,7 +782,10 @@ Builder::~Builder() = default;
 
 static bool IsAndroidOnly(const Settings::BasicSetting& setting) {
     const std::string& label = setting.GetLabel();
-    return label.starts_with("frame_gen") || label == "emulate_bgr565";
+    // Android's frame generation settings (frame_gen, frame_gen_multiplier...), not Fortune's
+    // Eden's frame_generation.
+    return (label.starts_with("frame_gen") && label != "frame_generation") ||
+           label == "emulate_bgr565";
 }
 
 // Fortune's Eden: settings that don't apply to Fortune's Weave aren't shown (the list is in
