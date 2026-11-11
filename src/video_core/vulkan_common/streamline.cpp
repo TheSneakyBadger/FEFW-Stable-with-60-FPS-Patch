@@ -1256,6 +1256,10 @@ ExtraQueues GetExtraQueues() {
     return {};
 }
 
+bool CanStartAgain() {
+    return true;
+}
+
 u64 EvaluateFailures() {
     return evaluate_failures.load(std::memory_order_relaxed);
 }

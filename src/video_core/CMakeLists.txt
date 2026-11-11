@@ -539,6 +539,8 @@ if (ENABLE_NVIDIA_DLSS)
         target_link_libraries(video_core PRIVATE version wintrust crypt32)
         message(STATUS "NVIDIA DLSS through Streamline: ${STREAMLINE_INCLUDE_DIR}")
     else()
+        # The DLSS library's SHA-256 is checked with OpenSSL before NGX may load it.
+        target_link_libraries(video_core PRIVATE OpenSSL::Crypto)
         message(STATUS "NVIDIA DLSS through runtime Linux NGX (libnvidia-ngx.so.1)")
     endif()
     target_compile_definitions(video_core PUBLIC EGLANTINE_STREAMLINE)
