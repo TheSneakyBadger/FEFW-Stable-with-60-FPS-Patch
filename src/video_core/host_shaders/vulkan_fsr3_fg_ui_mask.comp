@@ -7,7 +7,7 @@
 //  - mode 0 (before interpolation) takes the UI out of the real frame, so frame generation moves
 //    only the scene, even behind see-through panels: scene = (frame - ui.rgb) / ui.a;
 //  - mode 1 (after it) puts this frame's UI back over the generated scene, unmoved.
-// Where the UI is nearly opaque the scene can't be recovered, and the real frame's pixels are kept.
+// Where the UI is solid (or near its edges) the scene isn't recovered: see SOLID below.
 // Layers past the first are only masked (the generated frame takes the real frame's pixels), and
 // mode 2 (HDR frames, where the combine isn't known) masks every layer, the first included.
 
@@ -35,9 +35,12 @@ layout(set = 0, binding = 6, std140) uniform Constants {
 } c;
 layout(set = 0, binding = 1000) uniform sampler linear_sampler;
 
-// Below this scene share the UI hides the scene (recovering it would only amplify noise).
-const float OPAQUE_SHARE = 0.06;
-const float CLEAR_SHARE = 0.2;
+// Where the UI (widened by a couple of texels) covers more than this, the scene isn't taken from
+// the frame (its UI edges never subtract cleanly: the UI is scaled twice on its way to the screen,
+// and what is left would be moved with the scene as a ghost of the UI): frame generation gets a
+// fill from the scene around it instead, and the real frame's pixels are kept there.
+const float SOLID = 0.45;
+const float SOLID_EDGE = 0.3;
 
 vec3 ToLinear(vec3 v) {
     v = clamp(v, 0.0, 1.0);
@@ -50,7 +53,7 @@ vec3 ToSrgb(vec3 v) {
 }
 
 float coverage(texture2D layer, vec2 uv) {
-    const vec2 step = 3.0 / vec2(textureSize(sampler2D(layer, linear_sampler), 0));
+    const vec2 step = 1.5 / vec2(textureSize(sampler2D(layer, linear_sampler), 0));
     float result = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
@@ -59,6 +62,57 @@ float coverage(texture2D layer, vec2 uv) {
         }
     }
     return result;
+}
+
+// Every layer's coverage around uv, widened.
+float AllCoverage(vec2 uv) {
+    float result = coverage(ui_layer0, uv);
+    if (c.layer_count > 1) {
+        result = max(result, coverage(ui_layer1, uv));
+    }
+    if (c.layer_count > 2) {
+        result = max(result, coverage(ui_layer2, uv));
+    }
+    if (c.layer_count > 3) {
+        result = max(result, coverage(ui_layer3, uv));
+    }
+    return result;
+}
+
+// Coverage at one point (first layer and the others), unwidened.
+float PointCoverage(vec2 uv) {
+    float result = 1.0 - textureLod(sampler2D(ui_layer0, linear_sampler), uv, 0.0).a;
+    if (c.layer_count > 1) {
+        result = max(result, 1.0 - textureLod(sampler2D(ui_layer1, linear_sampler), uv, 0.0).a);
+    }
+    return result;
+}
+
+// The scene around a UI-covered pixel: in eight directions, the nearest frame pixel without UI,
+// averaged (nearer weighs more). Smooth and UI-free, so moving it shows no UI.
+vec3 Fill(ivec2 local, vec3 fallback) {
+    const vec2 directions[8] = vec2[8](vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1),
+                                       vec2(0.7071, 0.7071), vec2(-0.7071, 0.7071),
+                                       vec2(0.7071, -0.7071), vec2(-0.7071, -0.7071));
+    vec3 sum = vec3(0.0);
+    float weight = 0.0;
+    for (int d = 0; d < 8; ++d) {
+        float distance = 4.0;
+        for (int i = 0; i < 7; ++i, distance *= 2.0) {
+            const ivec2 p = local + ivec2(directions[d] * distance);
+            if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, c.rect_size))) {
+                break;
+            }
+            const vec2 uv = (vec2(p) + 0.5) / vec2(c.rect_size);
+            if (PointCoverage(uv) < c.threshold) {
+                const float w = 1.0 / distance;
+                sum += w * ToLinear(texelFetch(current_frame, p + c.rect_base, 0).rgb);
+                weight += w;
+                break;
+            }
+        }
+    }
+    return weight > 0.0 ? sum / weight : fallback;
 }
 
 void main() {
@@ -75,34 +129,9 @@ void main() {
         return;
     }
     const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
-    const vec4 ui = textureLod(sampler2D(ui_layer0, linear_sampler), uv, 0.0);
-    const float share = clamp(ui.a, 0.0, 1.0);
-    // How much of the scene can be recovered here (0 under opaque UI).
-    const float recover = smoothstep(OPAQUE_SHARE, CLEAR_SHARE, share);
-    const vec3 current_linear = ToLinear(current.rgb);
-
-    if (c.mode == 0) {
-        const vec3 scene = (current_linear - ui.rgb) / max(share, OPAQUE_SHARE);
-        imageStore(target, pos, vec4(ToSrgb(mix(current_linear, scene, recover)), current.a));
-        return;
-    }
-
-    // Other layers: keep the real frame where they have UI (widened for soft edges and glows).
-    float other = 0.0;
-    if (c.layer_count > 1) {
-        other = coverage(ui_layer1, uv);
-    }
-    if (c.layer_count > 2) {
-        other = max(other, coverage(ui_layer2, uv));
-    }
-    if (c.layer_count > 3) {
-        other = max(other, coverage(ui_layer3, uv));
-    }
+    const float widened = AllCoverage(uv);
     if (c.mode == 2) {
-        other = max(other, coverage(ui_layer0, uv));
-    }
-    const float mask = smoothstep(c.threshold, c.threshold * 8.0, other);
-    if (c.mode == 2) {
+        const float mask = smoothstep(c.threshold, c.threshold * 8.0, widened);
         if (c.show_mask != 0) {
             imageStore(target, pos, vec4(vec3(mask), 1.0));
         } else if (mask > 0.0) {
@@ -111,18 +140,36 @@ void main() {
         }
         return;
     }
-    if (c.show_mask != 0) {
-        // Red: the first layer's UI (put back over the generated scene); green: kept from the
-        // real frame (opaque UI); blue: other layers (kept from the real frame).
-        imageStore(target, pos, vec4(1.0 - share, 1.0 - recover, mask, 1.0));
+    // 0 where the UI is see-through (taken out and put back), 1 where it is solid (kept).
+    const float solid = smoothstep(SOLID_EDGE, SOLID, widened);
+    const vec3 current_linear = ToLinear(current.rgb);
+    const vec4 ui = textureLod(sampler2D(ui_layer0, linear_sampler), uv, 0.0);
+    const float share = clamp(ui.a, 1.0 - SOLID, 1.0);
+
+    if (c.mode == 0) {
+        if (widened < c.threshold) {
+            imageStore(target, pos, current);
+            return;
+        }
+        vec3 scene = (current_linear - ui.rgb) / share;
+        if (solid > 0.0) {
+            scene = mix(scene, Fill(local, scene), solid);
+        }
+        imageStore(target, pos, vec4(ToSrgb(scene), current.a));
         return;
     }
-    if (share >= 0.999 && mask <= 0.0) {
+
+    if (c.show_mask != 0) {
+        // Red: see-through UI, put back over the generated scene; green: solid UI, kept from the
+        // real frame.
+        const float seen = smoothstep(c.threshold, c.threshold * 8.0, widened);
+        imageStore(target, pos, vec4(seen * (1.0 - solid), solid, 0.0, 1.0));
+        return;
+    }
+    if (widened < c.threshold) {
         return; // No UI: the generated scene as it is.
     }
     const vec4 generated = imageLoad(target, pos);
     const vec3 with_ui = ui.rgb + share * ToLinear(generated.rgb);
-    vec3 result = mix(current_linear, with_ui, recover);
-    result = mix(result, current_linear, mask);
-    imageStore(target, pos, vec4(ToSrgb(result), generated.a));
+    imageStore(target, pos, vec4(ToSrgb(mix(with_ui, current_linear, solid)), generated.a));
 }

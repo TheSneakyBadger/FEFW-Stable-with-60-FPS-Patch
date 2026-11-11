@@ -54,6 +54,7 @@ public:
         bool show_ui_mask; ///< Testing: writes the UI mask instead.
         u64 seq;           ///< Which of the game's frames this is (its Prepare).
         bool late;         ///< Presented after the next frame started (ui_layers unusable).
+        bool show_ui_less; ///< Testing: writes the frame without its UI instead.
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,

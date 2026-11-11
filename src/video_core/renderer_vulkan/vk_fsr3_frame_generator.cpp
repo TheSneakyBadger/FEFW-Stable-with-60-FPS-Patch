@@ -1137,6 +1137,20 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
             groups(dw, 8), groups(dh, 8));
     }
 
+    if (in.show_ui_less && remove_ui) {
+        scheduler.Record([source = *ui_less.image, destination = in.output_image, dw,
+                          dh](vk::CommandBuffer cmdbuf) {
+            cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,
+                             VkImageCopy{
+                                 .srcSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .srcOffset{0, 0, 0},
+                                 .dstSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                 .dstOffset{0, 0, 0},
+                                 .extent{dw, dh, 1},
+                             });
+        });
+    }
+
     // Keep this frame (as frame generation saw it) for the next interpolation; hand the output to
     // the presentation.
     scheduler.Record([source = remove_ui ? *ui_less.image : in.current_image,

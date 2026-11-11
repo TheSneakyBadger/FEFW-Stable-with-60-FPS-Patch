@@ -404,7 +404,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
     // Testing: EDEN_FG_DEBUG=1 presents a copy of the real frame in the generated one's place
     // (the pacing alone), 2 shows only generated frames (the real one is overwritten with it), 3
-    // shows the UI mask that way, 4 generated frames without the UI mask.
+    // shows the UI mask that way, 4 generated frames without the UI mask, 5 the frame without
+    // its UI (what frame generation moves) that way.
     static const int debug_mode = [] {
         const char* value = std::getenv("EDEN_FG_DEBUG");
         return value != nullptr ? std::atoi(value) : 0;
@@ -472,6 +473,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         .show_ui_mask = debug_mode == 3,
         .seq = game_frame.seq,
         .late = late,
+        .show_ui_less = debug_mode == 5,
     });
     if (debug_mode >= 2) {
         scheduler.Record([source = *generated->image, destination = *frame->image,
