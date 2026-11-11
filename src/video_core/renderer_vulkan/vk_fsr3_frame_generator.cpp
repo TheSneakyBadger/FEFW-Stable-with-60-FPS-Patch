@@ -766,7 +766,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         .rect_base = {in.interpolation_rect.offset.x, in.interpolation_rect.offset.y},
         .rect_size = {static_cast<s32>(in.interpolation_rect.extent.width),
                       static_cast<s32>(in.interpolation_rect.extent.height)},
-        .threshold = 0.02f,
+        .threshold = 0.004f,
         .show_mask = in.show_ui_mask ? 1U : 0U,
         .pad = {},
     };
