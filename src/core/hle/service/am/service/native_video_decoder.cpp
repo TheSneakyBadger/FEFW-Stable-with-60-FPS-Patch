@@ -1106,6 +1106,77 @@ private:
         R_SUCCEED();
     }
 
+    static bool VideoTimingEnabled() {
+        static const bool enabled = [] {
+            const char* value = std::getenv("EDEN_VIDEO_TIMING");
+            return value != nullptr && value[0] == '1';
+        }();
+        return enabled;
+    }
+
+    // One fetch: `pts_us` is the frame the game got, or nullopt when it asked and none was ready.
+    void RecordFetch(std::optional<u64> pts_us) {
+        if (!VideoTimingEnabled()) {
+            return;
+        }
+        auto& t = fetch_timing;
+        const s64 now = HostTimeUs();
+        if (!pts_us) {
+            if (t.active) {
+                ++t.empty;
+            }
+            return;
+        }
+        const u64 pts = *pts_us;
+        // A new run of frames: the first fetch, a pause of over 1 s, or the timestamps going back.
+        if (!t.active || now - t.last_fetch > MoviePauseGapUs || pts < t.last_pts) {
+            if (t.active) {
+                LOG_INFO(Service_AM, "Movie timing: new run (gap {:.0f} ms, pts {} -> {} us)",
+                         static_cast<double>(now - t.last_fetch) / 1000.0, t.last_pts, pts);
+            }
+            t = {};
+            t.active = true;
+            t.start_host = t.window_start = t.last_fetch = now;
+            t.start_pts = t.last_pts = t.first_pts_in_window = pts;
+            t.dropped_at_start = movie_frames_dropped;
+            return;
+        }
+        // Lateness: how far behind real time (since the run began) this frame's timestamp is.
+        const s64 lateness = (now - t.start_host) - static_cast<s64>(pts - t.start_pts);
+        if (t.fetched == 0) {
+            t.lateness_min = t.lateness_max = lateness;
+        }
+        t.lateness_min = std::min(t.lateness_min, lateness);
+        t.lateness_max = std::max(t.lateness_max, lateness);
+        t.fetch_gap_max = std::max(t.fetch_gap_max, now - t.last_fetch);
+        t.pts_step_max = std::max(t.pts_step_max, static_cast<s64>(pts - t.last_pts));
+        ++t.fetched;
+        t.last_fetch = now;
+        t.last_pts = pts;
+        if (now - t.window_start >= 2'000'000) {
+            LOG_INFO(Service_AM,
+                     "Movie timing: {:.1f} s in, pts {:.2f}-{:.2f} s, {} frames fetched, {} asks "
+                     "with no frame ready, behind real time {:.0f} to {:.0f} ms, longest gap "
+                     "between fetches {:.0f} ms, largest pts step {:.0f} ms, {} frames dropped "
+                     "by pacing",
+                     static_cast<double>(now - t.start_host) / 1e6,
+                     static_cast<double>(t.first_pts_in_window) / 1e6,
+                     static_cast<double>(pts) / 1e6, t.fetched, t.empty,
+                     static_cast<double>(t.lateness_min) / 1000.0,
+                     static_cast<double>(t.lateness_max) / 1000.0,
+                     static_cast<double>(t.fetch_gap_max) / 1000.0,
+                     static_cast<double>(t.pts_step_max) / 1000.0,
+                     movie_frames_dropped - t.dropped_at_start);
+            t.window_start = now;
+            t.fetched = 0;
+            t.empty = 0;
+            t.fetch_gap_max = 0;
+            t.pts_step_max = 0;
+            t.first_pts_in_window = pts;
+            t.dropped_at_start = movie_frames_dropped;
+        }
+    }
+
     void GetOutputProperties(HLERequestContext& ctx) {
         std::scoped_lock codec_lock{codec_mutex};
         FefwWaitStats::MarkThread(FefwWaitStats::Role::Video, &ctx.GetThread());
@@ -1124,9 +1195,13 @@ private:
                 properties = output_properties.front();
                 output_properties.pop_front();
                 if (!properties[8]) {
-                    AnchorMovieClock((u64{properties[6]} | (u64{properties[7]} << 32)) / 1000);
+                    const u64 pts_us = (u64{properties[6]} | (u64{properties[7]} << 32)) / 1000;
+                    AnchorMovieClock(pts_us);
+                    RecordFetch(pts_us);
                 }
                 result = ResultSuccess;
+            } else if (result.raw == 0x1c286f) {
+                RecordFetch(std::nullopt);
             }
         }
         {
@@ -1578,6 +1653,23 @@ private:
     s64 movie_last_fetch{};                // Host time (us) of the game's last fetch
     u64 movie_last_fetched_pts{};
     u64 movie_frames_dropped{};
+    // EDEN_VIDEO_TIMING=1: how the frames the game fetches line up with real time (#22).
+    struct FetchTiming {
+        s64 start_host{};       // first fetch of this run of frames (host us)
+        u64 start_pts{};        // its timestamp (us)
+        s64 window_start{};     // host us
+        s64 last_fetch{};       // host us
+        u64 last_pts{};
+        u32 fetched{};
+        u32 empty{};            // the game asked and no frame was ready
+        u64 dropped_at_start{}; // movie_frames_dropped when the window began
+        s64 lateness_min{};
+        s64 lateness_max{};
+        s64 fetch_gap_max{};
+        s64 pts_step_max{};
+        u64 first_pts_in_window{};
+        bool active{};
+    } fetch_timing;
     std::vector<u8> rgba_buffer; // Reused between frames, see PumpOutput.
     std::vector<u8> tiled_buffer;
     std::array<u32, 3> rgba_buffer_shape{};
