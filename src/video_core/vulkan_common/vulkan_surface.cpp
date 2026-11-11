@@ -16,7 +16,8 @@ namespace Vulkan {
 
 vk::SurfaceKHR CreateSurface(
     const vk::Instance& instance,
-    [[maybe_unused]] const Core::Frontend::EmuWindow::WindowSystemInfo& window_info) {
+    [[maybe_unused]] const Core::Frontend::EmuWindow::WindowSystemInfo& window_info,
+    [[maybe_unused]] bool through_streamline) {
     [[maybe_unused]] const vk::InstanceDispatch& dld = instance.Dispatch();
     VkSurfaceKHR unsafe_surface = VkSurfaceKHR{};
 
@@ -28,10 +29,13 @@ vk::SurfaceKHR CreateSurface(
         auto vkCreateWin32SurfaceKHR = reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(
             dld.vkGetInstanceProcAddr(*instance, "vkCreateWin32SurfaceKHR"));
 #ifdef EGLANTINE_STREAMLINE
-        // NVIDIA's frame generation finds the window through the surface (manual hooking: the
-        // surface is made through Streamline's proxy, or its swapchain finds no window).
-        if (void* const proxy = Streamline::HookedFunction("vkCreateWin32SurfaceKHR")) {
-            vkCreateWin32SurfaceKHR = reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(proxy);
+        // NVIDIA's frame generation finds the window through the surface: made through
+        // Streamline's proxy, it records the window (its swapchain finds none otherwise). The
+        // proxy works only once Streamline has the device (it calls through its own table).
+        if (through_streamline) {
+            if (void* const proxy = Streamline::HookedFunction("vkCreateWin32SurfaceKHR")) {
+                vkCreateWin32SurfaceKHR = reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(proxy);
+            }
         }
 #endif
         if (!vkCreateWin32SurfaceKHR ||

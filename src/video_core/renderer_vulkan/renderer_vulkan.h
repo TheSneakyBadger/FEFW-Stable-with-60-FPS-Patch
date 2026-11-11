@@ -76,6 +76,10 @@ private:
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
     /// AMD FSR 3.1 frame generation: presents a frame between the last one and `frame` (when on
     /// and this frame has the game's motion), and paces the two.
+    /// The surface the swapchain is made on: with DLSS frame generation, the window's surface
+    /// made again through Streamline now that it has the device.
+    VkSurfaceKHR SwapchainSurface();
+
     void GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                           u32 presented_height);
 

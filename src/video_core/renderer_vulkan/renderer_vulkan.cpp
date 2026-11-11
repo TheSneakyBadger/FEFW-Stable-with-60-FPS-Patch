@@ -154,7 +154,7 @@ try
     , memory_allocator(device)
     , state_tracker()
     , scheduler(device, state_tracker)
-    , swapchain(*surface,
+    , swapchain(SwapchainSurface(),
                 device,
                 scheduler,
                render_window.GetFramebufferLayout().width,
@@ -291,6 +291,16 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     gpu.RendererFrameEndNotify();
     rasterizer.TickFrame();
+}
+
+VkSurfaceKHR RendererVulkan::SwapchainSurface() {
+#ifdef EGLANTINE_STREAMLINE
+    if (Streamline::IsFrameGenerationAvailable()) {
+        surface = vk::SurfaceKHR{};
+        surface = CreateSurface(instance, render_window.GetWindowInfo(), true);
+    }
+#endif
+    return *surface;
 }
 
 void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
