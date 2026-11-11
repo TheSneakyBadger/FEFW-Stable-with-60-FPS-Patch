@@ -57,8 +57,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, audio_muted, tr("Mute audio"), QString());
     INSERT(Settings, audio_buffer, tr("Audio buffer:"),
            tr("How much sound is queued ahead of your speakers. If the sound crackles or pops, "
-              "try Medium or High: they ride out short hitches, with a little more delay.
-"
+              "try Medium or High: they ride out short hitches, with a little more delay.\n"
               "Takes effect when the game starts."));
     INSERT(Settings, volume, tr("Volume:"), QString());
     INSERT(Settings, dump_audio_commands, QString(), QString());
