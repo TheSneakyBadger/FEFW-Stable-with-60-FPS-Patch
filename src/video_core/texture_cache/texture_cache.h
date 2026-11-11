@@ -143,6 +143,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
     bool aggressive_mode = false;
     bool evict_old_costly = false;
     bool evict_old_gpu = false;
+    bool evict_old_small_gpu = false;
     bool allow_writebacks = true;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
@@ -219,15 +220,24 @@ u32 TextureCache<P>::RunGarbageCollector() {
         writeback_bytes = 0;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &evict_old_gpu, &allow_writebacks, &num_deleted, &num_downloaded,
+                          &evict_old_costly, &evict_old_gpu, &evict_old_small_gpu,
+                          &allow_writebacks, &num_deleted, &num_downloaded,
                           &writebacks,
                           &writeback_bytes, &UsedMemory, &freed_bytes,
                           &target_free](ImageId image_id) {
         if (num_iterations == 0 || (target_free != 0 && freed_bytes >= target_free)) {
             return true;
         }
-        --num_iterations;
         auto& image = slot_images[image_id];
+        // The old-GPU walks free only GPU-drawn images that can't be written back: the rest
+        // (textures above all) don't count against their passes.
+        if (evict_old_gpu &&
+            (False(image.flags & ImageFlagBits::GpuModified) ||
+             True(image.flags & ImageFlagBits::CpuModified) ||
+             (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)))) {
+            return false;
+        }
+        --num_iterations;
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
@@ -250,11 +260,19 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // in two hours on a 16 GB card; on an 8 GB card the hard limit all the time with DLSS
         // failing for lack of memory, issue #31). Those up to 4 MiB were 744 MiB in 203 images
         // eight minutes after boot, most unused for a minute. The sky table is 256 KiB.
-        static constexpr u64 KEEP_GPU_IMAGE_BYTES = 1_MiB;
+        //
+        // Fortune's Eden: up to 256 KiB, not 1 MiB, are kept for good; those up to 1 MiB go once
+        // unused for 5 minutes (evict_old_small_gpu). Kept for good, the ones up to 1 MiB grew all
+        // session: 3.5 GB in 3,700 images after an hour on a 24 GB card, nearly all unused for a
+        // minute, while the cleanup evicted the game's textures instead.
+        static constexpr u64 KEEP_GPU_IMAGE_BYTES = 256_KiB;
+        static constexpr u64 SMALL_GPU_IMAGE_BYTES = 1_MiB;
         const bool keeps_gpu_contents = True(image.flags & ImageFlagBits::GpuModified) &&
                                         False(image.flags & ImageFlagBits::CpuModified) &&
                                         !must_download;
-        if (keeps_gpu_contents && image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES) {
+        if (keeps_gpu_contents && (image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES ||
+                                   (image.guest_size_bytes <= SMALL_GPU_IMAGE_BYTES &&
+                                    !evict_old_small_gpu))) {
             ++num_iterations;
             return false;
         }
@@ -296,6 +314,30 @@ u32 TextureCache<P>::RunGarbageCollector() {
         return false;
     };
     Configure(false);
+    // Large GPU-drawn images that can't be written back, unused for 30 s (EDEN_TC_OLD_GPU_AGE
+    // frames; 0 turns it off), and the small ones unused for 5 minutes go first, from the
+    // collecting level on (see Cleanup). Fortune's Eden: they went only over the expected level,
+    // and after the old textures: those alone covered each pass, so earlier scenes' render
+    // targets were never freed (8.3 GB, 7.4 GB of it unused for a minute, after 23 minutes on a
+    // 24 GB card) and the cache sat at the expected level evicting textures every few seconds
+    // (200 passes of 20-74 ms in an hour).
+    static const u64 old_gpu_age = [] {
+        const char* value = std::getenv("EDEN_TC_OLD_GPU_AGE");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 1800ULL;
+    }();
+    static constexpr u64 OLD_SMALL_GPU_AGE = 18000;
+    if (old_gpu_age != 0) {
+        evict_old_gpu = true;
+        if (frame_tick > OLD_SMALL_GPU_AGE) {
+            evict_old_small_gpu = true;
+            lru_cache.ForEachItemBelow(frame_tick - OLD_SMALL_GPU_AGE, Cleanup);
+            evict_old_small_gpu = false;
+        }
+        if (frame_tick > old_gpu_age) {
+            lru_cache.ForEachItemBelow(frame_tick - old_gpu_age, Cleanup);
+        }
+        evict_old_gpu = false;
+    }
     // Costly images (every converted ASTC texture, so nearly all of Fortune's Weave's) were only
     // collected in the hard mode near the limit: the cache filled up to it with earlier scenes'
     // textures and then collected in bursts (uncompressed at 1x with the ultrawide patch on a 7 GB
@@ -313,17 +355,6 @@ u32 TextureCache<P>::RunGarbageCollector() {
         evict_old_costly = true;
         lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
         evict_old_costly = false;
-    }
-    // Large GPU-drawn images that can't be written back, unused for 30 s (EDEN_TC_OLD_GPU_AGE
-    // frames; 0 turns it off), go next (see Cleanup).
-    static const u64 old_gpu_age = [] {
-        const char* value = std::getenv("EDEN_TC_OLD_GPU_AGE");
-        return value != nullptr ? std::strtoull(value, nullptr, 10) : 1800ULL;
-    }();
-    if (high_priority_mode && old_gpu_age != 0 && frame_tick > old_gpu_age) {
-        evict_old_gpu = true;
-        lru_cache.ForEachItemBelow(frame_tick - old_gpu_age, Cleanup);
-        evict_old_gpu = false;
     }
     // Over the hard level, write back only images unused for 2 s (see below).
     static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
@@ -440,7 +471,7 @@ void TextureCache<P>::TickFrame() {
                 if (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)) {
                     return 0;
                 }
-                return image.guest_size_bytes <= 1_MiB ? 5 : 1;
+                return image.guest_size_bytes <= 1_MiB ? 5 : 1; // 5: up to 1 MiB
             }
             return True(image.flags & ImageFlagBits::CostlyLoad) ? 3 : 4;
         };
