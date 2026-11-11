@@ -411,10 +411,12 @@ struct Values {
     // game starts.
     SwitchableSetting<bool> hdr_output{linkage, false, "hdr_output", Category::Renderer};
     // The HDR reference ("paper") white, in nits, told to a game that asks the display for it
-    // (Fortune's Weave's HDR mode). 203 is BT.2408's; brighter makes the game's HDR picture
-    // brighter where it uses it. Takes effect when the game starts.
+    // (Fortune's Weave's HDR mode). BT.2408's is 203 for any display; 250 is the usual middle of
+    // the 200-300 recommended in games for a 1000-nit display (the peak the game is told), and
+    // brighter than BT.2408 since PC monitors show SDR white brighter. Takes effect when the
+    // game starts.
     SwitchableSetting<int, true> hdr_paper_white{linkage,
-                                                 203,
+                                                 250,
                                                  80,
                                                  500,
                                                  "hdr_paper_white",

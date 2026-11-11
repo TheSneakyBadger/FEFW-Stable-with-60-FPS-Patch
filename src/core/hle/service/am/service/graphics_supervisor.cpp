@@ -1392,7 +1392,7 @@ private:
     }
 
     void GetDisplayState105(HLERequestContext& ctx) {
-        // The player's choice (Settings > Graphics, 203 by default) while the window is HDR.
+        // The player's choice (Settings > Graphics, 250 by default) while the window is HDR.
         const u32 paper_white = Settings::HdrOutputActive()
                                     ? static_cast<u32>(Settings::values.hdr_paper_white.GetValue())
                                     : HdrPaperWhiteNits;
