@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.6.8.1
+
+A quick fix for two frame generation problems in v1.6.8.
+
+#### 🔧 Fixes
+
+- **Frame generation is back in Settings → Graphics.** In v1.6.8 it only showed on the launch screen, so the **Download from NVIDIA** button for NVIDIA's frame generation files was missing too. Choose **NVIDIA DLSS** there to see the button.
+- **No more UI ghosting with HDR on.** With AMD FSR 3.1 frame generation and HDR, the UI moved with the scene and left trails when the camera moved. The UI now stays still, as it does without HDR.
+- **Clearer log when NVIDIA frame generation can't start.** If NVIDIA's frame generation files are missing, the log now names them. Before, it blamed the graphics card or Windows.
+
+Everything else is as in [v1.6.8](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8).
+
 ## v1.6.8
 
 Frame generation (AMD and NVIDIA), the main settings on the launch screen, and video memory that no longer creeps up over long sessions.

@@ -402,7 +402,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.1 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -461,6 +461,11 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
 $fpsText$optionalText
+
+New in v1.6.8.1:
+- Frame generation is back in Settings > Graphics (it only showed on the launch screen), with
+  the "Download from NVIDIA" button for NVIDIA's frame generation files.
+- AMD frame generation with HDR on: the UI no longer ghosts when the camera moves.
 
 New in v1.6.8:
 - Frame generation: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50). The game's UI is kept
