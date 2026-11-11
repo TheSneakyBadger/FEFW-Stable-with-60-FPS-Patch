@@ -5,10 +5,14 @@
 
 namespace Common {
 
-/// Fortune's Eden's release, shown in the window title and written at the top of the log.
-inline constexpr const char* FefwVersion = "v1.6.7.4";
+// One place for the version: the title is built from it, so the two can't disagree (v1.6.7.4's
+// window title still said v1.6.7.3).
+#define FEFW_VERSION_STRING "v1.6.7.4"
 
-/// The window title: "Fortune's Eden v1.6.7.3".
-inline constexpr const char* FefwTitle = "Fortune's Eden v1.6.7.3";
+/// Fortune's Eden's release, shown in the window title and written at the top of the log.
+inline constexpr const char* FefwVersion = FEFW_VERSION_STRING;
+
+/// The window title, e.g. "Fortune's Eden v1.6.7.4".
+inline constexpr const char* FefwTitle = "Fortune's Eden " FEFW_VERSION_STRING;
 
 } // namespace Common
