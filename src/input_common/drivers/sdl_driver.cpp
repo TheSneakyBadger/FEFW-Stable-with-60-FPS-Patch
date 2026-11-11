@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2018 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <numbers>
 #include "common/logging.h"
@@ -696,6 +697,8 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
 
     SDL_AddEventWatch(&SDLEventWatcher, this);
 
+    vibration_thread = std::jthread([this](std::stop_token stop) { VibrationLoop(stop); });
+
     initialized = true;
     // Because the events for joystick connection happens before we have our event watcher added, we
     // can just open all the joysticks right here
@@ -710,6 +713,7 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
 }
 
 SDLDriver::~SDLDriver() {
+    vibration_thread = {}; // Stops and joins it before the joysticks close.
     CloseJoysticks();
     SDL_RemoveEventWatch(&SDLEventWatcher, this);
 
@@ -769,6 +773,9 @@ Common::Input::DriverResult SDLDriver::SetVibration(
     const PadIdentifier& identifier, const Common::Input::VibrationStatus& vibration) {
     const auto joystick =
         GetSDLJoystickByGUID(identifier.guid.RawString(), static_cast<int>(identifier.port));
+    if (!joystick) {
+        return Common::Input::DriverResult::InvalidHandle;
+    }
     const auto process_amplitude_exp = [](f32 amplitude, f32 factor) {
         return (amplitude + std::pow(amplitude, factor)) * 0.5f * 0xFFFF;
     };
@@ -794,9 +801,41 @@ Common::Input::DriverResult SDLDriver::SetVibration(
         .type = Common::Input::VibrationAmplificationType::Exponential,
     };
 
-    joystick->RumblePlay(new_vibration);
+    // Only the latest value per controller matters: one still waiting is replaced.
+    {
+        std::scoped_lock lock{vibration_mutex};
+        const auto same = std::ranges::find_if(pending_vibrations, [&](const PendingVibration& p) {
+            return p.joystick.lock() == joystick;
+        });
+        if (same != pending_vibrations.end()) {
+            same->vibration = new_vibration;
+        } else {
+            pending_vibrations.push_back({joystick, new_vibration});
+        }
+    }
+    vibration_cv.notify_one();
 
     return Common::Input::DriverResult::Success;
+}
+
+void SDLDriver::VibrationLoop(std::stop_token stop) {
+    Common::SetCurrentThreadName("SDL_Vibration");
+    std::vector<PendingVibration> batch;
+    while (!stop.stop_requested()) {
+        {
+            std::unique_lock lock{vibration_mutex};
+            if (!vibration_cv.wait(lock, stop, [this] { return !pending_vibrations.empty(); })) {
+                return;
+            }
+            batch.swap(pending_vibrations);
+        }
+        for (const auto& pending : batch) {
+            if (const auto joystick = pending.joystick.lock()) {
+                joystick->RumblePlay(pending.vibration);
+            }
+        }
+        batch.clear();
+    }
 }
 
 bool SDLDriver::IsVibrationEnabled(const PadIdentifier& identifier) {

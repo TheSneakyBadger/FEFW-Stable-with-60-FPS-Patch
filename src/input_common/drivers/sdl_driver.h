@@ -7,6 +7,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include "common/container/unordered_map.h"
@@ -76,8 +77,11 @@ private:
     /// Needs to be called before SDL_QuitSubSystem.
     void CloseJoysticks();
 
-    /// Takes all vibrations from the queue and sends the command to the controller
-    void SendVibrations();
+    /// Sends the latest vibration of each controller, on the vibration thread. SDL's rumble calls
+    /// write to the controller and take SDL's joystick lock, so made from the emulated input
+    /// thread they held it up (Pro Controller inputs stuttered, doubled or were lost while the
+    /// game rumbled, issue #36).
+    void VibrationLoop(std::stop_token stop);
 
     Common::ParamPackage BuildAnalogParamPackageForButton(int port, const Common::UUID& guid,
                                                           s32 axis, float value = 0.1f) const;
@@ -119,5 +123,14 @@ private:
 
     std::atomic<bool> initialized = false;
     bool start_thread;
+
+    struct PendingVibration {
+        std::weak_ptr<SDLJoystick> joystick;
+        Common::Input::VibrationStatus vibration;
+    };
+    std::mutex vibration_mutex;
+    std::condition_variable_any vibration_cv;
+    std::vector<PendingVibration> pending_vibrations;
+    std::jthread vibration_thread;
 };
 } // namespace InputCommon
