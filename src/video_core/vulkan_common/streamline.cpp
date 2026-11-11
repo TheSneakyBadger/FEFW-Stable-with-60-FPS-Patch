@@ -583,7 +583,14 @@ u64 EvaluateFailures() {
     return evaluate_failures.load(std::memory_order_relaxed);
 }
 
+namespace {
+void ResetFrameGen();
+}
+
 void Stop() {
+    // A game started again in the same session starts Streamline again: its plugins (and the
+    // functions taken from them, and the Reflex options set on them) are new then.
+    ResetFrameGen();
     State& state = GetState();
     if (!state.started) {
         return;
@@ -615,6 +622,10 @@ struct FrameGenRuntime {
 FrameGenRuntime& GetFrameGen() {
     static FrameGenRuntime runtime;
     return runtime;
+}
+
+void ResetFrameGen() {
+    GetFrameGen() = {};
 }
 
 bool LoadFrameGen() {
