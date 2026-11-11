@@ -23,6 +23,13 @@
 #include "audio_core/renderer/splitter/splitter_context.h"
 #include "audio_core/renderer/voice/voice_context.h"
 #include "common/alignment.h"
+#include "common/logging.h"
+#include <cstdlib>
+#include <map>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <fmt/format.h>
 
 namespace AudioCore::Renderer {
 
@@ -275,14 +282,111 @@ void CommandGenerator::GenerateVoiceCommand(VoiceInfo& voice_info) {
     }
 }
 
+namespace {
+// EDEN_AUDIO_VOICE_STATS=1: every 2 s (400 updates), what each renderer's voices did: which
+// played (format, rate, channels, volume, routing) and why the others were skipped. For
+// Fortune's Weave's cutscene dialogue going silent while the music plays (issue #22).
+bool VoiceStatsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_AUDIO_VOICE_STATS");
+        return value != nullptr && value[0] == '1';
+    }();
+    return enabled;
+}
+
+struct VoiceStatsWindow {
+    u32 updates{};
+    u32 max_in_use{};
+    u32 no_buffers{};
+    u32 unmapped_data{};
+    u32 unmapped_buffers{};
+    u32 dropped{};
+    u32 not_generated{};
+    struct Played {
+        std::string description;
+        u32 updates{};
+        f32 min_volume{};
+        f32 max_volume{};
+    };
+    // Voice id -> what it was, how many updates it was mixed in and its volume range.
+    std::map<u32, Played> played;
+};
+
+const char* SampleFormatName(SampleFormat format) {
+    switch (format) {
+    case SampleFormat::PcmInt8:
+        return "pcm8";
+    case SampleFormat::PcmInt16:
+        return "pcm16";
+    case SampleFormat::PcmInt24:
+        return "pcm24";
+    case SampleFormat::PcmInt32:
+        return "pcm32";
+    case SampleFormat::PcmFloat:
+        return "float";
+    case SampleFormat::Adpcm:
+        return "adpcm";
+    default:
+        return "invalid";
+    }
+}
+} // namespace
+
 void CommandGenerator::GenerateVoiceCommands() {
     const auto voice_count{voice_context.GetCount()};
+
+    static std::mutex stats_mutex;
+    static std::unordered_map<const void*, VoiceStatsWindow> stats_by_renderer;
+    VoiceStatsWindow* stats = nullptr;
+    std::unique_lock<std::mutex> stats_lock;
+    if (VoiceStatsEnabled()) {
+        stats_lock = std::unique_lock{stats_mutex};
+        stats = &stats_by_renderer[&voice_context];
+        ++stats->updates;
+    }
+    u32 in_use = 0;
 
     for (u32 i = 0; i < voice_count; i++) {
         auto sorted_info{voice_context.GetSortedInfo(i)};
 
+        if (stats && sorted_info->in_use) {
+            ++in_use;
+            if (sorted_info->wave_buffer_count == 0) {
+                ++stats->no_buffers;
+            } else if (sorted_info->data_unmapped) {
+                ++stats->unmapped_data;
+            } else if (sorted_info->buffer_unmapped) {
+                ++stats->unmapped_buffers;
+            } else if (sorted_info->voice_dropped) {
+                ++stats->dropped;
+            }
+        }
+
         if (sorted_info->ShouldSkip() || !sorted_info->UpdateForCommandGeneration(voice_context)) {
+            if (stats && !sorted_info->ShouldSkip()) {
+                ++stats->not_generated;
+            }
             continue;
+        }
+
+        if (stats) {
+            auto& entry = stats->played[sorted_info->id];
+            if (entry.updates == 0) {
+                entry.min_volume = sorted_info->volume;
+                entry.max_volume = sorted_info->volume;
+                entry.description = fmt::format(
+                    "{}:{}/{}Hz/{}ch/p{}/{}", sorted_info->id,
+                    SampleFormatName(sorted_info->sample_format), sorted_info->sample_rate,
+                    sorted_info->channel_count, sorted_info->priority,
+                    sorted_info->splitter_id != UnusedSplitterId
+                        ? fmt::format("split{}", sorted_info->splitter_id)
+                        : (sorted_info->mix_id != UnusedMixId
+                               ? fmt::format("mix{}", sorted_info->mix_id)
+                               : std::string{"unrouted"}));
+            }
+            ++entry.updates;
+            entry.min_volume = (std::min)(entry.min_volume, sorted_info->volume);
+            entry.max_volume = (std::max)(entry.max_volume, sorted_info->volume);
         }
 
         EntryAspect voice_entry_aspect(*this, PerformanceEntryType::Voice, sorted_info->node_id);
@@ -297,6 +401,25 @@ void CommandGenerator::GenerateVoiceCommands() {
     }
 
     splitter_context.UpdateInternalState();
+
+    if (stats) {
+        stats->max_in_use = (std::max)(stats->max_in_use, in_use);
+        if (stats->updates >= 400) {
+            std::string played;
+            for (const auto& [id, entry] : stats->played) {
+                played += fmt::format(" {}/v{:.2f}-{:.2f}x{}", entry.description,
+                                      entry.min_volume, entry.max_volume, entry.updates);
+            }
+            LOG_INFO(Service_Audio,
+                     "Audio voices, renderer {}, last {} updates: up to {} in use; skipped: no "
+                     "buffers {}, unmapped data {}, unmapped buffers {}, dropped {}, stopped or "
+                     "paused {}; mixed (id:format/rate/channels/priority/route/volume range x updates):{}",
+                     static_cast<const void*>(&voice_context), stats->updates, stats->max_in_use,
+                     stats->no_buffers, stats->unmapped_data, stats->unmapped_buffers,
+                     stats->dropped, stats->not_generated, played.empty() ? " none" : played);
+            *stats = {};
+        }
+    }
 }
 
 void CommandGenerator::GenerateBufferMixerCommand(const s16 buffer_offset,
