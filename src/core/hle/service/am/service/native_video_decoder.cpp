@@ -92,6 +92,21 @@ size_t VideoLookahead() {
     return lookahead;
 }
 
+// EDEN_VIDEO_ASYNC_OUTPUT=0 writes each AV1 frame inside the call that hands its image back, as
+// before. By default an output thread writes it: the game's rendering thread waited in
+// ReleaseImage for the next frame to be decoded, converted and written (~26 ms, up to 170 ms in
+// Fortune's Weave's heavy 1440p cutscenes), which held presentation to 15-19 FPS (issue #22).
+bool AsyncVideoOutput() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_VIDEO_ASYNC_OUTPUT");
+        const bool on = value == nullptr || value[0] != '0';
+        LOG_INFO(Service_AM, "Native video frames are written {}",
+                 on ? "by their own thread" : "in the call that hands back the image");
+        return on;
+    }();
+    return enabled;
+}
+
 // Which AV1 decoder runs the cutscenes: dav1d, unless EDEN_AV1_DECODER=libgav1. Fortune's Weave's
 // 1440p cutscenes are one tile per frame, and libgav1 only splits work across tiles or whole
 // frames, so a heavy frame took ~50 ms on one thread whatever the thread count (issue #22). dav1d
@@ -221,14 +236,18 @@ public:
         RegisterHandlersTipc(functions);
     }
     ~INativeVideoCodec() override {
+        std::scoped_lock codec_lock{codec_mutex};
         Reset();
         if (submission_event) context.CloseEvent(submission_event);
         process->Close(kernel);
     }
 private:
     void Reset() {
-        // Joins the decode worker (requests stop first), so nothing below races with it.
+        // Joins the output and decode workers (requests stop first), so nothing below races with
+        // them. The output worker never waits for codec_mutex (held here), so it sees the stop.
+        StopOutputWorker();
         decode_worker = std::jthread{};
+        deferred_output_error.reset();
         decode_busy = false;
         decode_error.reset();
         pending_inputs.clear();
@@ -283,6 +302,7 @@ private:
     };
 
     void Submit(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         u64 submission_id{};
@@ -304,7 +324,8 @@ private:
                         pending_inputs.push_back({std::vector<u8>{input.begin(), input.end()}, submission_id, timestamp, bool(packet[7] & 0xff)});
                         lock.unlock();
                         decode_cv.notify_all();
-                        result = PumpOutput(/*from_submit=*/true);
+                        result = PumpOutput(/*from_submit=*/true, /*no_wait=*/OutputAsync());
+                        RequestOutput();
                     } else {
                         lock.unlock();
                         if (submission_event) submission_event->Clear(kernel);
@@ -777,7 +798,7 @@ private:
         }
     }
 
-    Result PumpOutput(bool from_submit = false) {
+    Result PumpOutput(bool from_submit = false, bool no_wait = false, bool from_worker = false) {
         while (true) {
             auto image = registered_images.end();
             for (auto it = registered_images.begin(); it != registered_images.end(); ++it)
@@ -807,6 +828,11 @@ private:
                         pending_inputs.size() + av1_in_flight.size() < VideoLookahead()) {
                         break;
                     }
+                }
+                // The output thread (and calls made while it runs) only write frames already decoded:
+                // it writes the rest as they come.
+                if (no_wait && decoded_frames.empty() && !decode_error) {
+                    break;
                 }
                 decode_cv.wait(lock, [&] {
                     return !decoded_frames.empty() || decode_error ||
@@ -974,6 +1000,14 @@ private:
             LOG_DEBUG(Service_AM, "native AV1 output written image={}, dimensions={}x{}, threshold={}",
                       image->id, frame.widths[0], frame.heights[0], image->completion_value);
         }
+        if (!from_worker) {
+            UpdateSubmissionEvent();
+        }
+        R_SUCCEED();
+    }
+
+    // Kernel events are signalled from the service's own thread only (not the output thread).
+    void UpdateSubmissionEvent() {
         if (submission_event) {
             std::unique_lock lock{decode_mutex};
             const bool room = transfer_memory && pending_inputs.size() < MaximumPendingInputs() &&
@@ -982,16 +1016,109 @@ private:
             if (room) submission_event->Signal(kernel);
             else submission_event->Clear(kernel);
         }
+    }
+
+    bool OutputAsync() const {
+        return output_worker.joinable();
+    }
+
+    // The output worker writes decoded frames to the images the game handed back, as soon as
+    // both are there, so ReleaseImage returns at once. It takes codec_mutex only with try_lock:
+    // Reset holds it while joining the worker.
+    void OutputWorker() {
+        Common::SetCurrentThreadName("NativeVideoOutput");
+        std::unique_lock lock{decode_mutex};
+        while (true) {
+            decode_cv.wait(lock, [&] {
+                return output_stop ||
+                       (output_wanted && (!decoded_frames.empty() || decode_error.has_value()));
+            });
+            if (output_stop) {
+                return;
+            }
+            lock.unlock();
+            std::unique_lock codec_lock{codec_mutex, std::try_to_lock};
+            if (!codec_lock.owns_lock()) {
+                std::this_thread::sleep_for(std::chrono::microseconds{200});
+                lock.lock();
+                continue;
+            }
+            const Result result = PumpOutput(false, /*no_wait=*/true, /*from_worker=*/true);
+            if (result.IsError() && !deferred_output_error) {
+                deferred_output_error = result;
+            }
+            const bool images_waiting =
+                result.IsSuccess() &&
+                std::ranges::any_of(registered_images, &RegisteredImage::available);
+            lock.lock();
+            output_wanted = images_waiting;
+            codec_lock.unlock();
+        }
+    }
+
+    void StartOutputWorker() {
+        if (!AsyncVideoOutput() || h264_context || output_worker.joinable()) {
+            return;
+        }
+        {
+            std::scoped_lock lock{decode_mutex};
+            output_stop = false;
+            output_wanted = false;
+        }
+        output_worker = std::thread{[this] { OutputWorker(); }};
+    }
+
+    void StopOutputWorker() {
+        if (!output_worker.joinable()) {
+            return;
+        }
+        {
+            std::scoped_lock lock{decode_mutex};
+            output_stop = true;
+        }
+        decode_cv.notify_all();
+        output_worker.join();
+        output_wanted = false;
+    }
+
+    // Wakes the output thread to fill any images handed back (it clears this when none are).
+    // Images also come back without ReleaseImage (Flush, Stop), so every call that pumps asks.
+    void RequestOutput() {
+        if (!OutputAsync()) {
+            return;
+        }
+        {
+            std::scoped_lock lock{decode_mutex};
+            output_wanted = true;
+        }
+        decode_cv.notify_all();
+    }
+
+    // Hands an image back for the output thread to fill, and returns an error it met since.
+    Result QueueOutput() {
+        RequestOutput();
+        UpdateSubmissionEvent();
+        if (deferred_output_error) {
+            const Result error = *deferred_output_error;
+            deferred_output_error.reset();
+            return error;
+        }
         R_SUCCEED();
     }
 
     void GetOutputProperties(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         FefwWaitStats::MarkThread(FefwWaitStats::Role::Video, &ctx.GetThread());
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         std::array<u32, 16> properties{};
         if (packet[0] == 0xe5 && packet[1] == 0) {
-            result = PumpOutput();
+            result = PumpOutput(false, /*no_wait=*/OutputAsync());
+            RequestOutput();
+            if (result.IsSuccess() && deferred_output_error) {
+                result = *deferred_output_error;
+                deferred_output_error.reset();
+            }
             if (result.IsSuccess()) result = Result{0x1c286f};
             if (result.raw == 0x1c286f && !output_properties.empty()) {
                 properties = output_properties.front();
@@ -1013,6 +1140,7 @@ private:
     }
 
     void ReleaseImage(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         u64 completion_value{};
@@ -1029,7 +1157,7 @@ private:
                             completion_value = ++next_completion_value;
                             image->completion_value = completion_value;
                             image->available = true;
-                            result = PumpOutput();
+                            result = OutputAsync() ? QueueOutput() : PumpOutput();
                         } else {
                             // Yoshi's second H.264 decoder releases images that were never handed out
                             // (after its first Flush), and Fortune's Weave does it in a loop after
@@ -1039,7 +1167,7 @@ private:
                             // written frame advances the syncpoint by one, in completion order), and
                             // repeated idle releases pushed every fence out of reach, freezing the game.
                             completion_value = image->completion_value;
-                            result = PumpOutput();
+                            result = OutputAsync() ? QueueOutput() : PumpOutput();
                             if ((++idle_releases & 0xfff) == 1) {
                                 LOG_WARNING(Service_AM, "native video release of idle image={} (x{}), fence={}",
                                             packet[2], idle_releases, completion_value);
@@ -1066,6 +1194,7 @@ private:
     }
 
     void RegisterImage(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto image_id = GraphicsSupervisorProtocol::DecodeVideoImageRegistration(
             std::span<const u32>{ctx.CommandBuffer(), IPC::COMMAND_BUFFER_LENGTH});
         Result result = Kernel::ResultInvalidCombination;
@@ -1118,6 +1247,7 @@ private:
     }
 
     void Stop(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0xdf && packet[1] == 0) {
@@ -1161,6 +1291,7 @@ private:
     }
 
     void UnregisterImage(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0xe4 && packet[1] == 8 &&
@@ -1181,6 +1312,7 @@ private:
     }
 
     void Flush(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0x18 && packet[1] == 0) {
@@ -1238,6 +1370,7 @@ private:
     }
 
     void Start(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         if (packet[0] == 0x16 && packet[1] == 0) {
@@ -1263,6 +1396,7 @@ private:
     }
 
     void Configure(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto request = GraphicsSupervisorProtocol::DecodeVideoDecoderConfiguration(
             std::span<const u32>{ctx.CommandBuffer(), IPC::COMMAND_BUFFER_LENGTH});
         Result result = Kernel::ResultInvalidCombination;
@@ -1311,6 +1445,7 @@ private:
     }
 
     void GetSubmissionEvent(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         Result result = Kernel::ResultInvalidCombination;
         Kernel::KReadableEvent* readable{};
@@ -1324,6 +1459,7 @@ private:
     }
 
     void Finalize(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const auto* packet = ctx.CommandBuffer();
         const Result result = packet[0] == 0x83 && packet[1] == 0 ? ResultSuccess : Kernel::ResultInvalidCombination;
         if (result.IsSuccess()) Reset();
@@ -1332,6 +1468,7 @@ private:
     }
 
     void InitializeByTransferMemory(HLERequestContext& ctx) {
+        std::scoped_lock codec_lock{codec_mutex};
         const bool is_200 = ctx.GetCommand() == 200;
         const auto request = is_200
             ? GraphicsSupervisorProtocol::DecodeVideoDecoderInitialization200(
@@ -1409,6 +1546,7 @@ private:
                                     transfer_memory = memory.GetPointerUnsafe();
                                     transfer_memory->Open(kernel);
                                     decode_worker = std::jthread{[this](std::stop_token stop) { DecodeWorker(stop); }};
+                                    StartOutputWorker();
                                     result = ResultSuccess;
                                 }
                             }
@@ -1481,6 +1619,15 @@ private:
     std::deque<PendingInput> av1_in_flight;
     bool av1_decoder_full{}; // libgav1 said kStatusTryAgain: take a frame out before enqueuing
     bool eos_in_progress{}; // The worker is ending the stream (between taking EOS and its frame)
+
+    // Held by every call and by the output worker while it writes a frame.
+    std::mutex codec_mutex;
+    // Output worker (AsyncVideoOutput); output_wanted and output_stop are guarded by decode_mutex,
+    // deferred_output_error by codec_mutex.
+    bool output_wanted{};
+    bool output_stop{};
+    std::optional<Result> deferred_output_error;
+    std::thread output_worker;
 
     std::jthread decode_worker; // Last: stopped and joined first (Reset also joins it).
 };
