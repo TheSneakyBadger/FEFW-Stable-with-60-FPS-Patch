@@ -1400,6 +1400,8 @@ private:
         if (reported.exchange(paper_white) != paper_white) {
             LOG_INFO(Service_AM, "VI2 HDR paper white asked for: {} nits", paper_white);
         }
+        m_paper_white_told = paper_white;
+        m_paper_white_signalled = 0;
         ReplyDisplayState(ctx, 0x79, 3, paper_white);
     }
 
@@ -1535,10 +1537,35 @@ private:
                     m_request_group_events[group]->Signal(kernel);
                 }
             }
+            SignalPaperWhiteChange();
             return std::nullopt;
         });
         system.CoreTiming().ScheduleLoopingEvent(std::chrono::microseconds{16667},
                                                  std::chrono::microseconds{16667}, m_group_tick);
+    }
+
+    // HDR paper white changed in Settings while the game runs: raise the HDR status monitors
+    // (kind 2, command 265), as a display change would, so the game asks again (command 105).
+    // Once per change; checked on the vsync tick (service lock held).
+    void SignalPaperWhiteChange() {
+        if (m_paper_white_told == 0 || !Settings::HdrOutputActive()) {
+            return;
+        }
+        const u32 wanted = static_cast<u32>(Settings::values.hdr_paper_white.GetValue());
+        if (wanted == m_paper_white_told || wanted == m_paper_white_signalled) {
+            return;
+        }
+        m_paper_white_signalled = wanted;
+        u32 signalled = 0;
+        for (size_t group = 0; group < m_request_group_displays.size(); ++group) {
+            if (m_request_group_displays[group] && m_request_group_displays[group]->kind == 2 &&
+                m_request_group_events[group]) {
+                m_request_group_events[group]->Signal(kernel);
+                ++signalled;
+            }
+        }
+        LOG_INFO(Service_AM, "HDR paper white changed to {} nits: {} HDR status monitor(s) told",
+                 wanted, signalled);
     }
 
     void DuplicateRequestGroupEvent(HLERequestContext& ctx) {
@@ -1682,6 +1709,8 @@ private:
     std::shared_ptr<NativeImageRegistry> m_images;
     std::shared_ptr<Core::Timing::EventType> m_release_poll;
     std::shared_ptr<Core::Timing::EventType> m_group_tick;
+    u32 m_paper_white_told{};      ///< The paper white the game was last given (command 105)
+    u32 m_paper_white_signalled{}; ///< A changed value the HDR monitors were raised for
     std::array<ClientState, 16> m_client_states{};
     u32 m_client_slots{};
     std::shared_ptr<VI::IApplicationDisplayService> m_display_service;
