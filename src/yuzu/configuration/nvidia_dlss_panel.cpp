@@ -305,7 +305,7 @@ QString Named(const QString& name, const std::string& version) {
 }
 
 QString PathText(const std::filesystem::path& path) {
-    return QString::fromStdWString(path.wstring());
+    return QString::fromStdString(Common::FS::PathToUTF8String(path));
 }
 
 } // Anonymous namespace
@@ -365,6 +365,15 @@ void NvidiaDlssPanel::showEvent(QShowEvent* event) {
 void NvidiaDlssPanel::Refresh() {
     const Streamline::DlssFiles files = Streamline::FindDlssFiles();
     if (frame_generation) {
+#ifndef _WIN32
+        icon_label->setText(QStringLiteral("<span style=\"color:#d29922\">&#9888;</span>"));
+        status_label->setText(Tr("<b>Windows only:</b> NVIDIA DLSS frame generation requires "
+                                 "NVIDIA Streamline (Windows); AMD FSR 3.1 frame generation is "
+                                 "used on Linux."));
+        download_button->setVisible(false);
+        folder_button->setVisible(false);
+        return;
+#endif
         const std::vector<std::string> missing = Streamline::MissingFrameGenFiles();
         const bool ready = missing.empty();
         QStringList names;
@@ -426,6 +435,90 @@ void NvidiaDlssPanel::Refresh() {
 }
 
 void NvidiaDlssPanel::Download() {
+#ifndef _WIN32
+    if (frame_generation) {
+        return;
+    }
+    const std::filesystem::path folder = Streamline::UserFolder();
+    const auto fail = [this](const std::string& error) {
+        LOG_ERROR(Frontend, "NVIDIA DLSS download failed: {}", error);
+        QMessageBox::warning(this, Tr("NVIDIA DLSS"),
+                             Tr("Could not download NVIDIA's files: %1")
+                                 .arg(QString::fromStdString(error)));
+        Refresh();
+    };
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    const std::filesystem::path target = folder / "libnvidia-ngx-dlss.so.310.9.16";
+    std::filesystem::path partial = target;
+    partial += ".download";
+    QProgressDialog progress(Tr("Downloading NVIDIA DLSS 310.9.16 for Linux..."), Tr("Cancel"), 0,
+                             1000, this);
+    progress.setWindowTitle(Tr("NVIDIA DLSS"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    QApplication::processEvents();
+    httplib::Client client("https://raw.githubusercontent.com");
+    client.set_connection_timeout(30);
+    client.set_read_timeout(60);
+    client.set_write_timeout(30);
+#ifdef YUZU_BUNDLED_OPENSSL
+    client.load_ca_cert_store(kCert, sizeof(kCert));
+#endif
+    std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        progress.close();
+        fail("could not write " + Common::FS::PathToUTF8String(partial));
+        return;
+    }
+    u64 received = 0;
+    bool write_failed = false;
+    constexpr u64 expected_size = 59481944;
+    const auto res = client.Get(
+        "/NVIDIA/DLSS/v310.9.16/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.310.9.16",
+        [&](const char* data, size_t len) {
+            if (!file.write(data, static_cast<std::streamsize>(len))) {
+                write_failed = true;
+                return false;
+            }
+            received += len;
+            progress.setValue(static_cast<int>(std::min<u64>(received * 1000 / expected_size, 999)));
+            QApplication::processEvents();
+            return !progress.wasCanceled();
+        });
+    file.close();
+    progress.close();
+    if (write_failed || !file) {
+        std::filesystem::remove(partial, ec);
+        fail("could not write " + Common::FS::PathToUTF8String(partial));
+        return;
+    }
+    if (!res || res->status != 200) {
+        std::filesystem::remove(partial, ec);
+        if (!progress.wasCanceled()) {
+            fail(res ? fmt::format("HTTP {}", res->status) : httplib::to_string(res.error()));
+        }
+        return;
+    }
+    if (!Streamline::IsSignedByNvidia(partial)) {
+        std::filesystem::remove(partial, ec);
+        fail("libnvidia-ngx-dlss.so.310.9.16 failed SHA-256 verification");
+        return;
+    }
+    std::filesystem::rename(partial, target, ec);
+    if (ec) {
+        std::filesystem::remove(partial, ec);
+        fail("could not save " + Common::FS::PathToUTF8String(target));
+        return;
+    }
+    LOG_INFO(Frontend, "Downloaded and verified {} from NVIDIA's DLSS v310.9.16 tag",
+             Common::FS::PathToUTF8String(target));
+    Refresh();
+    QMessageBox::information(this, Tr("NVIDIA DLSS"),
+                             Tr("NVIDIA DLSS is ready. It is used the next time a game starts."));
+    return;
+#else
     const Streamline::DlssFiles files = Streamline::FindDlssFiles();
     std::vector<std::string> wanted;
     if (frame_generation) {
@@ -557,7 +650,7 @@ void NvidiaDlssPanel::Download() {
         done += entries[i]->compressed;
         const std::filesystem::path target = folder / std::filesystem::path{wanted[i]}.filename();
         std::filesystem::path partial = target;
-        partial += L".download";
+        partial += ".download";
         {
             std::ofstream file(partial, std::ios::binary | std::ios::trunc);
             file.write(contents->data(), static_cast<std::streamsize>(contents->size()));
@@ -598,6 +691,7 @@ void NvidiaDlssPanel::Download() {
                                       "time a game starts.")
                                  : Tr("NVIDIA DLSS is ready. It is used the next time a game "
                                       "starts."));
+#endif
 }
 
 #endif

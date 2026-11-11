@@ -25,12 +25,19 @@
 #include "video_core/vulkan_common/streamline.h"
 #include "video_core/vulkan_common/streamline_api.h"
 
+#ifdef _WIN32
 #include <sl_security.h>
 
 #include <softpub.h>
 #include <wintrust.h>
+#else
+#include <dlfcn.h>
+#include <fstream>
+#include <openssl/evp.h>
+#endif
 
 namespace Vulkan::Streamline {
+#ifdef _WIN32
 namespace {
 
 // A custom engine names itself with its own project id; an application id from NVIDIA is only
@@ -880,4 +887,398 @@ void FrameGenPresentEnd(u64 index, bool tagged) {
     }
 }
 
+#else // !_WIN32
+
+namespace {
+
+constexpr const char* PROJECT_ID = "8d3e2f9a-6b41-4c7e-9a52-1f0c3b7d5e64";
+// SHA-256 of libnvidia-ngx-dlss.so.310.9.16 from https://github.com/NVIDIA/DLSS/tree/v310.9.16
+constexpr std::string_view DLSS_310_9_16_SHA256 =
+    "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6";
+
+struct LinuxState {
+    void* module{};
+    NgxApi api{};
+    std::wstring plugin_dir;
+    std::wstring app_data_dir;
+    std::vector<std::string> instance_extensions;
+    std::vector<std::string> device_extensions;
+    VkDevice device{};
+    NgxParameter* params{};
+    bool started{};
+    bool attached{};
+};
+
+LinuxState& GetState() {
+    static LinuxState state;
+    return state;
+}
+
+std::atomic<u64> evaluate_failures{0};
+
+std::string FileSha256Hex(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return {};
+    }
+    EVP_MD_CTX* const ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        return {};
+    }
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return {};
+    }
+    std::array<char, 65536> buf{};
+    while (file.read(buf.data(), static_cast<std::streamsize>(buf.size())) || file.gcount() > 0) {
+        if (EVP_DigestUpdate(ctx, buf.data(), static_cast<size_t>(file.gcount())) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return {};
+        }
+    }
+    std::array<unsigned char, EVP_MAX_MD_SIZE> hash{};
+    unsigned int len = 0;
+    if (EVP_DigestFinal_ex(ctx, hash.data(), &len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return {};
+    }
+    EVP_MD_CTX_free(ctx);
+    std::string hex;
+    hex.reserve(len * 2);
+    for (unsigned int i = 0; i < len; ++i) {
+        hex += fmt::format("{:02x}", hash[i]);
+    }
+    return hex;
+}
+
+std::vector<std::filesystem::path> SearchDirs() {
+    std::vector<std::filesystem::path> dirs;
+    if (const char* const dir = std::getenv("EDEN_STREAMLINE_DIR"); dir && *dir) {
+        dirs.emplace_back(dir);
+    }
+    dirs.push_back(UserFolder());
+    std::error_code ec;
+    if (const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec); !ec) {
+        dirs.push_back(exe.parent_path());
+        dirs.push_back(exe.parent_path() / "streamline");
+    }
+    if (const char* appimage = std::getenv("APPIMAGE"); appimage && *appimage) {
+        dirs.push_back(std::filesystem::path{appimage}.parent_path());
+        dirs.push_back(std::filesystem::path{appimage}.parent_path() / "streamline");
+    }
+    dirs.push_back(std::filesystem::current_path());
+    return dirs;
+}
+
+std::filesystem::path FindLinuxDlssSo(const std::filesystem::path& dir, std::string& version_out) {
+    std::error_code ec;
+    std::filesystem::path best;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file(ec) && !entry.is_symlink(ec)) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        if (name.starts_with("libnvidia-ngx-dlss.so") && !name.ends_with(".download")) {
+            if (!IsSignedByNvidia(entry.path())) {
+                continue;
+            }
+            best = entry.path();
+            const std::string prefix = "libnvidia-ngx-dlss.so.";
+            if (name.size() > prefix.size()) {
+                version_out = name.substr(prefix.size());
+            } else {
+                version_out = "310";
+            }
+            break;
+        }
+    }
+    return best;
+}
+
+template <typename T>
+bool Resolve(void* module, const char* name, T& fn) {
+    fn = reinterpret_cast<T>(dlsym(module, name));
+    if (!fn) {
+        LOG_ERROR(Render_Vulkan, "libnvidia-ngx.so.1 has no {}", name);
+    }
+    return fn != nullptr;
+}
+
+bool LoadNgx(LinuxState& state, const std::filesystem::path& path) {
+    if (state.module) {
+        return true;
+    }
+    state.module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!state.module) {
+        state.module = dlopen("libnvidia-ngx.so.1", RTLD_NOW | RTLD_LOCAL);
+    }
+    if (!state.module) {
+        LOG_ERROR(Render_Vulkan, "Could not load libnvidia-ngx.so.1 ({})",
+                  dlerror() ? dlerror() : "unknown");
+        return false;
+    }
+    NgxApi& api = state.api;
+    void* const m = state.module;
+    if (Resolve(m, "NVSDK_NGX_VULKAN_Init_ProjectID_Ext", api.init_project_id_ext) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_Shutdown1", api.shutdown1) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_GetCapabilityParameters", api.get_capability_parameters) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_DestroyParameters", api.destroy_parameters) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_CreateFeature1", api.create_feature1) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_EvaluateFeature", api.evaluate_feature) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_ReleaseFeature", api.release_feature) &&
+        Resolve(m, "NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements",
+                api.get_instance_exts)) {
+        return true;
+    }
+    dlclose(state.module);
+    state.module = nullptr;
+    state.api = {};
+    return false;
+}
+
+void LogFromNgx(const char* message, NgxLoggingLevel level, NgxFeature /*source*/) {
+    std::string_view text{message ? message : ""};
+    if (text.find("evaluate feature failed") != std::string_view::npos) {
+        evaluate_failures.fetch_add(1, std::memory_order_relaxed);
+    }
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+        text.remove_suffix(1);
+    }
+    if (level == NgxLoggingLevel::On) {
+        LOG_INFO(Render_Vulkan, "NGX: {}", text);
+    }
+}
+
+} // Anonymous namespace
+
+std::filesystem::path UserFolder() {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::StreamlineDir);
+}
+
+std::vector<std::string> MissingFrameGenFiles() {
+    return {};
+}
+
+bool IsStreamlineModule(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
+}
+
+bool IsSignedByNvidia(const std::filesystem::path& path) {
+    return FileSha256Hex(path) == DLSS_310_9_16_SHA256;
+}
+
+DlssFiles FindDlssFiles() {
+    DlssFiles files;
+    files.folder = UserFolder();
+    std::error_code ec;
+    for (const char* p : {"/usr/lib/libnvidia-ngx.so.1", "/usr/lib64/libnvidia-ngx.so.1",
+                          "/usr/lib/x86_64-linux-gnu/libnvidia-ngx.so.1"}) {
+        if (std::filesystem::exists(p, ec)) {
+            files.interposer = p;
+            files.interposer_version = "NGX";
+            break;
+        }
+    }
+    if (files.interposer.empty()) {
+        if (void* h = dlopen("libnvidia-ngx.so.1", RTLD_LAZY | RTLD_LOCAL)) {
+            dlclose(h);
+            files.interposer = "/usr/lib/libnvidia-ngx.so.1";
+            files.interposer_version = "NGX";
+        }
+    }
+    for (const std::filesystem::path& dir : SearchDirs()) {
+        std::string ver;
+        const auto so = FindLinuxDlssSo(dir, ver);
+        if (!so.empty()) {
+            files.folder = dir;
+            files.model = so;
+            files.model_version = ver;
+            break;
+        }
+    }
+    return files;
+}
+
+bool Start() {
+    LinuxState& state = GetState();
+    if (state.started) {
+        return true;
+    }
+    if (Settings::values.upscaler.GetValue() != Settings::Upscaler::NvidiaDlss) {
+        return false;
+    }
+    const DlssFiles files = FindDlssFiles();
+    if (files.interposer.empty()) {
+        LOG_WARNING(Render_Vulkan,
+                    "NVIDIA DLSS is on, but libnvidia-ngx.so.1 from the NVIDIA driver was not found");
+        return false;
+    }
+    if (files.model.empty()) {
+        LOG_WARNING(Render_Vulkan,
+                    "NVIDIA DLSS is on, but verified libnvidia-ngx-dlss.so.310.9.16 is not in {} "
+                    "(the Graphics settings can download it); fallback upscaler runs",
+                    Common::FS::PathToUTF8String(files.folder));
+        return false;
+    }
+    if (!LoadNgx(state, files.interposer)) {
+        return false;
+    }
+    state.plugin_dir = std::filesystem::absolute(files.folder).wstring();
+    state.app_data_dir = std::filesystem::absolute(UserFolder()).wstring();
+    std::error_code ec;
+    std::filesystem::create_directories(UserFolder(), ec);
+
+    const wchar_t* paths[] = {state.plugin_dir.c_str()};
+    NgxFeatureCommonInfo common{};
+    common.path_list.path = paths;
+    common.path_list.length = 1;
+
+    NgxFeatureDiscoveryInfo disc{};
+    disc.sdk_version = 0x0000015u;
+    disc.feature_id = NgxFeature::SuperSampling;
+    disc.identifier_type = 1; // ProjectId
+    disc.project_id = PROJECT_ID;
+    disc.engine_type = 0; // CUSTOM
+    disc.engine_version = "1.0";
+    disc.app_data_path = state.app_data_dir.c_str();
+    disc.feature_info = &common;
+
+    uint32_t inst_count = 0;
+    VkExtensionProperties* inst_exts = nullptr;
+    state.instance_extensions.clear();
+    if (state.api.get_instance_exts &&
+        NgxSucceeded(state.api.get_instance_exts(&disc, &inst_count, &inst_exts)) &&
+        inst_count > 0 && inst_exts) {
+        for (uint32_t i = 0; i < inst_count; ++i) {
+            state.instance_extensions.emplace_back(inst_exts[i].extensionName);
+        }
+    } else {
+        state.instance_extensions = {VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME};
+    }
+    state.device_extensions = {
+        "VK_NVX_binary_import",
+        "VK_NVX_image_view_handle",
+        VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+    };
+    LOG_INFO(Render_Vulkan, "NVIDIA NGX DLSS {} prepared from {}", files.model_version,
+             Common::FS::PathToUTF8String(files.folder));
+    state.started = true;
+    return true;
+}
+
+void* HookedFunction(const char* /*name*/) {
+    return nullptr;
+}
+
+bool WantsDevice() {
+    const LinuxState& state = GetState();
+    return state.started && !state.attached;
+}
+
+std::vector<std::string> InstanceExtensions() {
+    const LinuxState& state = GetState();
+    return state.started ? state.instance_extensions : std::vector<std::string>{};
+}
+
+std::vector<std::string> DeviceExtensions() {
+    const LinuxState& state = GetState();
+    return state.started ? state.device_extensions : std::vector<std::string>{};
+}
+
+bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice device,
+                  u32 /*graphics_family*/, vk::DeviceDispatch& dld) {
+    LinuxState& state = GetState();
+    if (!WantsDevice()) {
+        return false;
+    }
+    const wchar_t* paths[] = {state.plugin_dir.c_str()};
+    NgxFeatureCommonInfo common{};
+    common.path_list.path = paths;
+    common.path_list.length = 1;
+    common.logging.callback = LogFromNgx;
+    common.logging.min_level = NgxLoggingLevel::On;
+
+    const NgxResult res = state.api.init_project_id_ext(
+        PROJECT_ID, 0u, "1.0", state.app_data_dir.c_str(), instance, physical, device,
+        dld.vkGetInstanceProcAddr, dld.vkGetDeviceProcAddr, 0x0000015u, &common);
+    if (NgxFailed(res)) {
+        LOG_ERROR(Render_Vulkan, "NVSDK_NGX_VULKAN_Init_ProjectID_Ext failed (0x{:x})", res);
+        state.started = false;
+        return false;
+    }
+    if (NgxFailed(state.api.get_capability_parameters(&state.params)) || !state.params) {
+        LOG_ERROR(Render_Vulkan, "NVSDK_NGX_VULKAN_GetCapabilityParameters failed");
+        int ref_count = 0;
+        state.api.shutdown1(device, &ref_count);
+        state.started = false;
+        return false;
+    }
+    int available = 0;
+    state.params->GetI("SuperSampling.Available", &available);
+    if (!available) {
+        LOG_WARNING(Render_Vulkan, "NVIDIA NGX reports SuperSampling is not available on this GPU");
+        state.api.destroy_parameters(state.params);
+        state.params = nullptr;
+        int ref_count = 0;
+        state.api.shutdown1(device, &ref_count);
+        state.started = false;
+        return false;
+    }
+    state.device = device;
+    state.attached = true;
+    LOG_INFO(Render_Vulkan, "NVIDIA DLSS is available through runtime Linux NGX");
+    return true;
+}
+
+bool IsDlssAvailable() {
+    const LinuxState& state = GetState();
+    return state.started && state.attached;
+}
+
+bool IsFrameGenerationAvailable() {
+    return false;
+}
+
+ExtraQueues GetExtraQueues() {
+    return {};
+}
+
+u64 EvaluateFailures() {
+    return evaluate_failures.load(std::memory_order_relaxed);
+}
+
+void Stop() {
+    LinuxState& state = GetState();
+    if (!state.started) {
+        return;
+    }
+    if (state.attached) {
+        if (state.params) {
+            state.api.destroy_parameters(state.params);
+            state.params = nullptr;
+        }
+        int ref_count = 0;
+        state.api.shutdown1(state.device, &ref_count);
+        state.device = VK_NULL_HANDLE;
+    }
+    state.started = false;
+    state.attached = false;
+    LOG_INFO(Render_Vulkan, "NVIDIA Linux NGX stopped");
+}
+
+const NgxApi& GetNgxApi() {
+    return GetState().api;
+}
+
+NgxParameter* GetNgxParameters() {
+    return GetState().params;
+}
+
+void FrameGenTagFrame(VkCommandBuffer /*cmdbuf*/, const FrameGenInputs& /*inputs*/) {}
+void FrameGenPresentStart(u64 /*index*/, bool /*tagged*/) {}
+void FrameGenPresentEnd(u64 /*index*/, bool /*tagged*/) {}
+
+#endif // _WIN32
 } // namespace Vulkan::Streamline

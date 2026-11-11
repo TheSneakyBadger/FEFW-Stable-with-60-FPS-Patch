@@ -37,6 +37,17 @@
 #undef False
 #undef None
 #undef True
+#undef Unsorted
+#undef Success
+#undef Status
+#undef Bool
+#undef CursorShape
+#undef KeyPress
+#undef KeyRelease
+#undef FocusIn
+#undef FocusOut
+#undef FontChange
+#undef Expose
 
 // "Catch-all" handle for both Android and.. the rest of platforms
 struct VkSurfaceKHR_T;
