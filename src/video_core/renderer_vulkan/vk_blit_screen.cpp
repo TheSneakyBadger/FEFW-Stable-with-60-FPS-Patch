@@ -128,7 +128,8 @@ void BlitScreen::DrawToFrame(const Device& device, RasterizerVulkan& rasterizer,
 
     // Frame generation reads and writes the frames through storage views.
     const bool storage_required = Settings::values.frame_gen.GetValue() ||
-                                  Settings::values.fsr_frame_generation.GetValue();
+                                  (Settings::values.fsr_frame_generation.GetValue() ||
+                                   Settings::values.dlss_frame_generation.GetValue());
     if (resource_update_required) {
         WaitIdle(device);
         SetWindowAdaptPass(device);

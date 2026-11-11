@@ -123,6 +123,7 @@ private:
     u32 fsr_fg_late{};    ///< Presented after the game had started its next frame.
     u32 fsr_fg_unknown{}; ///< The presented buffer wasn't seen being drawn.
     u32 fsr_fg_fallback{}; ///< Its frame wasn't prepared: the newest prepared one was used.
+    u64 dlssg_index{};     ///< NVIDIA DLSS frame generation: the last frame index presented.
     f32 fsr_fg_wait_ms{};
     f32 fsr_fg_minute_wait_ms{};
 

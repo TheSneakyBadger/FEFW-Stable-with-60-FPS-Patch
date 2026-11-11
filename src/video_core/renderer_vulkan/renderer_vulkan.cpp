@@ -296,6 +296,8 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                                       u32 presented_height) {
     frame->present_delay = {};
+    frame->sl_frame_gen = false;
+    frame->sl_tagged = false;
     Fsr3FrameGenerator* const generator = rasterizer.FrameGenerator();
     if (!generator) {
         fsr_fg_last_composite.reset();
@@ -373,6 +375,76 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         fsr_fg_late += game_frame.previous ? 1 : 0;
         fsr_fg_unknown += game_frame.known ? 0 : 1;
     }
+#ifdef EGLANTINE_STREAMLINE
+    // NVIDIA DLSS frame generation: its present makes and paces the frame; this frame's inputs
+    // are tagged for it (the frame without its UI, the UI's coverage, depth and motion).
+    if (Settings::values.dlss_frame_generation.GetValue() &&
+        Streamline::IsFrameGenerationAvailable()) {
+        frame->sl_frame_gen = true;
+        frame->sl_index = ++dlssg_index;
+        if (!prepared || !frame->storage_view) {
+            ++fsr_fg_skipped;
+            generator->Skip(game_frame.seq);
+            return;
+        }
+        const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+        const s32 left = static_cast<s32>((std::min)(layout.screen.left, frame->width));
+        const s32 top = static_cast<s32>((std::min)(layout.screen.top, frame->height));
+        const u32 width =
+            (std::min)(layout.screen.GetWidth(), frame->width - static_cast<u32>(left));
+        const u32 height =
+            (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
+        const VkFormat format = present_manager.SwapchainImageFormat();
+        const u32 transfer_function = format == VK_FORMAT_A2B10G10R10_UNORM_PACK32   ? 1U
+                                      : format == VK_FORMAT_R16G16B16A16_SFLOAT ? 2U
+                                                                                : 0U;
+        const bool late = game_frame.previous;
+        generator->Generate({
+            .current_image = *frame->image,
+            .current_view = *frame->storage_view,
+            .output_image = VK_NULL_HANDLE,
+            .output_view = VK_NULL_HANDLE,
+            .format = format,
+            .display_size = {frame->width, frame->height},
+            .interpolation_rect = {.offset = {left, top}, .extent = {width, height}},
+            .frame_time_ms = fsr_fg_interval_ms,
+            .reset = false,
+            .transfer_function = transfer_function,
+            .min_max_luminance = {0.0f, 1000.0f},
+            .ui_layers = game_frame.layers,
+            .show_ui_mask = false,
+            .seq = game_frame.seq,
+            .late = late,
+            .show_ui_less = false,
+            .dlss = true,
+        });
+        const Fsr3FrameGenerator::DlssImages& images = generator->LastDlssImages();
+        const auto image = [](const Fsr3FrameGenerator::Image& in) {
+            return Streamline::FrameGenImage{in.image, in.view, in.format, in.size};
+        };
+        const Streamline::FrameGenInputs inputs{
+            .index = frame->sl_index,
+            .depth = image(images.depth),
+            .motion_vectors = image(images.motion_vectors),
+            .hudless = image(images.hudless),
+            .ui_alpha = image(images.ui_alpha),
+            .backbuffer_rect = {.offset = {left, top}, .extent = {width, height}},
+            .jitter = images.jitter,
+            .reset = images.reset,
+        };
+        scheduler.Record([inputs](vk::CommandBuffer cmdbuf) {
+            Streamline::FrameGenTagFrame(*cmdbuf, inputs);
+        });
+        // Streamline records its own copies and state on the command buffer.
+        scheduler.InvalidateState();
+        frame->sl_tagged = true;
+        ++fsr_fg_made;
+        if (++fsr_fg_generated == 1) {
+            LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation: first frame tagged");
+        }
+        return;
+    }
+#endif
     const bool wanted = prepared && frame->storage_view &&
                         fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
     if (!wanted) {

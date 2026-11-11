@@ -33,6 +33,8 @@ layout(set = 0, binding = 6, std140) uniform Constants {
     uint layer_count;
     uint mode;
 } c;
+// Mode 0: the UI's coverage (0 where none; widened), for NVIDIA's frame generation.
+layout(set = 0, binding = 7) uniform image2D ui_alpha;
 layout(set = 0, binding = 1000) uniform sampler linear_sampler;
 
 // Where the UI (widened by a couple of texels) covers more than this, the scene isn't taken from
@@ -125,6 +127,7 @@ void main() {
     if (any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, c.rect_size))) {
         if (c.mode == 0) {
             imageStore(target, pos, current);
+            imageStore(ui_alpha, pos, vec4(0.0));
         }
         return;
     }
@@ -147,6 +150,7 @@ void main() {
     const float share = clamp(ui.a, 1.0 - SOLID, 1.0);
 
     if (c.mode == 0) {
+        imageStore(ui_alpha, pos, vec4(widened < c.threshold ? 0.0 : clamp(widened, 0.0, 1.0)));
         if (widened < c.threshold) {
             imageStore(target, pos, current);
             return;

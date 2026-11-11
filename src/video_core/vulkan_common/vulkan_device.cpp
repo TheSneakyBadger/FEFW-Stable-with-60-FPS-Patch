@@ -1796,22 +1796,47 @@ void Device::CollectToolingInfo() {
 }
 
 std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
-    static constexpr float QUEUE_PRIORITY = 1.0f;
+    static constexpr std::array<float, 16> QUEUE_PRIORITIES{
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+
+    // NVIDIA Streamline's features may want queues of their own in the graphics family, after
+    // the emulator's (DLSS frame generation).
+    u32 graphics_queues = 1;
+#ifdef EGLANTINE_STREAMLINE
+    if (Streamline::WantsDevice()) {
+        const Streamline::ExtraQueues extra = Streamline::GetExtraQueues();
+        const u32 wanted = 1 + extra.graphics + extra.compute;
+        const std::vector queue_family_properties = physical.GetQueueFamilyProperties();
+        const u32 available =
+            graphics_family < queue_family_properties.size()
+                ? queue_family_properties[graphics_family].queueCount
+                : 1;
+        if (wanted > 1 && wanted <= (std::min)(available, static_cast<u32>(QUEUE_PRIORITIES.size()))) {
+            graphics_queues = wanted;
+            LOG_INFO(Render_Vulkan, "NVIDIA Streamline: {} extra graphics-family queues",
+                     wanted - 1);
+        } else if (wanted > 1) {
+            LOG_WARNING(Render_Vulkan,
+                        "NVIDIA Streamline wants {} extra queues; the graphics family has {}",
+                        wanted - 1, available);
+        }
+    }
+#endif
 
     ::Common::unordered_set<u32> unique_queue_families{graphics_family, present_family};
     std::vector<VkDeviceQueueCreateInfo> queue_cis;
     queue_cis.reserve(unique_queue_families.size());
 
     for (const u32 queue_family : unique_queue_families) {
-        auto& ci = queue_cis.emplace_back(VkDeviceQueueCreateInfo{
+        queue_cis.push_back(VkDeviceQueueCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .queueFamilyIndex = queue_family,
-            .queueCount = 1,
-            .pQueuePriorities = nullptr,
+            .queueCount = queue_family == graphics_family ? graphics_queues : 1U,
+            .pQueuePriorities = QUEUE_PRIORITIES.data(),
         });
-        ci.pQueuePriorities = &QUEUE_PRIORITY;
     }
 
     return queue_cis;

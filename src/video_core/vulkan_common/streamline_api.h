@@ -12,6 +12,9 @@
 
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_g.h>
+#include <sl_pcl.h>
+#include <sl_reflex.h>
 #include <sl_helpers_vk.h>
 
 namespace Vulkan::Streamline {
@@ -28,6 +31,7 @@ struct Api {
     PFun_slEvaluateFeature* evaluate_feature{};
     PFun_slFreeResources* free_resources{};
     PFun_slSetVulkanInfo* set_vulkan_info{};
+    PFun_slSetTagForFrame* set_tag_for_frame{};
 };
 
 /// The loaded functions; only valid while IsDlssAvailable().

@@ -41,6 +41,11 @@ struct Frame {
     bool storage_capable{};
     /// Frame generation's pacing: present no sooner than this after the previous frame.
     std::chrono::nanoseconds present_delay{};
+    /// NVIDIA DLSS frame generation: the present is marked with this frame index, and runs
+    /// frame generation when the frame's inputs were tagged.
+    bool sl_frame_gen{};
+    bool sl_tagged{};
+    u64 sl_index{};
 };
 
 class PresentManager {
@@ -87,6 +92,9 @@ private:
     void DiscardFrame(Frame* frame);
 
     void SetImageCount();
+
+    /// Copies to the swapchain and presents, with DLSS frame generation's present markers.
+    void PresentMarked(Frame* frame);
 
     /// Waits out frame->present_delay after the previous present.
     void Pace(const Frame* frame);

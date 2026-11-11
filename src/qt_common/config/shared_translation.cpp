@@ -214,6 +214,13 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "movies don't have. Adds about half a frame of input delay.\nNeeds a display "
               "faster than the game's frame rate (120 Hz or more for 60 FPS). Any graphics card; "
               "works with any upscaler. Experimental."));
+    INSERT(Settings, dlss_frame_generation, tr("Frame generation (NVIDIA DLSS)"),
+           tr("NVIDIA's frame generation in place of AMD's: GeForce RTX 40 and 50 cards, with "
+              "NVIDIA Streamline's DLLs (sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, "
+              "sl.reflex.dll, sl.pcl.dll) and nvngx_dlssg.dll in the user folder's streamline "
+              "folder.
+Works with any upscaler. Where it can't run, AMD's frame generation is "
+              "used if that is on. Takes effect when a game starts. Experimental."));
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));

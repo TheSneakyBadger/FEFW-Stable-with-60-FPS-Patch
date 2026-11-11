@@ -56,6 +56,9 @@ public:
         u64 seq;           ///< Which of the game's frames this is (its Prepare).
         bool late;         ///< Presented after the next frame started (ui_layers unusable).
         bool show_ui_less; ///< Testing: writes the frame without its UI instead.
+        /// NVIDIA's frame generation makes the frame: only the UI-less frame and the UI's
+        /// coverage are made (see LastDlssImages); the output is unused.
+        bool dlss;
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,
@@ -94,6 +97,25 @@ public:
             }
         }
         return newest;
+    }
+
+    struct Image {
+        VkImage image{};
+        VkImageView view{};
+        VkFormat format{VK_FORMAT_UNDEFINED};
+        VkExtent2D size{};
+    };
+    /// What the last Generate with dlss made, for NVIDIA's frame generation.
+    struct DlssImages {
+        Image depth;          ///< Reversed device depth, render size.
+        Image motion_vectors; ///< UV units, render size.
+        Image hudless;
+        Image ui_alpha;
+        std::array<f32, 2> jitter{};
+        bool reset{};
+    };
+    [[nodiscard]] const DlssImages& LastDlssImages() const noexcept {
+        return dlss_images;
     }
 
     /// No frame is generated for frame seq: the next generation starts over.
@@ -153,7 +175,12 @@ private:
     // Display size.
     Texture inpainting_pyramid;
     Texture previous_source;
-    Texture ui_less; ///< This frame without the game's UI (what frame generation works on).
+    /// The frame without the game's UI (what frame generation works on), and the UI's coverage,
+    /// for the last few frames (NVIDIA's frame generation reads them when the frame is presented).
+    std::array<Texture, KEPT_FRAMES> ui_less;
+    std::array<Texture, KEPT_FRAMES> ui_alpha;
+    u64 ui_ring_next{};
+    Texture no_ui; ///< 1x1, alpha 1: a UI layer without UI.
     // Copies of the game's UI layer, by seq % KEPT_FRAMES.
     struct UiCopy {
         vk::Image image;
@@ -194,6 +221,7 @@ private:
     VkExtent2D render_extent{};
     VkExtent2D display_extent{};
     VkFormat display_format{VK_FORMAT_UNDEFINED};
+    DlssImages dlss_images;
     u32 flow_frame_index{};
     u32 flow_parity{};
     bool render_resources_new{true};

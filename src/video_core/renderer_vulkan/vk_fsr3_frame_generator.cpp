@@ -140,7 +140,7 @@ constexpr auto SEARCH = Sequential(std::array{T, T, I, I, U});
 constexpr auto FILTER = Sequential(std::array{T, I, U});
 constexpr auto SCALE = Sequential(std::array{T, T, T, I, I, U});
 // The UI mask (vulkan_fsr3_fg_ui_mask.comp; linear clamp sampler at 1000).
-constexpr auto UI_MASK = Sequential(std::array{T, T, T, T, T, I, U});
+constexpr auto UI_MASK = Sequential(std::array{T, T, T, T, T, I, U, I});
 
 struct UiMaskConstants {
     std::array<s32, 2> rect_base;
@@ -398,6 +398,7 @@ Fsr3FrameGenerator::Fsr3FrameGenerator(const Device& device_, Scheduler& schedul
     passes[PassUiMask] = pass(UI_MASK, VULKAN_FSR3_FG_UI_MASK_COMP_SPV, true);
 
     distortion_field = CreateTexture(VK_FORMAT_R8G8_UNORM, 1, 1);
+    no_ui = CreateTexture(VK_FORMAT_R8G8B8A8_UNORM, 1, 1);
     zero_uint = CreateTexture(VK_FORMAT_R32_UINT, 1, 1);
     counters = memory_allocator.CreateBuffer(
         VkBufferCreateInfo{
@@ -514,7 +515,12 @@ void Fsr3FrameGenerator::CreateDisplayResources(VkExtent2D display_size, VkForma
     inpainting_pyramid = CreateTexture(VK_FORMAT_R16G16B16A16_SFLOAT, w / 2, h / 2,
                                        (std::min)(pyramid_levels, PYRAMID_BINDINGS));
     previous_source = CreateTexture(format, w, h);
-    ui_less = CreateTexture(format, w, h);
+    for (Texture& texture : ui_less) {
+        texture = CreateTexture(format, w, h);
+    }
+    for (Texture& texture : ui_alpha) {
+        texture = CreateTexture(VK_FORMAT_R8_UNORM, w, h);
+    }
     std::array<VkExtent2D, FLOW_LEVELS> flow_sizes{};
     flow_sizes[0] = {(w + FLOW_BLOCK_SIZE - 1) / FLOW_BLOCK_SIZE,
                      (h + FLOW_BLOCK_SIZE - 1) / FLOW_BLOCK_SIZE};
@@ -918,13 +924,17 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         initialize.push_back(*distortion_field.image);
         initialize.push_back(*zero_uint.image);
         clear_zero = initialize;
+        initialize.push_back(*no_ui.image); // cleared to "no UI" below
     }
     if (display_resources_new) {
         std::vector<VkImage> images{*inpainting_pyramid.image, *previous_source.image,
-                                    *ui_less.image,
                                     *flow_vector.image,        *scd_histogram.image,
                                     *scd_previous_histogram.image, *scd_temp.image,
                                     *scd_output.image};
+        for (size_t i = 0; i < KEPT_FRAMES; ++i) {
+            images.push_back(*ui_less[i].image);
+            images.push_back(*ui_alpha[i].image);
+        }
         for (const auto& set : flow_input) {
             for (const Texture& texture : set) {
                 images.push_back(*texture.image);
@@ -958,11 +968,59 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     }
     const VkBuffer counters_clear =
         (fixed_resources_new || display_resources_new) ? *counters : VkBuffer{};
+    const bool clear_no_ui = fixed_resources_new;
     fixed_resources_new = false;
     display_resources_new = false;
 
     scheduler.RequestOutsideRenderPassOperationContext();
     RecordClears(scheduler, std::move(initialize), std::move(clear_zero), counters_clear);
+    if (clear_no_ui) {
+        // Alpha 1: the scene's share everywhere, as the game's layer has where there is no UI.
+        scheduler.Record([image = *no_ui.image](vk::CommandBuffer cmdbuf) {
+            cmdbuf.ClearColorImage(image, VK_IMAGE_LAYOUT_GENERAL,
+                                   VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 1.0f}},
+                                   ALL_LEVELS);
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                   MemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT,
+                                                 VK_ACCESS_SHADER_READ_BIT));
+        });
+    }
+    const size_t ring = static_cast<size_t>(ui_ring_next++ % KEPT_FRAMES);
+    const Texture& ui_less_now = ui_less[ring];
+    const Texture& ui_alpha_now = ui_alpha[ring];
+    const auto tex = [](const Texture& texture) { return Resource{.view = *texture.view}; };
+    const auto groups = [](u32 size, u32 tile) { return (size + tile - 1) / tile; };
+    const Resource real_current{.view = in.current_view};
+    const auto layer = [&](size_t i) {
+        if (!ui_layers[0]) {
+            return tex(no_ui);
+        }
+        return Resource{.view = ui_layers[i] ? ui_layers[i] : ui_layers[0]};
+    };
+    if (in.dlss) {
+        // NVIDIA's frame generation makes the frame: it gets this frame without its UI and the
+        // UI's coverage (both at the frame's size), with the prepared depth and motion.
+        passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
+                                     std::array{layer(0), layer(1), layer(2), layer(3),
+                                                real_current, tex(ui_less_now), cb_ui_remove,
+                                                tex(ui_alpha_now)},
+                                     groups(dw, 8), groups(dh, 8));
+        dlss_images = DlssImages{
+            .depth = {*frame.dilated_depth.image, *frame.dilated_depth.view,
+                      VK_FORMAT_R32_SFLOAT, render_extent},
+            .motion_vectors = {*frame.dilated_motion_vectors.image,
+                               *frame.dilated_motion_vectors.view, VK_FORMAT_R16G16_SFLOAT,
+                               render_extent},
+            .hudless = {*ui_less_now.image, *ui_less_now.view, display_format, display_extent},
+            .ui_alpha = {*ui_alpha_now.image, *ui_alpha_now.view, VK_FORMAT_R8_UNORM,
+                         display_extent},
+            .jitter = frame.jitter,
+            .reset = reset,
+        };
+        has_previous = true;
+        return;
+    }
     // The output frame: whatever it held is replaced (every pixel is written).
     scheduler.Record([output = in.output_image](vk::CommandBuffer cmdbuf) {
         const VkImageMemoryBarrier barrier{
@@ -981,21 +1039,16 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {}, barrier);
     });
 
-    const auto tex = [](const Texture& texture) { return Resource{.view = *texture.view}; };
-    const auto groups = [](u32 size, u32 tile) { return (size + tile - 1) / tile; };
-    const Resource real_current{.view = in.current_view};
     const Resource output{.view = in.output_view};
-    const auto layer = [&](size_t i) {
-        return Resource{.view = ui_layers[i] ? ui_layers[i] : ui_layers[0]};
-    };
     if (remove_ui) {
         passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
                                      std::array{layer(0), layer(1), layer(2), layer(3),
-                                                real_current, tex(ui_less), cb_ui_remove},
+                                                real_current, tex(ui_less_now), cb_ui_remove,
+                                                tex(ui_alpha_now)},
                                      groups(dw, 8), groups(dh, 8));
     }
     // What frame generation works on: this frame, without its UI where it could be taken out.
-    const Resource current = remove_ui ? tex(ui_less) : real_current;
+    const Resource current = remove_ui ? tex(ui_less_now) : real_current;
     const Resource counters_buffer{.buffer = *counters, .offset = 0, .size = 16};
 
     // Optical flow on the current frame (ffxOpticalflowContextDispatch).
@@ -1141,12 +1194,12 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         passes[PassUiMask]->Dispatch(
             scheduler, descriptor_queue,
             std::array{layer(0), layer(1), layer(2), layer(3), real_current, output,
-                       cb_ui_finish},
+                       cb_ui_finish, tex(ui_alpha_now)},
             groups(dw, 8), groups(dh, 8));
     }
 
     if (in.show_ui_less && remove_ui) {
-        scheduler.Record([source = *ui_less.image, destination = in.output_image, dw,
+        scheduler.Record([source = *ui_less_now.image, destination = in.output_image, dw,
                           dh](vk::CommandBuffer cmdbuf) {
             cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,
                              VkImageCopy{
@@ -1161,7 +1214,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
 
     // Keep this frame (as frame generation saw it) for the next interpolation; hand the output to
     // the presentation.
-    scheduler.Record([source = remove_ui ? *ui_less.image : in.current_image,
+    scheduler.Record([source = remove_ui ? *ui_less_now.image : in.current_image,
                       destination = *previous_source.image, dw,
                       dh](vk::CommandBuffer cmdbuf) {
         const VkImageCopy copy{

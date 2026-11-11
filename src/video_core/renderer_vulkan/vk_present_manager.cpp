@@ -7,6 +7,9 @@
 #include <thread>
 
 #include "common/settings.h"
+#ifdef EGLANTINE_STREAMLINE
+#include "video_core/vulkan_common/streamline.h"
+#endif
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
 #ifdef HAS_LSFG
@@ -131,7 +134,8 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     // Frame generation paces its frames on the present thread: without one, the waits ran on the
     // GPU thread and slowed the game wherever its frames took longer (battles: 60 FPS to 40).
     , use_present_thread{Settings::values.async_presentation.GetValue() ||
-                         Settings::values.fsr_frame_generation.GetValue()}
+                         Settings::values.fsr_frame_generation.GetValue() ||
+                         Settings::values.dlss_frame_generation.GetValue()}
 {
     SetImageCount();
 
@@ -198,10 +202,22 @@ void PresentManager::Present(Frame* frame) {
     } else {
         // (No pacing here: waiting on this thread holds up the emulated GPU.)
         scheduler.WaitWorker();
-        CopyToSwapchain(frame);
+        PresentMarked(frame);
         last_present = std::chrono::steady_clock::now();
         free_queue.push_back(frame);
     }
+}
+
+void PresentManager::PresentMarked(Frame* frame) {
+#ifdef EGLANTINE_STREAMLINE
+    if (frame->sl_frame_gen) {
+        Streamline::FrameGenPresentStart(frame->sl_index, frame->sl_tagged);
+        CopyToSwapchain(frame);
+        Streamline::FrameGenPresentEnd(frame->sl_index, frame->sl_tagged);
+        return;
+    }
+#endif
+    CopyToSwapchain(frame);
 }
 
 void PresentManager::Pace(const Frame* frame) {
@@ -367,7 +383,7 @@ void PresentManager::PresentThread(std::stop_token token) {
             // lock in WaitPresent is guaranteed to occur after here.
             void(std::exchange(lock, std::unique_lock{swapchain_mutex}));
             Pace(frame);
-            CopyToSwapchain(frame);
+            PresentMarked(frame);
             last_present = std::chrono::steady_clock::now();
 
             // Free the frame for reuse

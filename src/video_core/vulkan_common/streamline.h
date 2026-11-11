@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -38,7 +39,7 @@ struct DlssFiles {
 /// A valid Authenticode signature from NVIDIA Corporation (DLSS models).
 [[nodiscard]] bool IsSignedByNvidia(const std::filesystem::path& path);
 
-/// When the NVIDIA DLSS setting is on, loads the user's sl.interposer.dll (checking NVIDIA's
+/// When the NVIDIA DLSS upscaler or DLSS frame generation is on, loads the user's sl.interposer.dll (checking NVIDIA's
 /// signature) and starts Streamline for DLSS. Call before creating the renderer's instance.
 bool Start();
 
@@ -54,8 +55,18 @@ bool Start();
 bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice device,
                   u32 graphics_family, vk::DeviceDispatch& dld);
 
-/// Whether DLSS can run on the attached device.
+/// Whether DLSS super resolution can run on the attached device.
 [[nodiscard]] bool IsDlssAvailable();
+
+/// Whether DLSS frame generation (with Reflex and PC latency markers) can run on it.
+[[nodiscard]] bool IsFrameGenerationAvailable();
+
+/// Queues Streamline's features want in the graphics family, after the emulator's own.
+struct ExtraQueues {
+    u32 graphics{};
+    u32 compute{};
+};
+[[nodiscard]] ExtraQueues GetExtraQueues();
 
 /// How many DLSS evaluations Streamline has reported as failed in its log. Streamline still
 /// returns success from the evaluation when NGX fails inside it (seen on an RTX 5060 Laptop GPU:
@@ -64,5 +75,35 @@ bool AttachDevice(VkInstance instance, VkPhysicalDevice physical, VkDevice devic
 
 /// Shuts Streamline down; call before the device is destroyed.
 void Stop();
+
+// DLSS frame generation. NVIDIA's frame generation runs in Streamline's vkQueuePresentKHR: each
+// presented frame needs its inputs tagged under its frame index, which the present then names
+// with its PC latency markers.
+
+struct FrameGenImage {
+    VkImage image{};
+    VkImageView view{};
+    VkFormat format{VK_FORMAT_UNDEFINED};
+    VkExtent2D size{};
+};
+
+struct FrameGenInputs {
+    u64 index{};                  ///< The presented frame's index (one per present, increasing).
+    FrameGenImage depth;          ///< Reversed device depth at the render size.
+    FrameGenImage motion_vectors; ///< Motion to the previous frame in UV units, render size.
+    FrameGenImage hudless;        ///< The frame without its UI (backbuffer size; GENERAL).
+    FrameGenImage ui_alpha;       ///< The UI's coverage, 0 where none (backbuffer size; GENERAL).
+    VkRect2D backbuffer_rect{};   ///< Where the game's picture is in the backbuffer.
+    std::array<f32, 2> jitter{};  ///< In render pixels.
+    bool reset{};
+};
+
+/// On the GPU thread, recording the frame: latency markers, constants and tags for it.
+void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& inputs);
+
+/// On the present thread, around the present of a frame: tagged (FrameGenTagFrame ran for this
+/// index, and frame generation should run) or not (frame generation pauses).
+void FrameGenPresentStart(u64 index, bool tagged);
+void FrameGenPresentEnd(u64 index, bool tagged);
 
 } // namespace Vulkan::Streamline

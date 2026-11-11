@@ -1434,7 +1434,9 @@ void TextureCacheRuntime::FrameGenStashUi(Image* ui_layer, u64 seq) {
 }
 
 Fsr3FrameGenerator* TextureCacheRuntime::FrameGenerator() {
-    if (!Settings::values.fsr_frame_generation.GetValue() || frame_generator_unsupported) {
+    if ((!Settings::values.fsr_frame_generation.GetValue() &&
+         !Settings::values.dlss_frame_generation.GetValue()) ||
+        frame_generator_unsupported) {
         return nullptr;
     }
     if (!frame_generator) {
