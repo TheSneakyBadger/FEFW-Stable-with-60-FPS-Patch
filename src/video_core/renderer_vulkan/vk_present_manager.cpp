@@ -128,7 +128,10 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , surface{surface_}
     , blit_supported{CanBlitToSwapchain(device.GetPhysical(), swapchain.GetImageViewFormat())}
     , storage_supported{CanStoreToFrame(device.GetPhysical(), swapchain.GetImageFormat())}
-    , use_present_thread{Settings::values.async_presentation.GetValue()}
+    // Frame generation paces its frames on the present thread: without one, the waits ran on the
+    // GPU thread and slowed the game wherever its frames took longer (battles: 60 FPS to 40).
+    , use_present_thread{Settings::values.async_presentation.GetValue() ||
+                         Settings::values.fsr_frame_generation.GetValue()}
 {
     SetImageCount();
 
@@ -193,8 +196,8 @@ void PresentManager::Present(Frame* frame) {
             frame_cv.notify_one();
         });
     } else {
+        // (No pacing here: waiting on this thread holds up the emulated GPU.)
         scheduler.WaitWorker();
-        Pace(frame);
         CopyToSwapchain(frame);
         last_present = std::chrono::steady_clock::now();
         free_queue.push_back(frame);
