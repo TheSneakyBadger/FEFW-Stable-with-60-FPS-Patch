@@ -34,12 +34,13 @@ void main() {
     }
     const vec2 uv = (vec2(local) + 0.5) / vec2(c.rect_size);
     const vec2 step = 2.0 / vec2(textureSize(sampler2D(ui_layer, linear_sampler), 0));
-    // The UI's coverage, widened by a couple of texels for its soft edges and glows.
+    // The UI's coverage, widened by a couple of texels for its soft edges and glows. Fortune's
+    // Weave keeps the scene's share in alpha (1 where there is no UI), so coverage is 1 - alpha.
     float alpha = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
-            alpha = max(alpha, textureLod(sampler2D(ui_layer, linear_sampler),
-                                          uv + vec2(x, y) * step, 0.0).a);
+            alpha = max(alpha, 1.0 - textureLod(sampler2D(ui_layer, linear_sampler),
+                                                uv + vec2(x, y) * step, 0.0).a);
         }
     }
     const float mask = smoothstep(c.threshold, c.threshold * 4.0 + 0.02, alpha);
