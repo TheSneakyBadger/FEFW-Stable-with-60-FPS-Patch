@@ -53,7 +53,7 @@ public:
         std::array<VkImageView, 4> ui_layers; ///< Null-padded; [0] null: no mask.
         bool show_ui_mask; ///< Testing: writes the UI mask instead.
         u64 seq;           ///< Which of the game's frames this is (its Prepare).
-        bool stashed_ui;   ///< Use the UI kept by StashUi for it (ui_layers unused).
+        bool late;         ///< Presented after the next frame started (ui_layers unusable).
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,
@@ -66,16 +66,20 @@ public:
     /// Whether the device has what the passes need.
     [[nodiscard]] static bool IsSupported(const Device& device);
 
-    /// Records the reconstruct-and-dilate pass on frame seq's depth and motion vectors. Two
-    /// frames are kept: the game may start its next frame before this one is presented.
+    /// Frames kept (prepared motion, UI copies): the game may be up to two frames ahead of the
+    /// one presented.
+    static constexpr size_t KEPT_FRAMES = 3;
+
+    /// Records the reconstruct-and-dilate pass on frame seq's depth and motion vectors.
     void Prepare(const PrepareInputs& inputs, u64 seq);
 
-    /// Keeps a copy of frame seq's UI layer (GENERAL layout; null: none).
+    /// Keeps a copy of frame seq's UI layer (GENERAL layout; null: none), taken when the game
+    /// combines it with the picture (complete then: it is cleared for the next frame early).
     void StashUi(VkImage image, VkFormat format, VkExtent2D size, u64 seq);
 
     /// True when frame seq was prepared and nothing was generated for it yet.
     [[nodiscard]] bool HasPrepared(u64 seq) const noexcept {
-        const PreparedFrame& frame = prepared_frames[seq & 1];
+        const PreparedFrame& frame = prepared_frames[seq % KEPT_FRAMES];
         return seq != 0 && frame.ready && frame.seq == seq;
     }
 
@@ -126,7 +130,7 @@ private:
     std::vector<std::unique_ptr<Pass>> passes;
 
     // Render size (frame interpolation).
-    std::array<PreparedFrame, 2> prepared_frames; ///< By frame parity.
+    std::array<PreparedFrame, KEPT_FRAMES> prepared_frames; ///< By seq % KEPT_FRAMES.
     Texture reconstructed_interpolated_depth;
     Texture game_motion_x;
     Texture game_motion_y;
@@ -137,13 +141,16 @@ private:
     Texture inpainting_pyramid;
     Texture previous_source;
     Texture ui_less; ///< This frame without the game's UI (what frame generation works on).
-    // The UI layer of a frame presented after the game started the next one.
-    vk::Image ui_stash;
-    vk::ImageView ui_stash_view;
-    VkFormat ui_stash_format{VK_FORMAT_UNDEFINED};
-    VkExtent2D ui_stash_extent{};
-    u64 ui_stash_seq{};
-    bool ui_stash_new{};
+    // Copies of the game's UI layer, by seq % KEPT_FRAMES.
+    struct UiCopy {
+        vk::Image image;
+        vk::ImageView view;
+        VkFormat format{VK_FORMAT_UNDEFINED};
+        VkExtent2D extent{};
+        u64 seq{};
+        bool fresh{};
+    };
+    std::array<UiCopy, KEPT_FRAMES> ui_copies;
     std::array<std::array<Texture, 7>, 2> flow_input; ///< Luma pyramids, ping-pong.
     std::array<std::array<Texture, 7>, 2> flow;       ///< Optical flow per level, ping-pong.
     Texture flow_vector;    ///< The optical flow result (display / 8).

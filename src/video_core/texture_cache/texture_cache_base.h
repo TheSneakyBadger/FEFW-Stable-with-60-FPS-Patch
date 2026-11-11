@@ -534,6 +534,9 @@ private:
     /// Presented buffers (device address) and the frame last drawn into each.
     std::array<std::pair<DAddr, u64>, 4> fg_present_marks{};
     size_t fg_present_next = 0;
+    /// The last frame whose UI layer was copied.
+    u64 fg_ui_copied = 0;
+    void FrameGenCopyUi();
     bool fg_ui_watch = false;     ///< Counting draws (the game evaluated DLSS last frame or this).
     bool fg_ui_dlss_seen = false; ///< DLSS evaluated this frame.
     ImageId fg_ui_exclude{};

@@ -935,10 +935,13 @@ void TextureCache<P>::WatchUiLayer() {
         return;
     }
     const ImageBase& image = slot_images[image_id];
-    // A presented buffer being drawn: it will show this frame.
+    // A presented buffer being drawn (the game combining its picture and UI): it will show this
+    // frame, and the UI layer is complete now (the game clears it early in the next frame, before
+    // that frame's DLSS evaluation): copy it.
     for (auto& [address, seq] : fg_present_marks) {
         if (address != 0 && address == image.cpu_addr) {
             seq = fg_seq;
+            FrameGenCopyUi();
         }
     }
     const PixelFormat format = image.info.format;
@@ -997,6 +1000,18 @@ typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr
         info.layers = FrameGenUiLayers();
     }
     return info;
+}
+
+template <class P>
+void TextureCache<P>::FrameGenCopyUi() {
+    if constexpr (!FRAMEBUFFER_BLITS) {
+        if (fg_seq == 0 || fg_ui_copied == fg_seq) {
+            return;
+        }
+        fg_ui_copied = fg_seq;
+        const ImageId layer = FrameGenUiLayerIds()[0];
+        runtime.FrameGenStashUi(layer ? &slot_images[layer] : nullptr, fg_seq);
+    }
 }
 
 template <class P>
@@ -1462,11 +1477,10 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
         // Frame generation: the frame before is finished (its UI layer complete): keep its UI for
         // when it is presented after this one has started. Then watch for the UI drawn next.
-        {
-            const ImageId layer = fg_seq != 0 ? FrameGenUiLayerIds()[0] : ImageId{};
-            runtime.FrameGenStashUi(layer ? &slot_images[layer] : nullptr, fg_seq);
-        }
+        // (Copied here if the frame was never seen combined.)
+        FrameGenCopyUi();
         ++fg_seq;
+        runtime.FrameGenBeginFrame(fg_seq);
         fg_ui_count_size = 0;
         fg_ui_watch = true;
         fg_ui_dlss_seen = true;

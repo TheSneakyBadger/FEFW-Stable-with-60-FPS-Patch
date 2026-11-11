@@ -102,9 +102,14 @@ public:
     /// (created on first use), else null.
     [[nodiscard]] Fsr3FrameGenerator* FrameGenerator();
 
-    /// Frame generation: the game starts frame seq + 1 (a DLSS evaluation follows); frame seq's
-    /// UI layer (or null) is kept for when that frame is presented later.
+    /// Frame generation: frame seq's UI layer (or null), complete now, is copied for when that
+    /// frame is presented.
     void FrameGenStashUi(Image* ui_layer, u64 seq);
+
+    /// Frame generation: the game starts frame seq (its DLSS evaluation follows).
+    void FrameGenBeginFrame(u64 seq) noexcept {
+        frame_generator_seq = seq;
+    }
 
     /// True while TemporalUpscale would replace the game's DLSS: AMD FSR 4 or NVIDIA DLSS (on in
     /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (ticked, not failed).

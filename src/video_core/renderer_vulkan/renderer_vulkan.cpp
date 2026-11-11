@@ -423,14 +423,16 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
     if (debug_mode != 4) {
         ui_layers = game_frame.layers;
     }
-    const bool stashed_ui = game_frame.previous && debug_mode != 4;
-    if (ui_layers[0] || stashed_ui) {
+    // A late frame's UI layer is no longer there: the copy taken when it was combined is used
+    // (the generator prefers that copy whenever it has one).
+    const bool late = game_frame.previous && debug_mode != 4;
+    if (ui_layers[0] || late) {
         ++fsr_fg_ui;
     }
     for (const VkImageView layer : ui_layers) {
         fsr_fg_ui_layers += layer ? 1 : 0;
     }
-    fsr_fg_ui_layers += stashed_ui ? 1 : 0;
+    fsr_fg_ui_layers += late ? 1 : 0;
     generator->Generate({
         .current_image = *frame->image,
         .current_view = *frame->storage_view,
@@ -446,7 +448,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
         .ui_layers = ui_layers,
         .show_ui_mask = debug_mode == 3,
         .seq = game_frame.seq,
-        .stashed_ui = stashed_ui,
+        .late = late,
     });
     if (debug_mode >= 2) {
         scheduler.Record([source = *generated->image, destination = *frame->image,

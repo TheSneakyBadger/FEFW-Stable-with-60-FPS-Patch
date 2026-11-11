@@ -1414,7 +1414,6 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
 }
 
 void TextureCacheRuntime::FrameGenStashUi(Image* ui_layer, u64 seq) {
-    frame_generator_seq = seq + 1;
     Fsr3FrameGenerator* const generator = FrameGenerator();
     if (!generator) {
         return;
