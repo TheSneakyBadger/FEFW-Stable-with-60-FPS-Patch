@@ -43,6 +43,10 @@ struct DlssFiles {
 /// signature) and starts Streamline for DLSS. Call before creating the renderer's instance.
 bool Start();
 
+/// Streamline's proxy for a Vulkan function it hooks (vkCreateWin32SurfaceKHR, ...) while it is
+/// running, else null.
+[[nodiscard]] void* HookedFunction(const char* name);
+
 /// Whether Streamline is running and waiting for the renderer's device.
 [[nodiscard]] bool WantsDevice();
 

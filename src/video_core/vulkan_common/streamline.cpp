@@ -448,6 +448,14 @@ bool Start() {
     return true;
 }
 
+void* HookedFunction(const char* name) {
+    const State& state = GetState();
+    if (!state.started || !state.module) {
+        return nullptr;
+    }
+    return reinterpret_cast<void*>(GetProcAddress(state.module, name));
+}
+
 bool WantsDevice() {
     const State& state = GetState();
     return state.started && !state.attached;
