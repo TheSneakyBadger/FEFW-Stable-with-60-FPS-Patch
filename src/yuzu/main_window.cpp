@@ -297,6 +297,11 @@ static void RemoveTitlebarFilter() {
 
 using namespace Common::Literals;
 
+#ifdef EGLANTINE_STREAMLINE
+#include <QProcess>
+#include "video_core/vulkan_common/streamline.h"
+#endif
+
 #include "qt_common/discord/discord.h"
 
 #ifdef USE_DISCORD_PRESENCE
@@ -2012,6 +2017,31 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
+
+#ifdef EGLANTINE_STREAMLINE
+    // NVIDIA's Streamline can't be set up again once its frame generation has run in this process
+    // (it throws an exception on the next game's device, and AMD's upscaler and frame generation
+    // would run instead): a game that uses NVIDIA DLSS starts in a new Fortune's Eden.
+    const bool wants_nvidia =
+        Settings::values.upscaler.GetValue() == Settings::Upscaler::NvidiaDlss ||
+        Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss;
+    const bool is_game =
+        params.program_id == 0 ||
+        params.program_id > static_cast<u64>(Service::AM::AppletProgramId::MaxProgramId);
+    if (wants_nvidia && !Vulkan::Streamline::CanStartAgain() && type == StartGameType::Normal &&
+        is_game && !filename.isEmpty()) {
+        QStringList arguments{QStringLiteral("-g"), filename};
+        if (ui->action_Fullscreen->isChecked()) {
+            arguments.prepend(QStringLiteral("-f"));
+        }
+        LOG_INFO(Frontend, "NVIDIA DLSS: starting the game in a new Fortune's Eden");
+        connect(qApp, &QCoreApplication::aboutToQuit, [arguments] {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+        });
+        close();
+        return;
+    }
+#endif
 
     u64 title_id{0};
 
