@@ -235,16 +235,25 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // (in memory critical mode too). Small ones are kept in every mode, without counting
         // against the pass so they don't hold up the images behind them; large ones are still
         // collected.
+        //
+        // Fortune's Eden: only while guest memory doesn't have newer contents. An image the GPU
+        // drew into and the CPU then wrote over (the game reusing a render target's memory for
+        // new data) is also not downloadable, but what it holds is stale: its next use loads it
+        // from guest memory anyway. Kept like the others, these piled up over a session (memory
+        // the next scene reuses): 5.4 -> 10.7 GB over two hours on a 16 GB card, and on an 8 GB
+        // card the hard limit all the time with DLSS failing for lack of memory (issue #31).
         static constexpr u64 KEEP_GPU_IMAGE_BYTES = 4_MiB;
-        if (True(image.flags & ImageFlagBits::GpuModified) && !must_download &&
-            image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES) {
+        const bool keeps_gpu_contents = True(image.flags & ImageFlagBits::GpuModified) &&
+                                        False(image.flags & ImageFlagBits::CpuModified) &&
+                                        !must_download;
+        if (keeps_gpu_contents && image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES) {
             ++num_iterations;
             return false;
         }
         // Fortune's Eden: larger ones are kept too until the hard limit. Passes over the
         // expected level now free hundreds of images, and losing what the GPU drew into a
         // shadow map or effect buffer would show as black or flickering until it is redrawn.
-        if (True(image.flags & ImageFlagBits::GpuModified) && !must_download && !aggressive_mode) {
+        if (keeps_gpu_contents && !aggressive_mode) {
             ++num_iterations;
             return false;
         }
@@ -374,6 +383,51 @@ void TextureCache<P>::TickFrame() {
         minute_passes = 0;
         minute_freed = 0;
         minute_collect_ms = 0.0;
+    }
+    // Diagnostics, about every five minutes: what the cached images are, and how much of each
+    // kind hasn't been used for a minute (what a growing cache is made of).
+    if (frame_tick % 18000 == 9000) {
+        struct Kind {
+            u64 bytes = 0;
+            u64 count = 0;
+            u64 idle_bytes = 0;
+        };
+        // 0 drawn by the GPU, written back when collected; 1 drawn by the GPU, kept (can't be
+        // written back); 2 drawn by the GPU, then overwritten by the CPU; 3 costly (ASTC);
+        // 4 the rest.
+        std::array<Kind, 5> kinds{};
+        const auto KindOf = [this](const ImageBase& image) -> size_t {
+            if (True(image.flags & ImageFlagBits::GpuModified)) {
+                if (True(image.flags & ImageFlagBits::CpuModified)) {
+                    return 2;
+                }
+                return IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap) ? 0
+                                                                                               : 1;
+            }
+            return True(image.flags & ImageFlagBits::CostlyLoad) ? 3 : 4;
+        };
+        lru_cache.ForEachItemBelow(frame_tick, [&](ImageId image_id) {
+            const ImageBase& image = slot_images[image_id];
+            Kind& kind = kinds[KindOf(image)];
+            kind.bytes += ImageMemoryEstimate(image);
+            ++kind.count;
+        });
+        if (frame_tick > 3600) {
+            lru_cache.ForEachItemBelow(frame_tick - 3600, [&](ImageId image_id) {
+                const ImageBase& image = slot_images[image_id];
+                kinds[KindOf(image)].idle_bytes += ImageMemoryEstimate(image);
+            });
+        }
+        const auto Mib = [](u64 bytes) { return bytes >> 20; };
+        LOG_INFO(HW_GPU,
+                 "Texture cache images (MiB, count, MiB unused for a minute): GPU-drawn written "
+                 "back {}/{}/{}, GPU-drawn kept {}/{}/{}, GPU-drawn then CPU-written {}/{}/{}, "
+                 "ASTC {}/{}/{}, other {}/{}/{}",
+                 Mib(kinds[0].bytes), kinds[0].count, Mib(kinds[0].idle_bytes),
+                 Mib(kinds[1].bytes), kinds[1].count, Mib(kinds[1].idle_bytes),
+                 Mib(kinds[2].bytes), kinds[2].count, Mib(kinds[2].idle_bytes),
+                 Mib(kinds[3].bytes), kinds[3].count, Mib(kinds[3].idle_bytes),
+                 Mib(kinds[4].bytes), kinds[4].count, Mib(kinds[4].idle_bytes));
     }
     for (std::shared_ptr<Image>& image : retired_images) {
         sentenced_images.Push(std::move(*image));
