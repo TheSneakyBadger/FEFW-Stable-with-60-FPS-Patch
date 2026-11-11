@@ -135,6 +135,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     bool evict_old_costly = false;
+    bool allow_writebacks = true;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     // Diagnostics: a pass that takes long is logged (see the end of this function).
@@ -210,7 +211,8 @@ u32 TextureCache<P>::RunGarbageCollector() {
         writeback_bytes = 0;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &num_deleted, &num_downloaded, &writebacks,
+                          &evict_old_costly, &allow_writebacks, &num_deleted, &num_downloaded,
+                          &writebacks,
                           &writeback_bytes, &UsedMemory, &freed_bytes,
                           &target_free](ImageId image_id) {
         if (num_iterations == 0 || (target_free != 0 && freed_bytes >= target_free)) {
@@ -248,7 +250,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
         }
         // Each image written back waits for the GPU copy: keep a pass's write-backs to 256 MiB
         // so a big pass doesn't become one long hitch (the rest go in the next passes).
-        if (must_download && writeback_bytes >= 256_MiB) {
+        if (must_download && (writeback_bytes >= 256_MiB || !allow_writebacks)) {
             return false;
         }
         if (True(image.flags & ImageFlagBits::Tracked)) {
@@ -292,12 +294,30 @@ u32 TextureCache<P>::RunGarbageCollector() {
         lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
         evict_old_costly = false;
     }
+    // Over the hard level, write back only images unused for 2 s (see below).
+    static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
+    const bool hard_pass = total_used_memory >= critical_memory;
+    allow_writebacks = !hard_pass;
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    allow_writebacks = true;
     FlushWritebacks();
-    if (total_used_memory >= critical_memory) {
+    if (hard_pass) {
+        // Fortune's Eden: in the hard mode, images the GPU drew into and that were used in the
+        // last 2 seconds are not written back and freed. Each write-back waits for the GPU, and
+        // such images (render targets) are usually drawn again moments later: on a 6 GB card in
+        // the hard mode all the time, this ran at 20 FPS with 100 frames over 50 ms every 10 s
+        // (issue #35). Older ones go first, then the rest without write-backs.
         Configure(true);
-        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
-        FlushWritebacks();
+        if (frame_tick > RECENT_WRITEBACK_TICKS) {
+            lru_cache.ForEachItemBelow(frame_tick - RECENT_WRITEBACK_TICKS, Cleanup);
+            FlushWritebacks();
+        }
+        if (total_used_memory >= critical_memory) {
+            Configure(true);
+            allow_writebacks = false;
+            lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+            allow_writebacks = true;
+        }
     }
     auto& slot = recent_frees[frame_tick % recent_frees.size()];
     if (slot.first != frame_tick) {
