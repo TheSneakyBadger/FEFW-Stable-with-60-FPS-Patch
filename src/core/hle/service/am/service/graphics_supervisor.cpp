@@ -686,6 +686,7 @@ public:
     ~IVi2Session() override {
         if (m_release_poll) system.CoreTiming().UnscheduleEvent(m_release_poll);
         if (m_group_tick) system.CoreTiming().UnscheduleEvent(m_group_tick);
+        if (m_paper_white_watch) system.CoreTiming().UnscheduleEvent(m_paper_white_watch);
         if (m_display_service) {
             for (auto& state : m_client_states) {
                 if (state.layer) m_display_service->GetContainer()->DestroyManagedLayer(*state.layer);
@@ -1402,6 +1403,7 @@ private:
         }
         m_paper_white_told = paper_white;
         m_paper_white_signalled = 0;
+        StartPaperWhiteWatch();
         ReplyDisplayState(ctx, 0x79, 3, paper_white);
     }
 
@@ -1537,7 +1539,6 @@ private:
                     m_request_group_events[group]->Signal(kernel);
                 }
             }
-            SignalPaperWhiteChange();
             return std::nullopt;
         });
         system.CoreTiming().ScheduleLoopingEvent(std::chrono::microseconds{16667},
@@ -1546,7 +1547,19 @@ private:
 
     // HDR paper white changed in Settings while the game runs: raise the HDR status monitors
     // (kind 2, command 265), as a display change would, so the game asks again (command 105).
-    // Once per change; checked on the vsync tick (service lock held).
+    // Once per change; checked four times a second from the game's first question on (the vsync
+    // tick only runs for games that register for vsync, which Fortune's Weave doesn't here).
+    void StartPaperWhiteWatch() {
+        if (m_paper_white_watch) return;
+        m_paper_white_watch = Core::Timing::CreateEvent(
+            "NativeViPaperWhite", [this](s64, std::chrono::nanoseconds) -> std::optional<std::chrono::nanoseconds> {
+                const auto guard = LockService();
+                SignalPaperWhiteChange();
+                return std::nullopt;
+            });
+        system.CoreTiming().ScheduleLoopingEvent(std::chrono::milliseconds{250},
+                                                 std::chrono::milliseconds{250}, m_paper_white_watch);
+    }
     void SignalPaperWhiteChange() {
         if (m_paper_white_told == 0 || !Settings::HdrOutputActive()) {
             return;
@@ -1709,6 +1722,7 @@ private:
     std::shared_ptr<NativeImageRegistry> m_images;
     std::shared_ptr<Core::Timing::EventType> m_release_poll;
     std::shared_ptr<Core::Timing::EventType> m_group_tick;
+    std::shared_ptr<Core::Timing::EventType> m_paper_white_watch;
     u32 m_paper_white_told{};      ///< The paper white the game was last given (command 105)
     u32 m_paper_white_signalled{}; ///< A changed value the HDR monitors were raised for
     std::array<ClientState, 16> m_client_states{};
