@@ -147,8 +147,15 @@ public:
         return texture_cache_runtime.FrameGenerator();
     }
 
-    /// The game's UI layers this frame, for frame generation's UI mask (null where none).
-    std::array<VkImageView, 4> FrameGenUiLayers();
+    /// Frame generation: the game's frame in the buffer presented from this device address, and
+    /// its UI layers (null where none, or when they're no longer there).
+    struct FrameGenFrameInfo {
+        u64 seq;
+        bool known;
+        bool previous;
+        std::array<VkImageView, 4> layers;
+    };
+    FrameGenFrameInfo FrameGenFrame(DAddr presented);
     Tegra::Engines::AccelerateDMAInterface& AccessAccelerateDMA() override;
     void AccelerateInlineToMemory(GPUVAddr address, size_t copy_size,
                                   std::span<const u8> memory) override;

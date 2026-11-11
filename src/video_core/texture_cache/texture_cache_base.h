@@ -515,8 +515,25 @@ public:
     /// at the end), or null.
     [[nodiscard]] std::array<ImageView*, 4> FrameGenUiLayers();
 
+    /// Frame generation: which of the game's frames is being presented (the frame's buffer is at
+    /// the given device address). The game may already be drawing its next frame when the
+    /// previous one is presented; that frame's UI layer is then gone (the stash has it).
+    struct FrameGenFrameInfo {
+        u64 seq;      ///< The frame's DLSS evaluation (1, 2, ...); 0 for none.
+        bool known;   ///< Its buffer was seen being drawn after an evaluation.
+        bool previous; ///< The game already evaluated DLSS for its next frame.
+        std::array<ImageView*, 4> layers; ///< The UI layers (null when previous).
+    };
+    [[nodiscard]] FrameGenFrameInfo FrameGenFrame(DAddr presented);
+
 private:
     void WatchUiLayer();
+    [[nodiscard]] std::array<ImageId, 4> FrameGenUiLayerIds();
+    /// DLSS evaluations so far (each starts a frame).
+    u64 fg_seq = 0;
+    /// Presented buffers (device address) and the frame last drawn into each.
+    std::array<std::pair<DAddr, u64>, 4> fg_present_marks{};
+    size_t fg_present_next = 0;
     bool fg_ui_watch = false;     ///< Counting draws (the game evaluated DLSS last frame or this).
     bool fg_ui_dlss_seen = false; ///< DLSS evaluated this frame.
     ImageId fg_ui_exclude{};

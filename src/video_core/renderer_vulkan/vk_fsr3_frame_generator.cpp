@@ -490,9 +490,12 @@ Fsr3FrameGenerator::Texture Fsr3FrameGenerator::CreateTexture(VkFormat format, u
 void Fsr3FrameGenerator::CreateRenderResources(VkExtent2D render_size) {
     const u32 w = render_size.width;
     const u32 h = render_size.height;
-    dilated_depth = CreateTexture(VK_FORMAT_R32_SFLOAT, w, h);
-    dilated_motion_vectors = CreateTexture(VK_FORMAT_R16G16_SFLOAT, w, h);
-    reconstructed_previous_depth = CreateTexture(VK_FORMAT_R32_UINT, w, h);
+    for (PreparedFrame& frame : prepared_frames) {
+        frame.dilated_depth = CreateTexture(VK_FORMAT_R32_SFLOAT, w, h);
+        frame.dilated_motion_vectors = CreateTexture(VK_FORMAT_R16G16_SFLOAT, w, h);
+        frame.reconstructed_previous_depth = CreateTexture(VK_FORMAT_R32_UINT, w, h);
+        frame.ready = false;
+    }
     reconstructed_interpolated_depth = CreateTexture(VK_FORMAT_R32_UINT, w, h);
     game_motion_x = CreateTexture(VK_FORMAT_R32_UINT, w, h);
     game_motion_y = CreateTexture(VK_FORMAT_R32_UINT, w, h);
@@ -625,20 +628,24 @@ FiConstants MakeFiConstants(VkExtent2D render, VkExtent2D display, VkRect2D rect
 
 } // Anonymous namespace
 
-void Fsr3FrameGenerator::Prepare(const PrepareInputs& in) {
-    if (!dilated_depth.image || in.render_size.width != render_extent.width ||
+void Fsr3FrameGenerator::Prepare(const PrepareInputs& in, u64 seq) {
+    if (!prepared_frames[0].dilated_depth.image || in.render_size.width != render_extent.width ||
         in.render_size.height != render_extent.height) {
-        if (dilated_depth.image) {
+        if (prepared_frames[0].dilated_depth.image) {
             scheduler.Finish(); // the old images may still be in use
         }
         CreateRenderResources(in.render_size);
     }
-    jitter = in.jitter;
-    motion_vector_scale = in.motion_vector_scale;
+    PreparedFrame& frame = prepared_frames[seq & 1];
+    const Texture& dilated_depth = frame.dilated_depth;
+    const Texture& dilated_motion_vectors = frame.dilated_motion_vectors;
+    const Texture& reconstructed_previous_depth = frame.reconstructed_previous_depth;
+    frame.jitter = in.jitter;
+    frame.motion_vector_scale = in.motion_vector_scale;
     const VkExtent2D display = display_extent.width ? display_extent : in.render_size;
     const VkRect2D rect{.offset = {0, 0}, .extent = display};
     const FiConstants constants =
-        MakeFiConstants(render_extent, display, rect, jitter, motion_vector_scale);
+        MakeFiConstants(render_extent, display, rect, frame.jitter, frame.motion_vector_scale);
 
     const VkDeviceSize alignment =
         (std::max<VkDeviceSize>)(device.GetUniformBufferAlignment(), 16);
@@ -651,9 +658,12 @@ void Fsr3FrameGenerator::Prepare(const PrepareInputs& in) {
     std::vector<VkImage> clear_zero{*reconstructed_previous_depth.image};
     if (render_resources_new) {
         for (const Texture* texture :
-             {&dilated_depth, &dilated_motion_vectors, &reconstructed_previous_depth,
-              &reconstructed_interpolated_depth, &game_motion_x, &game_motion_y, &flow_motion_x,
-              &flow_motion_y, &disocclusion_mask}) {
+             {&prepared_frames[0].dilated_depth, &prepared_frames[0].dilated_motion_vectors,
+              &prepared_frames[0].reconstructed_previous_depth, &prepared_frames[1].dilated_depth,
+              &prepared_frames[1].dilated_motion_vectors,
+              &prepared_frames[1].reconstructed_previous_depth, &reconstructed_interpolated_depth,
+              &game_motion_x, &game_motion_y, &flow_motion_x, &flow_motion_y,
+              &disocclusion_mask}) {
             initialize.push_back(*texture->image);
         }
         clear_zero = initialize;
@@ -669,7 +679,95 @@ void Fsr3FrameGenerator::Prepare(const PrepareInputs& in) {
                    tex(reconstructed_previous_depth), tex(dilated_motion_vectors),
                    tex(dilated_depth), cb},
         (render_extent.width + 7) / 8, (render_extent.height + 7) / 8);
-    prepared = true;
+    frame.seq = seq;
+    frame.ready = true;
+}
+
+void Fsr3FrameGenerator::StashUi(VkImage image, VkFormat format, VkExtent2D size, u64 seq) {
+    ui_stash_seq = 0;
+    if (!image || size.width == 0 || size.height == 0) {
+        return;
+    }
+    if (!ui_stash || format != ui_stash_format || size.width != ui_stash_extent.width ||
+        size.height != ui_stash_extent.height) {
+        if (ui_stash) {
+            scheduler.Finish();
+        }
+        ui_stash = memory_allocator.CreateImage(VkImageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = {size.width, size.height, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        });
+        ui_stash_view = device.GetLogical().CreateImageView(VkImageViewCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = *ui_stash,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .components{},
+            .subresourceRange = ALL_LEVELS,
+        });
+        ui_stash_format = format;
+        ui_stash_extent = size;
+        ui_stash_new = true;
+    }
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record([source = image, destination = *ui_stash, size,
+                      fresh = std::exchange(ui_stash_new, false)](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier to_general{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = destination,
+            .subresourceRange = ALL_LEVELS,
+        };
+        // The UI draws (and any earlier read of the stash) before the copy.
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0,
+                               MemoryBarrier(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                                 VK_ACCESS_SHADER_WRITE_BIT |
+                                                 VK_ACCESS_TRANSFER_WRITE_BIT,
+                                             VK_ACCESS_TRANSFER_READ_BIT |
+                                                 VK_ACCESS_TRANSFER_WRITE_BIT));
+        if (fresh) {
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {}, to_general);
+        }
+        const VkImageCopy copy{
+            .srcSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .srcOffset{0, 0, 0},
+            .dstSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .dstOffset{0, 0, 0},
+            .extent{size.width, size.height, 1},
+        };
+        cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL,
+                         copy);
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                               MemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT,
+                                             VK_ACCESS_SHADER_READ_BIT |
+                                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                                 VK_ACCESS_TRANSFER_READ_BIT));
+    });
+    ui_stash_seq = seq;
 }
 
 void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
@@ -680,12 +778,31 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         }
         CreateDisplayResources(in.display_size, in.format);
     }
-    const bool reset = in.reset || !has_previous || !prepared || !dilated_depth.image;
-    if (!dilated_depth.image) {
+    const bool frame_ready = HasPrepared(in.seq);
+    const bool reset = in.reset || !has_previous || !frame_ready ||
+                       !prepared_frames[0].dilated_depth.image;
+    if (!prepared_frames[0].dilated_depth.image) {
         // No game motion yet: interpolation needs the render-size images all the same.
         CreateRenderResources({16, 16});
     }
-    prepared = false;
+    PreparedFrame& frame = prepared_frames[in.seq & 1];
+    const Texture& dilated_depth = frame.dilated_depth;
+    const Texture& dilated_motion_vectors = frame.dilated_motion_vectors;
+    const Texture& reconstructed_previous_depth = frame.reconstructed_previous_depth;
+    // This frame is used up, and so is any older one still kept.
+    for (PreparedFrame& kept : prepared_frames) {
+        if (kept.seq <= in.seq) {
+            kept.ready = false;
+        }
+    }
+    // The UI: this frame's layers, or the copy kept when it was presented late.
+    std::array<VkImageView, 4> ui_layers = in.ui_layers;
+    if (in.stashed_ui) {
+        ui_layers = {};
+        if (ui_stash_seq == in.seq && ui_stash_seq != 0) {
+            ui_layers[0] = *ui_stash_view;
+        }
+    }
     const u32 dw = display_extent.width;
     const u32 dh = display_extent.height;
     const u32 rw = render_extent.width;
@@ -693,8 +810,8 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
 
     // Constants: frame interpolation, the two pyramids, optical flow (common, one per level,
     // and its SPD).
-    FiConstants fi = MakeFiConstants(render_extent, display_extent, in.interpolation_rect, jitter,
-                                     motion_vector_scale);
+    FiConstants fi = MakeFiConstants(render_extent, display_extent, in.interpolation_rect,
+                                     frame.jitter, frame.motion_vector_scale);
     fi.reset = reset ? 1 : 0;
     fi.delta_time = std::clamp(in.frame_time_ms, 0.0f, 1000.0f);
     fi.back_buffer_transfer_function = in.transfer_function;
@@ -771,14 +888,14 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                       static_cast<s32>(in.interpolation_rect.extent.height)},
         .threshold = 0.004f,
         .show_mask = in.show_ui_mask ? 1U : 0U,
-        .layer_count = static_cast<u32>(std::count_if(in.ui_layers.begin(), in.ui_layers.end(),
+        .layer_count = static_cast<u32>(std::count_if(ui_layers.begin(), ui_layers.end(),
                                                       [](VkImageView v) { return v != VkImageView{}; })),
         .mode = 0,
     };
     const Resource cb_ui_remove = stage(&ui_constants, sizeof(ui_constants), ui_slot);
     // With the game's UI layer (and an SDR frame), frame generation works on the frame without
     // its UI, which goes back on afterwards. HDR frames only mask it.
-    const bool has_ui = in.ui_layers[0] != VkImageView{};
+    const bool has_ui = ui_layers[0] != VkImageView{};
     const bool remove_ui = has_ui && in.transfer_function == 0;
     ui_constants.mode = remove_ui ? 1 : 2;
     const Resource cb_ui_finish = stage(&ui_constants, sizeof(ui_constants), ui_slot);
@@ -821,9 +938,12 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     }
     if (render_resources_new) {
         for (const Texture* texture :
-             {&dilated_depth, &dilated_motion_vectors, &reconstructed_previous_depth,
-              &reconstructed_interpolated_depth, &game_motion_x, &game_motion_y, &flow_motion_x,
-              &flow_motion_y, &disocclusion_mask}) {
+             {&prepared_frames[0].dilated_depth, &prepared_frames[0].dilated_motion_vectors,
+              &prepared_frames[0].reconstructed_previous_depth, &prepared_frames[1].dilated_depth,
+              &prepared_frames[1].dilated_motion_vectors,
+              &prepared_frames[1].reconstructed_previous_depth, &reconstructed_interpolated_depth,
+              &game_motion_x, &game_motion_y, &flow_motion_x, &flow_motion_y,
+              &disocclusion_mask}) {
             initialize.push_back(*texture->image);
             clear_zero.push_back(*texture->image);
         }
@@ -859,7 +979,7 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     const Resource real_current{.view = in.current_view};
     const Resource output{.view = in.output_view};
     const auto layer = [&](size_t i) {
-        return Resource{.view = in.ui_layers[i] ? in.ui_layers[i] : in.ui_layers[0]};
+        return Resource{.view = ui_layers[i] ? ui_layers[i] : ui_layers[0]};
     };
     if (remove_ui) {
         passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,

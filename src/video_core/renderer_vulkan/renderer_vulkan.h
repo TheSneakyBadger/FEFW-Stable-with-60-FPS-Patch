@@ -76,7 +76,7 @@ private:
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
     /// AMD FSR 3.1 frame generation: presents a frame between the last one and `frame` (when on
     /// and this frame has the game's motion), and paces the two.
-    void GenerateFsrFrame(Frame* frame);
+    void GenerateFsrFrame(Frame* frame, DAddr presented);
 
     std::vector<Tegra::FramebufferConfig> applet_capture_layers;
     std::vector<Tegra::FramebufferConfig> screenshot_layer_scratch;
@@ -119,6 +119,8 @@ private:
     u32 fsr_fg_skipped{};
     u32 fsr_fg_ui{};
     u32 fsr_fg_ui_layers{};
+    u32 fsr_fg_late{};    ///< Presented after the game had started its next frame.
+    u32 fsr_fg_unknown{}; ///< The presented buffer wasn't seen being drawn.
     f32 fsr_fg_wait_ms{};
     f32 fsr_fg_minute_wait_ms{};
 

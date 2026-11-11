@@ -102,6 +102,10 @@ public:
     /// (created on first use), else null.
     [[nodiscard]] Fsr3FrameGenerator* FrameGenerator();
 
+    /// Frame generation: the game starts frame seq + 1 (a DLSS evaluation follows); frame seq's
+    /// UI layer (or null) is kept for when that frame is presented later.
+    void FrameGenStashUi(Image* ui_layer, u64 seq);
+
     /// True while TemporalUpscale would replace the game's DLSS: AMD FSR 4 or NVIDIA DLSS (on in
     /// the settings, the provider loaded, not failed), else AMD FSR 3.1 (ticked, not failed).
     [[nodiscard]] bool UsesReplacementUpscaler() const;
@@ -198,6 +202,7 @@ public:
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
     std::unique_ptr<Fsr3Upscaler> fsr3_upscaler;
     std::unique_ptr<Fsr3FrameGenerator> frame_generator;
+    u64 frame_generator_seq = 0; ///< The frame the next Prepare belongs to.
     bool frame_generator_unsupported{};
     bool fsr3_unsupported{};
     std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;

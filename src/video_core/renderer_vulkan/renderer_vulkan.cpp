@@ -274,7 +274,9 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 #endif
 
-    GenerateFsrFrame(frame);
+    GenerateFsrFrame(frame, framebuffers.empty()
+                                ? DAddr{}
+                                : framebuffers[0].address + framebuffers[0].offset);
 
     scheduler.Flush(*frame->render_ready);
 
@@ -288,7 +290,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     rasterizer.TickFrame();
 }
 
-void RendererVulkan::GenerateFsrFrame(Frame* frame) {
+void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented) {
     frame->present_delay = {};
     Fsr3FrameGenerator* const generator = rasterizer.FrameGenerator();
     if (!generator) {
@@ -320,12 +322,16 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         LOG_INFO(Render_Vulkan,
                  "Frame generation, last 10 s: {} frames made ({} with the UI layer kept still), "
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
-                 "for free frames; {:.2f} UI layers a frame",
+                 "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
+                 "started the next, {} not matched to a game frame",
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
-                             : 0.0f);
+                             : 0.0f,
+                 fsr_fg_late, fsr_fg_unknown);
         fsr_fg_ui_layers = 0;
+        fsr_fg_late = 0;
+        fsr_fg_unknown = 0;
         fsr_fg_minute_wait_ms = 0.0f;
         fsr_fg_ui = 0;
         fsr_fg_report_start = now;
@@ -334,18 +340,26 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     }
     // Only with the game's motion for this frame (3D scenes), storage-capable frames, and a frame
     // rate where it helps: not above ~120 FPS (already smooth) or below ~15 (too far apart).
-    const bool wanted = generator->HasPrepared() && frame->storage_view &&
+    // Which of the game's frames this is: the game may present a frame after it has started
+    // the next (its motion and UI then come from what was kept for it).
+    const RasterizerVulkan::FrameGenFrameInfo game_frame = rasterizer.FrameGenFrame(presented);
+    const bool prepared = generator->HasPrepared(game_frame.seq);
+    if (prepared) {
+        fsr_fg_late += game_frame.previous ? 1 : 0;
+        fsr_fg_unknown += game_frame.known ? 0 : 1;
+    }
+    const bool wanted = prepared && frame->storage_view &&
                         fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
     if (!wanted) {
         // Once a session: why no frame was made while the game had motion.
         static bool logged{};
-        if (generator->HasPrepared() && !logged) {
+        if (prepared && !logged) {
             logged = true;
             LOG_INFO(Render_Vulkan,
                      "AMD FSR 3.1 frame generation skipped: frame storage {}, {:.1f} ms apart",
                      static_cast<bool>(frame->storage_view), fsr_fg_interval_ms);
         }
-        generator->Skip();
+        generator->Skip(game_frame.seq);
         ++fsr_fg_skipped;
         return;
     }
@@ -375,7 +389,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     if (!generated->storage_view || generated->width != frame->width ||
         generated->height != frame->height || width == 0 || height == 0 || debug_mode == 1) {
         // Shouldn't happen (the frames are made alike); show the real frame twice.
-        generator->Skip();
+        generator->Skip(game_frame.seq);
         scheduler.Record([source = *frame->image, destination = *generated->image,
                           w = frame->width, h = frame->height](vk::CommandBuffer cmdbuf) {
             const VkImageMemoryBarrier barrier{
@@ -407,14 +421,16 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
     }
     std::array<VkImageView, 4> ui_layers{};
     if (debug_mode != 4) {
-        ui_layers = rasterizer.FrameGenUiLayers();
+        ui_layers = game_frame.layers;
     }
-    if (ui_layers[0]) {
+    const bool stashed_ui = game_frame.previous && debug_mode != 4;
+    if (ui_layers[0] || stashed_ui) {
         ++fsr_fg_ui;
     }
     for (const VkImageView layer : ui_layers) {
         fsr_fg_ui_layers += layer ? 1 : 0;
     }
+    fsr_fg_ui_layers += stashed_ui ? 1 : 0;
     generator->Generate({
         .current_image = *frame->image,
         .current_view = *frame->storage_view,
@@ -429,6 +445,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame) {
         .min_max_luminance = {0.0f, 1000.0f},
         .ui_layers = ui_layers,
         .show_ui_mask = debug_mode == 3,
+        .seq = game_frame.seq,
+        .stashed_ui = stashed_ui,
     });
     if (debug_mode >= 2) {
         scheduler.Record([source = *generated->image, destination = *frame->image,

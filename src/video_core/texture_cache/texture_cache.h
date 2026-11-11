@@ -377,9 +377,10 @@ template <class P>
 void TextureCache<P>::TickFrame() {
     // Count again next frame while the game keeps evaluating DLSS (from the frame's start: the
     // UI may be drawn before the evaluation).
+    // (The draw counts start over at each evaluation: the game may present a frame after it has
+    // started the next one.)
     fg_ui_watch = fg_ui_dlss_seen;
     fg_ui_dlss_seen = false;
-    fg_ui_count_size = 0;
     if (fg_trace_active) {
         FlushRenderTargetTrace();
         LOG_INFO(HW_GPU, "Draw trace: frame end");
@@ -934,6 +935,12 @@ void TextureCache<P>::WatchUiLayer() {
         return;
     }
     const ImageBase& image = slot_images[image_id];
+    // A presented buffer being drawn: it will show this frame.
+    for (auto& [address, seq] : fg_present_marks) {
+        if (address != 0 && address == image.cpu_addr) {
+            seq = fg_seq;
+        }
+    }
     const PixelFormat format = image.info.format;
     const bool rgba8 = format == PixelFormat::A8B8G8R8_SRGB ||
                        format == PixelFormat::A8B8G8R8_UNORM ||
@@ -955,6 +962,45 @@ void TextureCache<P>::WatchUiLayer() {
 
 template <class P>
 std::array<typename P::ImageView*, 4> TextureCache<P>::FrameGenUiLayers() {
+    std::array<ImageView*, 4> result{};
+    const std::array<ImageId, 4> ids = FrameGenUiLayerIds();
+    for (size_t i = 0; i < ids.size() && ids[i]; ++i) {
+        const ImageBase& image = slot_images[ids[i]];
+        const ImageViewId view = FindOrEmplaceImageView(
+            ids[i], ImageViewInfo(ImageViewType::e2D, image.info.format,
+                                  SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
+        result[i] = &slot_image_views[view];
+    }
+    return result;
+}
+
+template <class P>
+typename TextureCache<P>::FrameGenFrameInfo TextureCache<P>::FrameGenFrame(DAddr presented) {
+    FrameGenFrameInfo info{.seq = fg_seq, .known = false, .previous = false, .layers = {}};
+    bool found = false;
+    for (const auto& [address, seq] : fg_present_marks) {
+        if (address != presented) {
+            continue;
+        }
+        found = true;
+        if (seq != 0) {
+            info.known = true;
+            info.seq = seq;
+            info.previous = seq != fg_seq;
+        }
+    }
+    if (!found && presented != 0) {
+        fg_present_marks[fg_present_next] = {presented, 0};
+        fg_present_next = (fg_present_next + 1) % fg_present_marks.size();
+    }
+    if (!info.previous) {
+        info.layers = FrameGenUiLayers();
+    }
+    return info;
+}
+
+template <class P>
+std::array<ImageId, 4> TextureCache<P>::FrameGenUiLayerIds() {
     // Every full-size 8-bit colour target drawn this frame, most drawn first: the game may draw
     // its UI into more than one (taking only the most drawn, the mask lost part of the UI on the
     // frames where another won). The target the UI is combined into is opaque (no coverage), so
@@ -962,15 +1008,9 @@ std::array<typename P::ImageView*, 4> TextureCache<P>::FrameGenUiLayers() {
     std::array<std::pair<ImageId, u32>, 8> sorted = fg_ui_counts;
     std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(fg_ui_count_size),
               [](const auto& a, const auto& b) { return a.second > b.second; });
-    std::array<ImageView*, 4> result{};
+    std::array<ImageId, 4> result{};
     size_t count = 0;
-    const auto add = [&](ImageId id) {
-        const ImageBase& image = slot_images[id];
-        const ImageViewId view = FindOrEmplaceImageView(
-            id, ImageViewInfo(ImageViewType::e2D, image.info.format,
-                              SubresourceRange{.base = {0, 0}, .extent = {1, 1}}));
-        result[count++] = &slot_image_views[view];
-    };
+    const auto add = [&](ImageId id) { result[count++] = id; };
     for (size_t i = 0; i < fg_ui_count_size && count < result.size(); ++i) {
         if (sorted[i].second >= 2) {
             add(sorted[i].first);
@@ -1420,7 +1460,14 @@ bool TextureCache<P>::TemporalUpscale(const Tegra::Texture::TICEntry& dst,
             dst_id, ImageViewInfo(ImageViewType::e2D, ImageInfo(dst).format, *dst_range));
         // After the views: creating them may reallocate the framebuffer slots.
         Framebuffer* const dst_framebuffer = &slot_framebuffers[dst_framebuffer_id];
-        // Frame generation: watch for the UI layer the game draws next.
+        // Frame generation: the frame before is finished (its UI layer complete): keep its UI for
+        // when it is presented after this one has started. Then watch for the UI drawn next.
+        {
+            const ImageId layer = fg_seq != 0 ? FrameGenUiLayerIds()[0] : ImageId{};
+            runtime.FrameGenStashUi(layer ? &slot_images[layer] : nullptr, fg_seq);
+        }
+        ++fg_seq;
+        fg_ui_count_size = 0;
         fg_ui_watch = true;
         fg_ui_dlss_seen = true;
         fg_ui_exclude = dst_id;

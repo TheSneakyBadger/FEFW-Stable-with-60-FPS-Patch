@@ -52,6 +52,8 @@ public:
         /// taken out before interpolation and put back after; the rest are masked.
         std::array<VkImageView, 4> ui_layers; ///< Null-padded; [0] null: no mask.
         bool show_ui_mask; ///< Testing: writes the UI mask instead.
+        u64 seq;           ///< Which of the game's frames this is (its Prepare).
+        bool stashed_ui;   ///< Use the UI kept by StashUi for it (ui_layers unused).
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,
@@ -64,17 +66,26 @@ public:
     /// Whether the device has what the passes need.
     [[nodiscard]] static bool IsSupported(const Device& device);
 
-    /// Records the reconstruct-and-dilate pass on this frame's depth and motion vectors.
-    void Prepare(const PrepareInputs& inputs);
+    /// Records the reconstruct-and-dilate pass on frame seq's depth and motion vectors. Two
+    /// frames are kept: the game may start its next frame before this one is presented.
+    void Prepare(const PrepareInputs& inputs, u64 seq);
 
-    /// True when Prepare ran since the last Generate (this frame has game motion).
-    [[nodiscard]] bool HasPrepared() const noexcept {
-        return prepared;
+    /// Keeps a copy of frame seq's UI layer (GENERAL layout; null: none).
+    void StashUi(VkImage image, VkFormat format, VkExtent2D size, u64 seq);
+
+    /// True when frame seq was prepared and nothing was generated for it yet.
+    [[nodiscard]] bool HasPrepared(u64 seq) const noexcept {
+        const PreparedFrame& frame = prepared_frames[seq & 1];
+        return seq != 0 && frame.ready && frame.seq == seq;
     }
 
-    /// No frame is generated for this one: the next generation starts over.
-    void Skip() noexcept {
-        prepared = false;
+    /// No frame is generated for frame seq: the next generation starts over.
+    void Skip(u64 seq) noexcept {
+        for (PreparedFrame& frame : prepared_frames) {
+            if (frame.seq <= seq) {
+                frame.ready = false;
+            }
+        }
         has_previous = false;
     }
 
@@ -91,6 +102,16 @@ private:
         std::vector<vk::ImageView> levels; ///< One view per level, for images with mips.
     };
 
+    struct PreparedFrame {
+        Texture dilated_depth;
+        Texture dilated_motion_vectors;
+        Texture reconstructed_previous_depth;
+        std::array<f32, 2> jitter{};
+        std::array<f32, 2> motion_vector_scale{};
+        u64 seq{};
+        bool ready{};
+    };
+
     Texture CreateTexture(VkFormat format, u32 width, u32 height, u32 levels = 1);
     void CreateRenderResources(VkExtent2D render_size);
     void CreateDisplayResources(VkExtent2D display_size, VkFormat format);
@@ -105,9 +126,7 @@ private:
     std::vector<std::unique_ptr<Pass>> passes;
 
     // Render size (frame interpolation).
-    Texture dilated_depth;
-    Texture dilated_motion_vectors;
-    Texture reconstructed_previous_depth;
+    std::array<PreparedFrame, 2> prepared_frames; ///< By frame parity.
     Texture reconstructed_interpolated_depth;
     Texture game_motion_x;
     Texture game_motion_y;
@@ -118,6 +137,13 @@ private:
     Texture inpainting_pyramid;
     Texture previous_source;
     Texture ui_less; ///< This frame without the game's UI (what frame generation works on).
+    // The UI layer of a frame presented after the game started the next one.
+    vk::Image ui_stash;
+    vk::ImageView ui_stash_view;
+    VkFormat ui_stash_format{VK_FORMAT_UNDEFINED};
+    VkExtent2D ui_stash_extent{};
+    u64 ui_stash_seq{};
+    bool ui_stash_new{};
     std::array<std::array<Texture, 7>, 2> flow_input; ///< Luma pyramids, ping-pong.
     std::array<std::array<Texture, 7>, 2> flow;       ///< Optical flow per level, ping-pong.
     Texture flow_vector;    ///< The optical flow result (display / 8).
@@ -133,11 +159,8 @@ private:
     VkExtent2D render_extent{};
     VkExtent2D display_extent{};
     VkFormat display_format{VK_FORMAT_UNDEFINED};
-    std::array<f32, 2> jitter{};
-    std::array<f32, 2> motion_vector_scale{};
     u32 flow_frame_index{};
     u32 flow_parity{};
-    bool prepared{};
     bool render_resources_new{true};
     bool display_resources_new{true};
     bool fixed_resources_new{true};

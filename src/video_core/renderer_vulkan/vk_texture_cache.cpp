@@ -1399,16 +1399,39 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
     // Frame generation takes this frame's motion and depth now, while they are the game's.
     if (upscaled) {
         if (Fsr3FrameGenerator* const generator = FrameGenerator()) {
-            generator->Prepare({
-                .depth = depth.DepthView(),
-                .motion_vectors = motion_vectors.Handle(Shader::TextureType::Color2D),
-                .render_size = {render_size[0], render_size[1]},
-                .jitter = jitter,
-                .motion_vector_scale = motion_scale,
-            });
+            generator->Prepare(
+                {
+                    .depth = depth.DepthView(),
+                    .motion_vectors = motion_vectors.Handle(Shader::TextureType::Color2D),
+                    .render_size = {render_size[0], render_size[1]},
+                    .jitter = jitter,
+                    .motion_vector_scale = motion_scale,
+                },
+                frame_generator_seq);
         }
     }
     return upscaled;
+}
+
+void TextureCacheRuntime::FrameGenStashUi(Image* ui_layer, u64 seq) {
+    frame_generator_seq = seq + 1;
+    Fsr3FrameGenerator* const generator = FrameGenerator();
+    if (!generator) {
+        return;
+    }
+    if (!ui_layer) {
+        generator->StashUi(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, {}, seq);
+        return;
+    }
+    u32 width = ui_layer->info.size.width;
+    u32 height = ui_layer->info.size.height;
+    if (ui_layer->IsRescaled()) {
+        width = Settings::values.resolution_info.ScaleUp(width);
+        height = Settings::values.resolution_info.ScaleUp(height);
+    }
+    const VkFormat format =
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, ui_layer->info.format).format;
+    generator->StashUi(ui_layer->Handle(), format, {width, height}, seq);
 }
 
 Fsr3FrameGenerator* TextureCacheRuntime::FrameGenerator() {
