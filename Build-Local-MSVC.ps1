@@ -387,8 +387,10 @@ cmake_language(DEFER CALL eden_render_isa_options)
   correct anywhere between 30 and 60 FPS (no slow motion when your PC can't hold 60). Capes
   and hair are simulated every frame.
   Takes effect when the game starts. Made for game version 1.1.0 (build ID DB93B0125F485060);
-  on other versions it turns on when every place it changes is found. With a mod that changes
-  the same code it stays off. The older "60fps" add-on folder becomes the setting.
+  on other versions it turns on when every place it changes is found. It works alongside mods,
+  even those that use the free space after the game's code its routines usually take; with a
+  mod that changes the same game code it stays off. The older "60fps" add-on folder becomes the
+  setting.
 - Emulation > Configure > Performance: Reflections (Full / Reduced / Off), Turn ambient
   occlusion off, Reduced crowd detail and Reduced scenery detail: lighter versions of the
   game's own effects for PCs that can't hold the frame rate (each tick makes the game
@@ -403,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.2 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.3 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -462,6 +464,13 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
 $fpsText$optionalText
+
+New in v1.6.8.3:
+- Fixed a crash in long pre-rendered cutscenes with frame generation on (from v1.6.8.2): the
+  emulator closed to the desktop about 30 seconds into the video.
+- 60 FPS mode now works with mods that fill the free space after the game's code (settings
+  mods, quality-of-life mods): its routines go in memory Fortune's Eden adds after the game's
+  code instead of turning 60 FPS mode off.
 
 New in v1.6.8.2:
 - Video memory is cleaned up at loading screens: what the previous area used is freed when the

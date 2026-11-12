@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.6.8.3
+
+A fix for a crash in cutscenes with frame generation, and 60 FPS mode with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30), [#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).
+
+#### 🔧 Fixes
+
+- **No more crash in long pre-rendered cutscenes with frame generation on.** In v1.6.8.2, about 30 seconds into a pre-rendered video, Fortune's Eden could close to the desktop. Frame generation kept a reference to the game's UI image, which the new video memory cleanup freed while the video played (it was unused for 30 seconds), and NVIDIA's driver crashed when the next frame used it.
+
+#### ⚡ 60 FPS mode
+
+- **Works alongside more mods.** Mods that use the free space after the game's code (settings and quality-of-life mods among them) turned 60 FPS mode off, because its routines go in that same space. They now go in memory Fortune's Eden adds after the game's code. A mod that changes the same game code as 60 FPS mode still turns it off.
+
+Everything else is as in [v1.6.8.2](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.2).
+
 ## v1.6.8.2
 
 Video memory that no longer builds up over long sessions ([#31](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/31), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37)), and less waiting on the emulator in busy scenes ([#41](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/41)).
