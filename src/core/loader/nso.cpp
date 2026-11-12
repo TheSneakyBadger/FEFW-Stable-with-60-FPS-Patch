@@ -19,6 +19,7 @@
 #include "common/swap.h"
 #include "core/fefw_frame_rate.h"
 #include "core/core.h"
+#include "core/file_sys/fefw_60fps_search.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/hle/kernel/code_set.h"
 #include "core/hle/kernel/k_page_table.h"
@@ -163,8 +164,20 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         codeset.segments[i].size = PageAlignSize(codeset.segments[i].size);
     }
 
-    // Apply patches if necessary
     const auto name = nso_file.GetName();
+
+    // Fortune's Eden: room after main for the 60 FPS patch's routines and table, for when a mod
+    // uses the free space they usually go in (FefwSixtySearch::ReserveBytes; the pages stay
+    // zero unless the patch needs them). The layout pass has no patch manager, so it always
+    // counts it for main; the loading pass adds it only while 60 FPS mode is on.
+    u32 fefw_reserved_at = 0;
+    if (name == "main" && (!load_into_process || (pm && pm->FefwSixtyEnabled()))) {
+        fefw_reserved_at = image_size;
+        image_size += static_cast<u32>(FefwSixtySearch::ReserveBytes);
+        codeset.memory.resize(image_size);
+    }
+
+    // Apply patches if necessary
     if (pm && (pm->HasNSOPatch(nso_header.build_id, name) || Settings::values.dump_nso)) {
         std::span<u8> patchable_section(codeset.memory.data() + module_start, codeset.memory.size() - module_start);
         std::vector<u8> pi_header(sizeof(NSOHeader) + patchable_section.size());
@@ -172,7 +185,10 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         std::memcpy(pi_header.data() + sizeof(NSOHeader), patchable_section.data(),
                     patchable_section.size());
 
+        FefwSixtySearch::reserved_offset =
+            fefw_reserved_at != 0 ? fefw_reserved_at - module_start : 0;
         pi_header = pm->PatchNSO(pi_header, name);
+        FefwSixtySearch::reserved_offset = 0;
 
         std::copy(pi_header.begin() + sizeof(NSOHeader), pi_header.end(), patchable_section.data());
     }
@@ -251,6 +267,21 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
 
     // Load codeset for current process
     process.LoadModule(system.Kernel(), std::move(codeset), load_base);
+    if (fefw_reserved_at != 0) {
+        // Read-write, like the data before it, so the room is part of main's data region. The
+        // game's rtld takes every executable region as the start of a module: an executable
+        // page here was read as one, and the game stuck at boot following its "header". The
+        // emulated CPU runs code from any mapped page (a native-code build would need it
+        // executable, and another place for it).
+        auto& page_table = process.GetPageTable();
+        const Result result = page_table.SetProcessMemoryPermission(
+            load_base + fefw_reserved_at, FefwSixtySearch::ReserveBytes,
+            Kernel::Svc::MemoryPermission::ReadWrite);
+        if (result.IsError()) {
+            LOG_ERROR(Loader, "60 FPS mode: the room after main at {:#x} could not be set up",
+                      load_base + fefw_reserved_at);
+        }
+    }
     return load_base + image_size;
 }
 

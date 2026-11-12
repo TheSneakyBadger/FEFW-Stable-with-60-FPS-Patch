@@ -20,6 +20,8 @@
 #include "video_core/gpu.h"
 #include "video_core/textures/decoders.h"
 #include <mutex>
+#include <string>
+#include <fmt/format.h>
 #include "core/hle/service/nvdrv/core/syncpoint_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "core/hle/service/am/service/native_video_layout.h"
@@ -70,6 +72,28 @@ int Av1DecodeThreads() {
     return threads;
 }
 
+// Fortune's Eden: AV1 frames dav1d decodes at once (frame threading). Fortune's Weave's 1440p
+// cutscenes are one tile per frame: one frame at a time, dav1d could only share the filtering
+// among its threads, and heavy frames (fire, fast camera moves) took 30-43 ms each, over the
+// 33 ms a 30 FPS video has, so the movie fell behind and the game faded the dialogue (#22).
+// Several at once, a frame still takes as long but one is finished every 10-15 ms.
+// Off by default (one at a time, as before): with 4 at once the decode thread stopped inside
+// dav1d partway through a fire scene on a Ryzen 9 + RTX 4090 and the movie froze (still being
+// looked into). EDEN_AV1_FRAME_DELAY=2-8 turns it on for testing.
+int Av1FrameDelay() {
+    static const int delay = [] {
+        int value = 1;
+        if (const char* const env = std::getenv("EDEN_AV1_FRAME_DELAY")) {
+            const int requested = std::atoi(env);
+            if (requested >= 1 && requested <= 8) {
+                value = requested;
+            }
+        }
+        return value;
+    }();
+    return delay;
+}
+
 // EDEN_VIDEO_LOOKAHEAD=N (2-8; off by default) lets the game submit up to N AV1 frames before a
 // submission waits for a decoded frame. Each submission normally waits for the oldest frame
 // (when the game has an image free), so libgav1 only ever has about one frame to work on and
@@ -116,8 +140,8 @@ bool UseDav1d() {
     static const bool use = [] {
         const char* const value = std::getenv("EDEN_AV1_DECODER");
         const bool dav1d = value == nullptr || std::string_view{value} != "libgav1";
-        LOG_INFO(Service_AM, "Native AV1 decoder: {} with {} threads", dav1d ? "dav1d" : "libgav1",
-                 Av1DecodeThreads());
+        LOG_INFO(Service_AM, "Native AV1 decoder: {} with {} threads, {} frames at once",
+                 dav1d ? "dav1d" : "libgav1", Av1DecodeThreads(), dav1d ? Av1FrameDelay() : 0);
         return dav1d;
     }();
     return use;
@@ -327,6 +351,15 @@ private:
                         result = PumpOutput(/*from_submit=*/true, /*no_wait=*/OutputAsync());
                         RequestOutput();
                     } else {
+                        ++submissions_refused;
+                        // The game retries while the queue is full (about 30 a second during a
+                        // movie): logged only when testing frame threading or timing.
+                        if ((Av1FrameDelay() > 1 || VideoTimingEnabled()) &&
+                            (submissions_refused == 1 || submissions_refused % 100 == 0)) {
+                            LOG_WARNING(Service_AM,
+                                        "Native video: submission refused ({} bytes; {} so far): {}",
+                                        input.size(), submissions_refused, DecodeState(true));
+                        }
                         lock.unlock();
                         if (submission_event) submission_event->Clear(kernel);
                     }
@@ -509,9 +542,9 @@ private:
     int Av1Enqueue(const PendingInput& input) {
 #ifdef FEFW_HAVE_DAV1D
         if (dav1d) {
-            // With one frame in flight (max_frame_delay 1), dav1d decodes the frame here, using
-            // all its threads on it. It refuses new data while a picture waits to be taken: the
-            // rest of the input is then kept and sent again from Av1Dequeue.
+            // dav1d starts decoding the frame here, on its frame threads alongside the frames
+            // before it (Av1FrameDelay). It refuses new data while a picture waits to be taken:
+            // the rest of the input is then kept and sent again from Av1Dequeue.
             if (dav1d_pending.sz) return 1;
             Dav1dData data{};
             u8* const bytes = dav1d_data_create(&data, input.bytes.size());
@@ -544,6 +577,10 @@ private:
     bool Av1Dequeue(std::optional<DecodedFrame>& frame, u64 timestamp) {
 #ifdef FEFW_HAVE_DAV1D
         if (dav1d) {
+            // With frame threading, the first "try again" only says no picture is finished yet:
+            // asked again with no new data, dav1d waits for the oldest frame in progress (its
+            // drain), and says "try again" only when it has none.
+            bool drained = Av1FrameDelay() <= 1;
             while (true) {
                 Dav1dPicture picture{};
                 const int got = dav1d_get_picture(dav1d, &picture);
@@ -555,7 +592,14 @@ private:
                     LOG_ERROR(Service_AM, "dav1d failed to decode an AV1 frame: {}", got);
                     return false;
                 }
-                if (!dav1d_pending.sz) return true; // this input showed no frame
+                if (!dav1d_pending.sz) {
+                    if (!drained) {
+                        drained = true;
+                        continue;
+                    }
+                    return true; // no frame from what it was given
+                }
+                drained = Av1FrameDelay() <= 1;
                 const int sent = dav1d_send_data(dav1d, &dav1d_pending);
                 if (sent != 0 && sent != DAV1D_ERR(EAGAIN)) {
                     dav1d_data_unref(&dav1d_pending);
@@ -610,6 +654,24 @@ private:
         pending_input_bytes = pending_input_bytes >= bytes ? pending_input_bytes - bytes : 0;
     }
 
+    // A line for the log when something has waited a while (decode_mutex held). The images
+    // only from the service's calls, which own them.
+    std::string DecodeState(bool with_images = false) const {
+        std::string text = fmt::format(
+            "pending {} ({} bytes), in decoder {}, decoded {}, decoder full {}, busy {}, eos {}, "
+            "frames at once {}, submissions refused {}",
+            pending_inputs.size(), pending_input_bytes, av1_in_flight.size(),
+            decoded_frames.size(), av1_decoder_full, decode_busy, eos_in_progress,
+            Av1FrameDelay(), submissions_refused);
+        if (with_images) {
+            text += fmt::format(", images handed back {} of {}",
+                                std::ranges::count_if(registered_images,
+                                                      [](const auto& image) { return image.available; }),
+                                registered_images.size());
+        }
+        return text;
+    }
+
     // AV1 decode worker, the only user of the libgav1 decoder while decode_busy (Stop and Flush
     // wait for it to be idle before touching the decoder). It hands libgav1 every input it will
     // take, so frame-parallel decoding has several frames to work on at once, then takes the
@@ -631,9 +693,21 @@ private:
             return !pending_inputs.empty() && pending_inputs.front().eos && av1_in_flight.empty() &&
                    decoded_frames.size() < MaximumDecodedAhead;
         };
-        while (decode_cv.wait(lock, stop, [&] {
+        const auto ready = [&] {
             return !decode_error && (can_enqueue() || can_dequeue() || can_end_stream());
-        })) {
+        };
+        while (true) {
+            // Waiting over 2 s mid-movie: say for what (issue #22's frame threading).
+            if (!decode_cv.wait_for(lock, stop, std::chrono::seconds{2}, ready)) {
+                if (stop.stop_requested()) break;
+                if (!pending_inputs.empty() || !av1_in_flight.empty() || !decoded_frames.empty() ||
+                    (Av1FrameDelay() > 1 && submissions_refused != 0 &&
+                     std::chrono::steady_clock::now() - last_frame_out < std::chrono::seconds{60})) {
+                    LOG_WARNING(Service_AM, "Native video decode worker waiting 2 s: {}",
+                                DecodeState());
+                }
+                continue;
+            }
             if (stop.stop_requested()) break;
             if (can_enqueue()) {
                 PendingInput input = std::move(pending_inputs.front());
@@ -651,6 +725,11 @@ private:
                     ReleaseInFlightBytes(input.bytes.size());
                     decode_error = Kernel::ResultInvalidArgument;
                 } else {
+                    // The decoder has its own copy: the game's transfer memory is free again.
+                    // Counted until the frame came out, several heavy frames in progress at once
+                    // (2 MB each in the fire scenes) filled it, the game's next submission was
+                    // refused, and the movie stopped (frame threading, issue #22).
+                    ReleaseInFlightBytes(input.bytes.size());
                     av1_in_flight.push_back(std::move(input));
                 }
                 decode_cv.notify_all();
@@ -664,25 +743,43 @@ private:
                 const auto wait_start = std::chrono::steady_clock::now();
                 std::optional<DecodedFrame> frame;
                 const bool dequeued = Av1Dequeue(frame, timestamp);
+                const auto waited = std::chrono::steady_clock::now() - wait_start;
                 if (frame) {
-                    frame->decode_time = std::chrono::steady_clock::now() - wait_start;
+                    frame->decode_time = waited;
                 }
                 lock.lock();
+                if (waited > std::chrono::seconds{1}) {
+                    LOG_WARNING(Service_AM, "Native video: taking a frame out took {} ms ({}): {}",
+                                std::chrono::duration_cast<std::chrono::milliseconds>(waited).count(),
+                                frame ? "a frame" : "no frame", DecodeState());
+                }
                 decode_busy = false;
                 av1_decoder_full = false;
                 if (!dequeued) {
                     // The decoder dropped every frame it had after a failure
-                    for (const PendingInput& input : av1_in_flight) {
-                        ReleaseInFlightBytes(input.bytes.size());
-                    }
                     av1_in_flight.clear();
                     decode_error = Kernel::ResultInvalidArgument;
-                } else {
-                    ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
+                } else if (!frame) {
                     av1_in_flight.pop_front();
-                    if (frame) {
-                        decoded_frames.push_back(std::move(*frame));
+                } else {
+                    // The frame's own input (by its submission ID; dav1d decodes several at once),
+                    // and any before it that showed no frame, are done.
+                    const auto own = std::ranges::find(av1_in_flight, frame->submission_id,
+                                                       &PendingInput::submission_id);
+                    if (own != av1_in_flight.end()) {
+                        frame->timestamp = own->timestamp;
+                        while (!av1_in_flight.empty()) {
+                            const bool last = &av1_in_flight.front() == &*own;
+                            av1_in_flight.pop_front();
+                            if (last) {
+                                break;
+                            }
+                        }
+                    } else {
+                        av1_in_flight.pop_front();
                     }
+                    decoded_frames.push_back(std::move(*frame));
+                    last_frame_out = std::chrono::steady_clock::now();
                 }
                 decode_cv.notify_all();
                 continue;
@@ -834,10 +931,16 @@ private:
                 if (no_wait && decoded_frames.empty() && !decode_error) {
                     break;
                 }
-                decode_cv.wait(lock, [&] {
+                const auto frame_or_idle = [&] {
                     return !decoded_frames.empty() || decode_error ||
                            (pending_inputs.empty() && av1_in_flight.empty() && !decode_busy);
-                });
+                };
+                while (!decode_cv.wait_for(lock, std::chrono::seconds{2}, frame_or_idle)) {
+                    LOG_WARNING(Service_AM,
+                                "Native video: the game has waited 2 s for a frame ({}): {}",
+                                from_submit ? "submitting" : "handing an image back",
+                                DecodeState(true));
+                }
                 if (decode_error) {
                     const Result error = *decode_error;
                     decode_error.reset();
@@ -1595,9 +1698,7 @@ private:
                                     Dav1dSettings settings;
                                     dav1d_default_settings(&settings);
                                     settings.n_threads = Av1DecodeThreads();
-                                    // One frame at a time, all threads on it: the game waits for
-                                    // each frame, so latency, not throughput, sets the pace.
-                                    settings.max_frame_delay = 1;
+                                    settings.max_frame_delay = Av1FrameDelay();
                                     settings.logger.callback = nullptr;
                                     opened = dav1d_open(&dav1d, &settings) == 0;
                                     if (!opened) {
@@ -1680,6 +1781,8 @@ private:
     std::deque<DecodedFrame> decoded_frames;
     std::deque<PendingInput> pending_inputs;
     u64 pending_input_bytes{};
+    u64 submissions_refused{};  ///< Submissions refused for a full queue (the log).
+    std::chrono::steady_clock::time_point last_frame_out{};
     u64 next_submission_id{1};
     bool started{};
     bool flushed{}; // Flushed since the last Start: Start may resume decoding.
