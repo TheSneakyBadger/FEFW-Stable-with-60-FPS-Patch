@@ -392,9 +392,9 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
         // The emulated CPU runs code from any mapped page.
         const VAddr room_address = base_address + fefw_room_at;
         process.GetMemory().WriteBlock(room_address, fefw_room.data(), fefw_room.size());
-        const Result result = process.GetPageTable().SetProcessMemoryPermission(
+        const Result room_result = process.GetPageTable().SetProcessMemoryPermission(
             room_address, fefw_room.size(), Kernel::Svc::MemoryPermission::ReadWrite);
-        if (result.IsError()) {
+        if (room_result.IsError()) {
             LOG_ERROR(Loader,
                       "60 FPS mode: the room after the game's modules at {:#x} could not be set up",
                       room_address);
