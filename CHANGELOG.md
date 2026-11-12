@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.6.8.2
+
+Video memory that no longer builds up over long sessions ([#31](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/31), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37)), and less waiting on the emulator in busy scenes ([#41](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/41)).
+
+#### 🧠 Video memory
+
+- **Cleaned up at loading screens.** Fortune's Eden now notices when the game loads a new area (from its reads of the map's data). Once the new area is running, it frees what the previous one used. Memory drops at each area change instead of climbing all session: in testing, one area change took it from 12.4 GB back to 5.6 GB.
+- **Old render targets are freed after 30 seconds unused.** Before, they were only freed once memory reached the faster cleanup level (12.6 GB on a 24 GB card). Even then, the cleanup threw out the game's textures first, so memory sat at that level, reloading textures every few seconds.
+- **Small leftover images go after 5 minutes unused.** They used to be kept for good, and grew to 3.6 GB over an hour.
+
+This helps cards with 8 GB or less most: they start each area with a clean cache.
+
+#### ⚡ Performance
+
+- **The game's writes to graphics memory no longer wait for the drawing thread.** On busy battle maps the game makes tens of thousands of these writes a second. Each one waited while the emulator's drawing thread drew, which caused small freezes when moving units on some CPUs ([#41](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/41)). They're now collected and applied together before the GPU uses them.
+
+#### ⚙️ Settings
+
+- **"Turn ambient occlusion off"** replaces the "Ambient occlusion" box on the Performance page. Ambient occlusion stays on unless you tick it, and if you had already turned it off, it stays off. Every tick box on the Performance page now makes the game lighter.
+- **60 FPS mode moves to the Graphics page**, next to Ultrawide. It's still on the launch screen too.
+- **F10 no longer switches between docked and handheld.** It was easy to hit by accident, and handheld mode drops the game to 1080p. The menu item and the controller shortcut (Home+X) still work.
+
+#### 🐧 Linux
+
+The Linux build now comes with each release: **Fortunes-Eden-linux-x86_64.tar.gz** below. Extract it and run `./start-fortunes-eden.sh`. From this version on it updates itself, like the Windows build. It's newer and tested on fewer PCs, so please [report how it goes](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues).
+
+Everything else is as in [v1.6.8.1](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.1).
+
 ## v1.6.8.1
 
 A quick fix for three frame generation problems in v1.6.8.

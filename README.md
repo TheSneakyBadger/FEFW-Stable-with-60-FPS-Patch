@@ -23,6 +23,7 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 
 ## What's new
 
+- **v1.6.8.2:** video memory is cleaned up at loading screens and no longer builds up over long sessions ([#31](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/31), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37)), and the game no longer waits on the emulator's drawing thread when it writes graphics memory, for small freezes when moving units on some CPUs ([#41](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/41)). *Turn ambient occlusion off* replaces the Ambient occlusion box, 60 FPS mode moves to *Settings → Graphics*, and F10 no longer switches to handheld.
 - **v1.6.8.1:** Frame generation is back in *Settings → Graphics* (with NVIDIA's download button), the UI no longer ghosts with AMD frame generation and HDR, and NVIDIA DLSS frame generation works when a game is started again.
 - **v1.6.8:** frame generation (experimental): AMD FSR 3.1 on any card, or NVIDIA DLSS on GeForce RTX 40/50, so 60 FPS shows as 120. The game's UI stays still.
 - **v1.6.8:** the main settings are on the launch screen, beside Play: 60 FPS, Ultrawide, HDR, upscaler, quality and frame generation.
@@ -116,11 +117,11 @@ Fortune's Weave has an HDR mode on Switch 2. Turn on HDR in Windows (*Settings �
 
 ## 60 FPS mode
 
-**30 FPS is how Fortune's Weave runs on Switch 2**, and it's how this build runs by default. The built-in **60 FPS mode** is off by default: turn it on in *Settings → Performance → 60 FPS mode* and start the game.
+**30 FPS is how Fortune's Weave runs on Switch 2**, and it's how this build runs by default. The built-in **60 FPS mode** is off by default: turn it on in *Settings → Graphics → 60 FPS mode* (or **60 FPS** on the launch screen) and start the game.
 
 Unlike the old 60 FPS cheat, which forced a fixed 60 and made the whole game run in slow motion whenever a PC fell below it, game speed follows your real frame rate anywhere from 30 to 60 FPS. About 50 places in the game that counted per frame (the map cursor and markers, menus, physics, cutscene shake, character creation and more) were traced and fixed so they keep their normal speed, and capes and hair are simulated every frame with physics scaled to the frame time. It was made for game version 1.1.0; on other versions it turns on when every place it changes is found. It works alongside mods, and turns itself off (the mod still works) if a mod changes the same game code. An old `60fps` add-on folder becomes the setting.
 
-The same page has **Reflections**, **Ambient occlusion**, **Reduced crowd detail** and **Reduced scenery detail**, lighter versions of the game's own effects for PCs that can't hold the frame rate.
+*Settings → Performance* has **Reflections**, **Turn ambient occlusion off**, **Reduced crowd detail** and **Reduced scenery detail**, lighter versions of the game's own effects for PCs that can't hold the frame rate. Each tick makes the game lighter.
 
 ## Saves
 
@@ -176,14 +177,14 @@ That gives `FEFW-Stable-60FPS-Portable` (with `Fortune's Eden.exe`) and a zip of
 3. `.\Build-Local-MSVC.ps1 -Version 1.12 -Portable -Pgo Use` builds the optimised package.
 </details>
 
-## Linux (test build)
+## Linux
 
 > [!NOTE]
-> A **Linux test build** is available: **[Fortunes-Eden-linux-x86_64.tar.gz](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/raw/test-builds/Fortunes-Eden-linux-x86_64.tar.gz)** (64-bit, AppImage). It's new and not yet tested on many PCs, so please [report how it goes](../../issues) with your distribution, GPU and driver, and attach `user/log/eden_log.txt`.
+> From v1.6.8.2, each release has a **Linux build**: **[Fortunes-Eden-linux-x86_64.tar.gz](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/latest/download/Fortunes-Eden-linux-x86_64.tar.gz)** (64-bit, AppImage). It's newer and tested on fewer PCs than the Windows build, so please [report how it goes](../../issues) with your distribution, GPU and driver, and attach `user/log/eden_log.txt`.
 
 - Extract it and run `./start-fortunes-eden.sh`: settings, saves and shader cache stay in the `user` folder next to it, apart from any other Eden install. Put your keys in `user/keys`.
 - It's the same emulator as the Windows build, but without NVIDIA DLSS or AMD FSR 4 (both are Windows-only); AMD FSR 3.1 is the default upscaler.
-- No automatic updates: the link always gives the newest Linux build, so download it again for updates.
+- It updates itself like the Windows build: the AppImage is replaced with the new release's (`Fortunes-Eden-x86_64.AppImage`), and the `user` folder is kept.
 - If it doesn't start, install FUSE 2 (`fuse2` or `libfuse2`), or run `./Fortunes-Eden.AppImage --appimage-extract-and-run`.
 - Source: the [`linux-build`](../../tree/linux-build) branch.
 

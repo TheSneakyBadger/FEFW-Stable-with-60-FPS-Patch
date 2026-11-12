@@ -338,7 +338,7 @@ cmake_language(DEFER CALL eden_render_isa_options)
         } else {
             Write-Warning 'fsr4\amd_fidelityfx_upscaler_vk.dll not found: the package has no AMD FSR 4.'
         }
-        # 60 FPS mode is built in since v1.6.7.4 (Settings > Performance): no mod is packaged.
+        # 60 FPS mode is built in since v1.6.7.4 (Settings > Graphics): no mod is packaged.
         # Portable profile: a "user" folder next to the exe keeps keys, firmware, settings and
         # saves inside this folder instead of %APPDATA%\eden.
         $userDir = Join-Path $outDir 'user'
@@ -381,17 +381,18 @@ cmake_language(DEFER CALL eden_render_isa_options)
         }
         $fpsText = @"
 
-60 FPS MODE AND PERFORMANCE (Fortune's Weave 1.1.0) - Emulation > Configure > Performance.
-- 60 FPS mode (off by default): the game runs at up to 60 FPS instead of its native 30. Game
-  speed follows your real frame rate, so it stays correct anywhere between 30 and 60 FPS
-  (no slow motion when your PC can't hold 60). Capes and hair are simulated every frame.
+60 FPS MODE AND PERFORMANCE (Fortune's Weave 1.1.0)
+- 60 FPS mode (Emulation > Configure > Graphics, off by default): the game runs at up to
+  60 FPS instead of its native 30. Game speed follows your real frame rate, so it stays
+  correct anywhere between 30 and 60 FPS (no slow motion when your PC can't hold 60). Capes
+  and hair are simulated every frame.
   Takes effect when the game starts. Made for game version 1.1.0 (build ID DB93B0125F485060);
   on other versions it turns on when every place it changes is found. With a mod that changes
   the same code it stays off. The older "60fps" add-on folder becomes the setting.
-- Reflections (Full / Reduced / Off), Ambient occlusion, Reduced crowd detail and Reduced
-  scenery detail: lighter
-  versions of the game's own effects for PCs that can't hold the frame rate. Nothing on disk
-  is changed. Take effect when the game starts.
+- Emulation > Configure > Performance: Reflections (Full / Reduced / Off), Turn ambient
+  occlusion off, Reduced crowd detail and Reduced scenery detail: lighter versions of the
+  game's own effects for PCs that can't hold the frame rate (each tick makes the game
+  lighter). Nothing on disk is changed. Take effect when the game starts.
 "@
         $optionalText = @"
 
@@ -402,7 +403,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.1 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.2 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -461,6 +462,19 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
 $fpsText$optionalText
+
+New in v1.6.8.2:
+- Video memory is cleaned up at loading screens: what the previous area used is freed when the
+  next one has loaded, so memory drops at each area change instead of climbing all session.
+- Earlier scenes' render targets are freed after 30 seconds unused, and small leftover images
+  after 5 minutes (they were kept for good and grew by gigabytes over long sessions).
+- Less waiting on the emulator in busy scenes: the game's writes to graphics memory no longer
+  wait for the thread that draws (the small freezes when moving units on some CPUs, #41).
+- Performance page: "Turn ambient occlusion off" (ambient occlusion stays on unless ticked;
+  an earlier "off" is kept), so every tick there makes the game lighter. 60 FPS mode moves to
+  the Graphics page.
+- F10 no longer switches between docked and handheld (easy to hit by accident; handheld drops
+  the game to 1080p). The menu item and the controller shortcut, Home+X, stay.
 
 New in v1.6.8.1:
 - Frame generation is back in Settings > Graphics (it only showed on the launch screen), with
