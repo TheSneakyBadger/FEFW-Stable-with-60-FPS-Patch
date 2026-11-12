@@ -36,6 +36,8 @@
 #include "gav1/decoder.h"
 #ifdef FEFW_HAVE_DAV1D
 #include <dav1d/dav1d.h>
+// externals/dav1d/src/fefw_state.c: dav1d's frame-threading state as one line (issue #22)
+extern "C" size_t dav1d_fefw_describe(Dav1dContext* c, char* buf, size_t n);
 #endif
 #include "video_core/host1x/ffmpeg.h"
 #include <map>
@@ -675,24 +677,35 @@ private:
     void CheckDecoderCall() {
         const auto since = decoder_call_since.load(std::memory_order_acquire);
         if (since == 0) {
-            decoder_call_reported = false;
+            decoder_call_reports = 0;
             return;
         }
         const auto held = std::chrono::steady_clock::now().time_since_epoch() -
                           std::chrono::steady_clock::duration{since};
-        if (held < std::chrono::seconds{5} || decoder_call_reported) {
+        // At 5 s, and again at 15 s to show whether dav1d moved at all in between.
+        if (decoder_call_reports >= 2 ||
+            held < std::chrono::seconds{decoder_call_reports == 0 ? 5 : 15}) {
             return;
         }
-        decoder_call_reported = true;
+        ++decoder_call_reports;
         static constexpr const char* kinds[] = {"?", "sending data to", "taking a frame from",
                                                 "flushing"};
         const int call_kind = decoder_call_kind.load(std::memory_order_relaxed);
         LOG_WARNING(Service_AM, "Native video: the decode thread has been {} the AV1 decoder for {} s: {}",
                     kinds[(call_kind >= 0 && call_kind <= 3) ? call_kind : 0],
                     std::chrono::duration_cast<std::chrono::seconds>(held).count(), DecodeState());
-        const std::string dump = Common::FefwHangDump::Write("native video decoder");
-        if (!dump.empty()) {
-            LOG_WARNING(Service_AM, "Native video: thread stacks written to {}", dump);
+#ifdef FEFW_HAVE_DAV1D
+        if (dav1d) {
+            std::string text(16384, '\0');
+            text.resize(dav1d_fefw_describe(dav1d, text.data(), text.size()));
+            LOG_WARNING(Service_AM, "Native video: {}", text);
+        }
+#endif
+        if (decoder_call_reports == 1) {
+            const std::string dump = Common::FefwHangDump::Write("native video decoder");
+            if (!dump.empty()) {
+                LOG_WARNING(Service_AM, "Native video: thread stacks written to {}", dump);
+            }
         }
     }
 
@@ -1838,7 +1851,7 @@ private:
     u64 submissions_refused{};  ///< Submissions refused for a full queue (the log).
     std::atomic<std::chrono::steady_clock::rep> decoder_call_since{0}; ///< 0: not in a call
     std::atomic<int> decoder_call_kind{0};
-    bool decoder_call_reported{}; ///< output thread only
+    int decoder_call_reports{}; ///< output thread only
     std::chrono::steady_clock::time_point last_frame_out{};
     u64 next_submission_id{1};
     bool started{};

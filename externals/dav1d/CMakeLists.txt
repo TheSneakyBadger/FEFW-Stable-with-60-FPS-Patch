@@ -119,7 +119,7 @@ configure_file(${DAV1D_GEN}/config.asm.tmp ${DAV1D_GEN}/config.asm COPYONLY)
 set(dav1d_sources
     cdf.c cpu.c ctx.c data.c decode.c dequant_tables.c getbits.c intra_edge.c itx_1d.c lf_mask.c
     lib.c log.c mem.c msac.c obu.c pal.c picture.c qm.c ref.c refmvs.c scan.c tables.c
-    thread_task.c warpmv.c wedge.c x86/cpu.c)
+    thread_task.c warpmv.c wedge.c x86/cpu.c fefw_state.c)
 list(TRANSFORM dav1d_sources PREPEND ${DAV1D_SRC}/)
 if (WIN32)
     list(APPEND dav1d_sources ${DAV1D_SRC}/win32/thread.c)
@@ -135,7 +135,8 @@ set(dav1d_includes ${DAV1D_GEN} ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOUR
 if (MSVC)
     # MSVC has no C11 <stdatomic.h> without /experimental:c11atomics: dav1d's own shim.
     list(APPEND dav1d_includes ${CMAKE_CURRENT_SOURCE_DIR}/include/compat/msvc)
-    set(dav1d_options /W0 /wd4028 /wd4090 /wd4996 /wd5287 /fp:fast)
+    # /Z7: symbols in eden.pdb, so a hang dump shows where in dav1d a thread waits (issue #22).
+    set(dav1d_options /W0 /wd4028 /wd4090 /wd4996 /wd5287 /fp:fast /Z7)
 else()
     set(dav1d_options -w -fvisibility=hidden -fomit-frame-pointer -ffast-math -std=gnu99)
     set(dav1d_definitions _GNU_SOURCE)
