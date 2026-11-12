@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.6.8.4
+
+Pre-rendered cutscenes that keep up in their heaviest scenes ([#22](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/22)).
+
+#### 🎬 Cutscenes
+
+- **The busiest 1440p cutscenes keep up with the voices.** Scenes full of fire or fast camera moves took 30–43 ms per frame to decode, over the 33 ms a 30 FPS video has, so the movie fell further and further behind. The video decoder now works on 4 frames at once, so a finished frame comes out every 10–15 ms.
+- **No more frozen movies or a game that won't close.** With several frames at once, the video decoder's threads sometimes all went to sleep with work still left, on PCs with many cores. The movie then froze for good, and closing the game left it running in the background. Fortune's Eden now notices within 20 ms and wakes them, so the movie carries on without dropping frames. (This is a known problem in the decoder itself, [dav1d #444](https://code.videolan.org/videolan/dav1d/-/issues/444).)
+
+Everything else is as in [v1.6.8.3](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.3).
+
 ## v1.6.8.3
 
 A fix for a crash in cutscenes with frame generation, and 60 FPS mode with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30), [#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).
