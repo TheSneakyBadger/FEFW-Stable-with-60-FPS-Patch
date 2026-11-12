@@ -659,8 +659,8 @@ private:
     // The decode worker marks its calls into the AV1 decoder, so the output thread can tell when
     // one has not come back (testing frame threading, issue #22).
     struct DecoderCall {
-        DecoderCall(INativeVideoCodec& owner_, int kind) : owner{owner_} {
-            owner.decoder_call_kind.store(kind, std::memory_order_relaxed);
+        DecoderCall(INativeVideoCodec& owner_, int call_kind) : owner{owner_} {
+            owner.decoder_call_kind.store(call_kind, std::memory_order_relaxed);
             owner.decoder_call_since.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                                            std::memory_order_release);
         }
@@ -686,9 +686,9 @@ private:
         decoder_call_reported = true;
         static constexpr const char* kinds[] = {"?", "sending data to", "taking a frame from",
                                                 "flushing"};
-        const int kind = decoder_call_kind.load(std::memory_order_relaxed);
+        const int call_kind = decoder_call_kind.load(std::memory_order_relaxed);
         LOG_WARNING(Service_AM, "Native video: the decode thread has been {} the AV1 decoder for {} s: {}",
-                    kinds[(kind >= 0 && kind <= 3) ? kind : 0],
+                    kinds[(call_kind >= 0 && call_kind <= 3) ? call_kind : 0],
                     std::chrono::duration_cast<std::chrono::seconds>(held).count(), DecodeState());
         const std::string dump = Common::FefwHangDump::Write("native video decoder");
         if (!dump.empty()) {
