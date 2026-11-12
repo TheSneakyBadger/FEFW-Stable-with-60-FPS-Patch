@@ -38,6 +38,8 @@
 #include <dav1d/dav1d.h>
 // externals/dav1d/src/fefw_state.c: dav1d's frame-threading state as one line (issue #22)
 extern "C" size_t dav1d_fefw_describe(Dav1dContext* c, char* buf, size_t n);
+// Wakes dav1d's workers to look for tasks again (a lost wakeup stalls them, issue #22).
+extern "C" void dav1d_fefw_kick(Dav1dContext* c);
 #endif
 #include "video_core/host1x/ffmpeg.h"
 #include <map>
@@ -134,6 +136,17 @@ bool AsyncVideoOutput() {
     }();
     return enabled;
 }
+
+#ifdef FEFW_HAVE_DAV1D
+// EDEN_AV1_NO_WAKE=1 turns off Dav1dWatch (to compare with and without it).
+bool Dav1dKickDisabled() {
+    static const bool disabled = [] {
+        const char* value = std::getenv("EDEN_AV1_NO_WAKE");
+        return value && value[0] == '1';
+    }();
+    return disabled;
+}
+#endif
 
 // Which AV1 decoder runs the cutscenes: dav1d, unless EDEN_AV1_DECODER=libgav1. Fortune's Weave's
 // 1440p cutscenes are one tile per frame, and libgav1 only splits work across tiles or whole
@@ -275,6 +288,7 @@ private:
         // them. The output worker never waits for codec_mutex (held here), so it sees the stop.
         StopOutputWorker();
         decode_worker = std::jthread{};
+        dav1d_watch = std::jthread{}; // after the decode worker, which it may have to unstick
         deferred_output_error.reset();
         decode_busy = false;
         decode_error.reset();
@@ -674,6 +688,46 @@ private:
 
     // From the output thread every 2 s: a decoder call still running after 5 s is logged, and
     // (EDEN_HANG_DUMP_DIR) every thread's stack is written to a dump, once.
+#ifdef FEFW_HAVE_DAV1D
+    // With several frames decoded at once, dav1d's workers sometimes all go to sleep while a frame
+    // still has work they could do: the signal that should wake them is lost (dav1d issue #444,
+    // many cores). The decode thread then waits in dav1d forever: the movie freezes, and so does
+    // closing the game. Here, a call into dav1d that has waited over 150 ms wakes the workers to
+    // look again; a wake when nothing is stuck only costs them one look.
+    void Dav1dWatch(std::stop_token stop) {
+        Common::SetCurrentThreadName("NativeVideoWatch");
+        std::mutex mutex;
+        std::condition_variable_any cv;
+        u64 wakes = 0;
+        auto last_log = std::chrono::steady_clock::time_point{};
+        while (true) {
+            {
+                std::unique_lock lock{mutex};
+                cv.wait_for(lock, stop, std::chrono::milliseconds{50}, [] { return false; });
+            }
+            if (stop.stop_requested()) {
+                break;
+            }
+            const auto since = decoder_call_since.load(std::memory_order_acquire);
+            if (since == 0) {
+                continue;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            const auto held = now.time_since_epoch() - std::chrono::steady_clock::duration{since};
+            if (held < std::chrono::milliseconds{150}) {
+                continue;
+            }
+            dav1d_fefw_kick(dav1d);
+            ++wakes;
+            if (now - last_log > std::chrono::seconds{10}) {
+                last_log = now;
+                LOG_WARNING(Service_AM, "Native video: woke dav1d's workers, the decode thread had waited {} ms ({} times so far)",
+                            std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), wakes);
+            }
+        }
+    }
+#endif
+
     void CheckDecoderCall() {
         const auto since = decoder_call_since.load(std::memory_order_acquire);
         if (since == 0) {
@@ -1789,6 +1843,11 @@ private:
                                     transfer_memory = memory.GetPointerUnsafe();
                                     transfer_memory->Open(kernel);
                                     decode_worker = std::jthread{[this](std::stop_token stop) { DecodeWorker(stop); }};
+#ifdef FEFW_HAVE_DAV1D
+                                    if (dav1d && Av1FrameDelay() > 1 && !Dav1dKickDisabled()) {
+                                        dav1d_watch = std::jthread{[this](std::stop_token stop) { Dav1dWatch(stop); }};
+                                    }
+#endif
                                     StartOutputWorker();
                                     result = ResultSuccess;
                                 }
@@ -1894,6 +1953,7 @@ private:
     std::optional<Result> deferred_output_error;
     std::thread output_worker;
 
+    std::jthread dav1d_watch;   ///< Dav1dWatch: joined after the decode worker
     std::jthread decode_worker; // Last: stopped and joined first (Reset also joins it).
 };
 

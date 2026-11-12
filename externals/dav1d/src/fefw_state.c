@@ -68,3 +68,20 @@ size_t dav1d_fefw_describe(Dav1dContext *const c, char *const buf, const size_t 
     }
     return o;
 }
+
+/* Wakes dav1d's worker threads and has them look through every frame's tasks again from the
+ * start. Workers that found nothing to do sleep until another thread signals progress; on many
+ * cores that signal is sometimes lost (dav1d issue #444): a frame keeps runnable tasks, every
+ * worker sleeps, and dav1d_get_picture / dav1d_send_data wait forever. Done under dav1d's task
+ * lock and the same way as its own reset_task_cur, so it is harmless when nothing is stuck. */
+void dav1d_fefw_kick(Dav1dContext *const c) {
+    if (!c || c->n_tc <= 1 || !c->task_thread.inited) return;
+    struct TaskThreadData *const ttd = &c->task_thread;
+    pthread_mutex_lock(&ttd->lock);
+    ttd->cur = 0;
+    for (unsigned i = 0; i < c->n_fc; i++)
+        c->fc[i].task_thread.task_cur_prev = NULL;
+    atomic_store(&ttd->cond_signaled, 1);
+    pthread_cond_broadcast(&ttd->cond);
+    pthread_mutex_unlock(&ttd->lock);
+}
