@@ -19,9 +19,11 @@
 #include "core/hle/service/nvdrv/devices/nvhost_as_gpu.h"
 #include "video_core/gpu.h"
 #include "video_core/textures/decoders.h"
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <fmt/format.h>
+#include "common/fefw_hang_dump.h"
 #include "core/hle/service/nvdrv/core/syncpoint_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "core/hle/service/am/service/native_video_layout.h"
@@ -654,6 +656,46 @@ private:
         pending_input_bytes = pending_input_bytes >= bytes ? pending_input_bytes - bytes : 0;
     }
 
+    // The decode worker marks its calls into the AV1 decoder, so the output thread can tell when
+    // one has not come back (testing frame threading, issue #22).
+    struct DecoderCall {
+        DecoderCall(INativeVideoCodec& owner_, int kind) : owner{owner_} {
+            owner.decoder_call_kind.store(kind, std::memory_order_relaxed);
+            owner.decoder_call_since.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                           std::memory_order_release);
+        }
+        ~DecoderCall() {
+            owner.decoder_call_since.store(0, std::memory_order_release);
+        }
+        INativeVideoCodec& owner;
+    };
+
+    // From the output thread every 2 s: a decoder call still running after 5 s is logged, and
+    // (EDEN_HANG_DUMP_DIR) every thread's stack is written to a dump, once.
+    void CheckDecoderCall() {
+        const auto since = decoder_call_since.load(std::memory_order_acquire);
+        if (since == 0) {
+            decoder_call_reported = false;
+            return;
+        }
+        const auto held = std::chrono::steady_clock::now().time_since_epoch() -
+                          std::chrono::steady_clock::duration{since};
+        if (held < std::chrono::seconds{5} || decoder_call_reported) {
+            return;
+        }
+        decoder_call_reported = true;
+        static constexpr const char* kinds[] = {"?", "sending data to", "taking a frame from",
+                                                "flushing"};
+        const int kind = decoder_call_kind.load(std::memory_order_relaxed);
+        LOG_WARNING(Service_AM, "Native video: the decode thread has been {} the AV1 decoder for {} s: {}",
+                    kinds[(kind >= 0 && kind <= 3) ? kind : 0],
+                    std::chrono::duration_cast<std::chrono::seconds>(held).count(), DecodeState());
+        const std::string dump = Common::FefwHangDump::Write("native video decoder");
+        if (!dump.empty()) {
+            LOG_WARNING(Service_AM, "Native video: thread stacks written to {}", dump);
+        }
+    }
+
     // A line for the log when something has waited a while (decode_mutex held). The images
     // only from the service's calls, which own them.
     std::string DecodeState(bool with_images = false) const {
@@ -714,6 +756,7 @@ private:
                 pending_inputs.pop_front();
                 decode_busy = true;
                 lock.unlock();
+                const DecoderCall enqueue_call{*this, 1};
                 const int enqueue = Av1Enqueue(input);
                 lock.lock();
                 decode_busy = false;
@@ -742,7 +785,11 @@ private:
                 // Waits for the oldest frame only; libgav1 keeps decoding the others meanwhile.
                 const auto wait_start = std::chrono::steady_clock::now();
                 std::optional<DecodedFrame> frame;
-                const bool dequeued = Av1Dequeue(frame, timestamp);
+                bool dequeued;
+                {
+                    const DecoderCall dequeue_call{*this, 2};
+                    dequeued = Av1Dequeue(frame, timestamp);
+                }
                 const auto waited = std::chrono::steady_clock::now() - wait_start;
                 if (frame) {
                     frame->decode_time = waited;
@@ -790,7 +837,11 @@ private:
             decode_busy = true;
             eos_in_progress = true;
             lock.unlock();
-            const bool reset = Av1Reset();
+            bool reset;
+            {
+                const DecoderCall reset_call{*this, 3};
+                reset = Av1Reset();
+            }
             lock.lock();
             decode_busy = false;
             eos_in_progress = false;
@@ -1132,10 +1183,13 @@ private:
         Common::SetCurrentThreadName("NativeVideoOutput");
         std::unique_lock lock{decode_mutex};
         while (true) {
-            decode_cv.wait(lock, [&] {
+            while (!decode_cv.wait_for(lock, std::chrono::seconds{2}, [&] {
                 return output_stop ||
                        (output_wanted && (!decoded_frames.empty() || decode_error.has_value()));
-            });
+            })) {
+                CheckDecoderCall();
+            }
+            CheckDecoderCall();
             if (output_stop) {
                 return;
             }
@@ -1782,6 +1836,9 @@ private:
     std::deque<PendingInput> pending_inputs;
     u64 pending_input_bytes{};
     u64 submissions_refused{};  ///< Submissions refused for a full queue (the log).
+    std::atomic<std::chrono::steady_clock::rep> decoder_call_since{0}; ///< 0: not in a call
+    std::atomic<int> decoder_call_kind{0};
+    bool decoder_call_reported{}; ///< output thread only
     std::chrono::steady_clock::time_point last_frame_out{};
     u64 next_submission_id{1};
     bool started{};
