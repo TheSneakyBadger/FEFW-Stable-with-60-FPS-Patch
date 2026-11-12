@@ -17,8 +17,9 @@
 namespace FefwSixtySearch {
 
 /// Fortune's Eden: room the NSO loader adds after main when 60 FPS mode is on (loader/nso.cpp),
-/// for when a mod uses the free space the patch usually takes: the first page, executable, for the
-/// routines; the second, writable, for the table. Zero until the patch uses it.
+/// for when a mod uses the free space the patch usually takes: the first page for the routines,
+/// the second for the table. Read-write, part of main's data region to the game (an executable
+/// page there looked like another module to its rtld). Zero until the patch uses it.
 inline constexpr u64 ReserveBytes = 0x2000;
 
 /// Where that room starts in the main image being patched (no NSO header), or 0 when there is
