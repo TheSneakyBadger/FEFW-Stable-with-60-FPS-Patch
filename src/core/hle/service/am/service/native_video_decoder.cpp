@@ -70,6 +70,26 @@ int Av1DecodeThreads() {
     return threads;
 }
 
+// Fortune's Eden: AV1 frames dav1d decodes at once (frame threading). Fortune's Weave's 1440p
+// cutscenes are one tile per frame: one frame at a time, dav1d could only share the filtering
+// among its threads, and heavy frames (fire, fast camera moves) took 30-43 ms each, over the
+// 33 ms a 30 FPS video has, so the movie fell behind and the game faded the dialogue (#22).
+// Several at once, a frame still takes as long but one is finished every 10-15 ms.
+// EDEN_AV1_FRAME_DELAY=1 decodes one at a time as before; 2-8 sets how many.
+int Av1FrameDelay() {
+    static const int delay = [] {
+        int value = 4;
+        if (const char* const env = std::getenv("EDEN_AV1_FRAME_DELAY")) {
+            const int requested = std::atoi(env);
+            if (requested >= 1 && requested <= 8) {
+                value = requested;
+            }
+        }
+        return value;
+    }();
+    return delay;
+}
+
 // EDEN_VIDEO_LOOKAHEAD=N (2-8; off by default) lets the game submit up to N AV1 frames before a
 // submission waits for a decoded frame. Each submission normally waits for the oldest frame
 // (when the game has an image free), so libgav1 only ever has about one frame to work on and
@@ -116,8 +136,8 @@ bool UseDav1d() {
     static const bool use = [] {
         const char* const value = std::getenv("EDEN_AV1_DECODER");
         const bool dav1d = value == nullptr || std::string_view{value} != "libgav1";
-        LOG_INFO(Service_AM, "Native AV1 decoder: {} with {} threads", dav1d ? "dav1d" : "libgav1",
-                 Av1DecodeThreads());
+        LOG_INFO(Service_AM, "Native AV1 decoder: {} with {} threads, {} frames at once",
+                 dav1d ? "dav1d" : "libgav1", Av1DecodeThreads(), dav1d ? Av1FrameDelay() : 0);
         return dav1d;
     }();
     return use;
@@ -509,9 +529,9 @@ private:
     int Av1Enqueue(const PendingInput& input) {
 #ifdef FEFW_HAVE_DAV1D
         if (dav1d) {
-            // With one frame in flight (max_frame_delay 1), dav1d decodes the frame here, using
-            // all its threads on it. It refuses new data while a picture waits to be taken: the
-            // rest of the input is then kept and sent again from Av1Dequeue.
+            // dav1d starts decoding the frame here, on its frame threads alongside the frames
+            // before it (Av1FrameDelay). It refuses new data while a picture waits to be taken:
+            // the rest of the input is then kept and sent again from Av1Dequeue.
             if (dav1d_pending.sz) return 1;
             Dav1dData data{};
             u8* const bytes = dav1d_data_create(&data, input.bytes.size());
@@ -544,6 +564,10 @@ private:
     bool Av1Dequeue(std::optional<DecodedFrame>& frame, u64 timestamp) {
 #ifdef FEFW_HAVE_DAV1D
         if (dav1d) {
+            // With frame threading, the first "try again" only says no picture is finished yet:
+            // asked again with no new data, dav1d waits for the oldest frame in progress (its
+            // drain), and says "try again" only when it has none.
+            bool drained = Av1FrameDelay() <= 1;
             while (true) {
                 Dav1dPicture picture{};
                 const int got = dav1d_get_picture(dav1d, &picture);
@@ -555,7 +579,14 @@ private:
                     LOG_ERROR(Service_AM, "dav1d failed to decode an AV1 frame: {}", got);
                     return false;
                 }
-                if (!dav1d_pending.sz) return true; // this input showed no frame
+                if (!dav1d_pending.sz) {
+                    if (!drained) {
+                        drained = true;
+                        continue;
+                    }
+                    return true; // no frame from what it was given
+                }
+                drained = Av1FrameDelay() <= 1;
                 const int sent = dav1d_send_data(dav1d, &dav1d_pending);
                 if (sent != 0 && sent != DAV1D_ERR(EAGAIN)) {
                     dav1d_data_unref(&dav1d_pending);
@@ -677,12 +708,29 @@ private:
                     }
                     av1_in_flight.clear();
                     decode_error = Kernel::ResultInvalidArgument;
-                } else {
+                } else if (!frame) {
                     ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
                     av1_in_flight.pop_front();
-                    if (frame) {
-                        decoded_frames.push_back(std::move(*frame));
+                } else {
+                    // The frame's own input (by its submission ID; dav1d decodes several at once),
+                    // and any before it that showed no frame, are done.
+                    const auto own = std::ranges::find(av1_in_flight, frame->submission_id,
+                                                       &PendingInput::submission_id);
+                    if (own != av1_in_flight.end()) {
+                        frame->timestamp = own->timestamp;
+                        while (!av1_in_flight.empty()) {
+                            const bool last = &av1_in_flight.front() == &*own;
+                            ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
+                            av1_in_flight.pop_front();
+                            if (last) {
+                                break;
+                            }
+                        }
+                    } else {
+                        ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
+                        av1_in_flight.pop_front();
                     }
+                    decoded_frames.push_back(std::move(*frame));
                 }
                 decode_cv.notify_all();
                 continue;
@@ -1595,9 +1643,7 @@ private:
                                     Dav1dSettings settings;
                                     dav1d_default_settings(&settings);
                                     settings.n_threads = Av1DecodeThreads();
-                                    // One frame at a time, all threads on it: the game waits for
-                                    // each frame, so latency, not throughput, sets the pace.
-                                    settings.max_frame_delay = 1;
+                                    settings.max_frame_delay = Av1FrameDelay();
                                     settings.logger.callback = nullptr;
                                     opened = dav1d_open(&dav1d, &settings) == 0;
                                     if (!opened) {
