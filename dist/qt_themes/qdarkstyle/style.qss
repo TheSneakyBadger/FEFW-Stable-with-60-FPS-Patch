@@ -189,7 +189,7 @@ QMenu::icon {
 }
 
 QMenu::item {
-    padding: 5px 16px 5px 40px;
+    padding: 5px 16px 5px 8px;
     border: 1px solid transparent;
     /* reserve space for selection border */
 }
@@ -212,11 +212,13 @@ QMenu::separator,
 QMenuBar::separator {
     height: 1px;
     background-color: #54575B;
-    margin: 2px 4px 2px 40px;
+    margin: 2px 4px 2px 8px;
 }
 
+/* The check box gets its own space before the text (#39): a negative right margin, as in
+   QDarkStyle, drew it over the first letters with this Qt. */
 QMenu::indicator {
-    margin: 0 -26px 0 8px;
+    margin: 0 8px 0 0;
     width: 18px;
     height: 18px;
 }
