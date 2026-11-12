@@ -213,8 +213,12 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
                     const Loader::NSOHeader& header, const std::string& build_id) {
     const bool reference = build_id == FefwUltrawide::MainBuildId;
     // EDEN_60FPS_SEARCH=2: place the patch by searching on 1.1.0 too (a test of that path).
+    // EDEN_60FPS_ROOM=1: and put its routines and table in the room the loader adds after main,
+    // as a mod in the game's free space would (a test of that room).
     const char* const search = std::getenv("EDEN_60FPS_SEARCH");
-    const bool force_search = search != nullptr && search[0] == '2';
+    const char* const room = std::getenv("EDEN_60FPS_ROOM");
+    const bool prefer_room = room != nullptr && room[0] == '1';
+    const bool force_search = (search != nullptr && search[0] == '2') || prefer_room;
     if (reference && !force_search && FefwSixtyRangesUntouched(original, out)) {
         LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60 FPS mode)");
         const auto sixty = std::make_shared<VectorVfsFile>(
@@ -228,17 +232,22 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
         return;
     }
     // Another version, or 1.1.0 with a mod in the patch's usual space: find every spot again
-    // and put the routines in whatever padding is still free.
+    // and put the routines in whatever padding is still free, or else in the room the loader
+    // added after main (FefwSixtySearch::ReserveBytes).
     std::string why;
     const std::span<u8> image(out.data() + sizeof(Loader::NSOHeader),
                               out.size() - sizeof(Loader::NSOHeader));
-    if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why)) {
+    if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why,
+                                                   FefwSixtySearch::reserved_offset, prefer_room)) {
         FefwFrameRate::SetFoundLayout(build_id, layout->app_object, layout->table);
         if (reference) {
             LOG_INFO(Loader,
-                     "    - Applying the built-in 60 FPS patch (60 FPS mode), routines moved to "
-                     "{:#x}: a mod uses the space they usually go in",
-                     layout->routines);
+                     "    - Applying the built-in 60 FPS patch (60 FPS mode), routines at {:#x}, "
+                     "table at {:#x}: a mod uses the space they usually go in{}",
+                     layout->routines, layout->table,
+                     layout->reserved ? ", so they are in memory Fortune's Eden adds after the "
+                                        "game's code"
+                                      : "");
         } else {
             LOG_WARNING(Loader,
                         "    - 60 FPS mode on a game version it wasn't made for (build {}): all "
@@ -249,8 +258,8 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
         }
     } else if (reference) {
         LOG_WARNING(Loader,
-                    "    - 60 FPS mode is off: a mod changes the same game code or fills the free "
-                    "space its routines need ({}). Turn that mod or 60 FPS mode off.",
+                    "    - 60 FPS mode is off: a mod changes game code it needs ({}). Turn that "
+                    "mod or 60 FPS mode off.",
                     why);
     } else {
         LOG_WARNING(Loader,
