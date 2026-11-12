@@ -1,5 +1,5 @@
-Fortune's Eden v1.6.7.3: Linux test build
-=========================================
+Fortune's Eden @VERSION@: Linux test build
+===========================================
 
 A test build of Fortune's Eden (Eden, made for Fire Emblem: Fortune's Weave) for 64-bit
 Linux. It's the same emulator as the Windows release, built for Linux. Expect rough edges,
@@ -24,9 +24,12 @@ HOW TO RUN
 
 DIFFERENT FROM THE WINDOWS BUILD
 --------------------------------
-- No NVIDIA DLSS: NVIDIA's DLSS (Streamline) is Windows-only. AMD FSR 3.1 is the default
-  upscaler and works on any GPU; the game's own DLSS also works.
-- No AMD FSR 4: AMD only provides it for Windows. FSR 3.1 runs instead.
+- NVIDIA DLSS upscaling needs NVIDIA's proprietary driver. Choose NVIDIA DLSS as the upscaler:
+  Settings > Graphics has a "Download from NVIDIA" button for the DLSS library (it isn't
+  included). NVIDIA DLSS frame generation is Windows-only.
+- AMD FSR 3.1 frame generation is included, but hasn't been tested much on Linux yet.
+- AMD FSR 4: only if you have AMD's amd_fidelityfx_upscaler_vk.so; put it next to the AppImage
+  or in the "user" folder. Otherwise FSR 3.1 runs instead.
 - No automatic updates: download new Linux builds by hand.
 - Mouse mode on Wayland: the AppImage runs through XWayland so the cursor can be held in
   the window.
@@ -40,4 +43,4 @@ user/log/eden_log.txt.
 
 
 Licence: GPL-3.0-or-later. The full source is the "linux-build" branch of the repository
-above. The 60 FPS cheat is in user/load (off by default: tick "60fps" in the game's Add-Ons).
+above. 60 FPS mode is built in: the "60 FPS" checkbox on the launch screen.

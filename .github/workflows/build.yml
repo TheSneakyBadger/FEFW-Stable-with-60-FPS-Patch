@@ -105,10 +105,12 @@ jobs:
           chmod a+x quick-sharun
           ./quick-sharun build/bin/eden
           ./quick-sharun --make-appimage
-          version=$(sed -n 's/.*FefwVersion = "\(v[0-9.]*\)".*/\1/p' src/common/fefw_version.h)
+          version=$(sed -n 's/.*FEFW_VERSION_STRING "\(v[0-9.]*\)".*/\1/p' src/common/fefw_version.h | head -n 1)
+          test -n "$version" || { echo "No version in src/common/fefw_version.h"; exit 1; }
           name="Fortunes-Eden-${version}-linux-x86_64-${GITHUB_SHA::7}"
           mkdir -p "artifacts/$name"
           cp -r dist/fortunes-eden-linux/. "artifacts/$name/"
+          sed -i "s/@VERSION@/${version}/" "artifacts/$name/README.txt"
           cp appimage/Fortunes-Eden.AppImage "artifacts/$name/"
           chmod +x "artifacts/$name/Fortunes-Eden.AppImage" "artifacts/$name/start-fortunes-eden.sh"
           cp LICENSE.txt "artifacts/$name/LICENSE"
