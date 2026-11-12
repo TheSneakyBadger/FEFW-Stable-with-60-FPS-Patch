@@ -216,8 +216,8 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
     // EDEN_60FPS_ROOM=1: and put its routines and table in the room the loader adds after the
     // modules, as a mod in the game's free space would (a test of that room).
     const char* const search = std::getenv("EDEN_60FPS_SEARCH");
-    const char* const room = std::getenv("EDEN_60FPS_ROOM");
-    const bool prefer_room = room != nullptr && room[0] == '1';
+    const char* const room_env = std::getenv("EDEN_60FPS_ROOM");
+    const bool prefer_room = room_env != nullptr && room_env[0] == '1';
     const bool force_search = (search != nullptr && search[0] == '2') || prefer_room;
     if (reference && !force_search && FefwSixtyRangesUntouched(original, out)) {
         LOG_INFO(Loader, "    - Applying the built-in 60 FPS patch (60 FPS mode)");
