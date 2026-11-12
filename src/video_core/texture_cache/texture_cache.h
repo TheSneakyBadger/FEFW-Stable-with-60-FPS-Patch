@@ -12,11 +12,13 @@
 #include <optional>
 #include <bit>
 #include <chrono>
+#include <utility>
 #include <cstdlib>
 #include "common/container/unordered_map.h"
 #include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
+#include "common/fefw_scene_load.h"
 #include "common/settings.h"
 #include "common/slot_vector.h"
 #include "video_core/control/channel_state.h"
@@ -144,6 +146,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
     bool evict_old_costly = false;
     bool evict_old_gpu = false;
     bool evict_old_small_gpu = false;
+    bool scene_sweep = false;
     bool allow_writebacks = true;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
@@ -220,7 +223,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
         writeback_bytes = 0;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &evict_old_gpu, &evict_old_small_gpu,
+                          &evict_old_costly, &evict_old_gpu, &evict_old_small_gpu, &scene_sweep,
                           &allow_writebacks, &num_deleted, &num_downloaded,
                           &writebacks,
                           &writeback_bytes, &UsedMemory, &freed_bytes,
@@ -242,6 +245,10 @@ u32 TextureCache<P>::RunGarbageCollector() {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
+        // After a loading screen, no write-backs (each waits for the GPU): those go as usual.
+        if (scene_sweep && must_download) {
+            return false;
+        }
         if ((!aggressive_mode && !evict_old_costly && True(image.flags & ImageFlagBits::CostlyLoad)) ||
             (!high_priority_mode && must_download)) {
             return false;
@@ -272,7 +279,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
                                         !must_download;
         if (keeps_gpu_contents && (image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES ||
                                    (image.guest_size_bytes <= SMALL_GPU_IMAGE_BYTES &&
-                                    !evict_old_small_gpu))) {
+                                    !evict_old_small_gpu && !scene_sweep))) {
             ++num_iterations;
             return false;
         }
@@ -282,7 +289,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // Except those unused for 30 seconds (evict_old_gpu), earlier scenes' render targets:
         // kept, they were most of what grew (1.5 GB in 205 images three minutes after boot, a
         // third of it unused for a minute), until the hard limit held use there (issue #31).
-        if (keeps_gpu_contents && !aggressive_mode && !evict_old_gpu) {
+        if (keeps_gpu_contents && !aggressive_mode && !evict_old_gpu && !scene_sweep) {
             ++num_iterations;
             return false;
         }
@@ -313,6 +320,29 @@ u32 TextureCache<P>::RunGarbageCollector() {
         }
         return false;
     };
+    // After a loading screen: everything unused since the load began (the previous scene's
+    // textures and render targets), except what must be written back and the small GPU-drawn
+    // images kept for good. Shared ones the new scene uses were touched in the 2 s after it.
+    if (scene_sweep_below != 0) {
+        const u64 below = std::exchange(scene_sweep_below, 0);
+        high_priority_mode = true;
+        evict_old_costly = true;
+        scene_sweep = true;
+        num_iterations = 1'000'000;
+        target_free = 0;
+        lru_cache.ForEachItemBelow(below, Cleanup);
+        scene_sweep = false;
+        evict_old_costly = false;
+        const auto ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - pass_start)
+                            .count();
+        LOG_INFO(HW_GPU,
+                 "Loading screen: {} images from the previous scene freed ({} MiB) in {:.0f} ms, "
+                 "memory {} -> {} MiB",
+                 num_deleted, freed_bytes >> 20, ms, used_before >> 20,
+                 total_used_memory >> 20);
+        return num_deleted;
+    }
     Configure(false);
     // Large GPU-drawn images that can't be written back, unused for 30 s (EDEN_TC_OLD_GPU_AGE
     // frames; 0 turns it off), and the small ones unused for 5 minutes go first, from the
@@ -429,6 +459,31 @@ void TextureCache<P>::TickFrame() {
     // cards several times what was needed). Wait those frames after a pass that freed something,
     // unless use is past the hard threshold, where v1.6.1 cleaned up every frame. (v1.6.2 instead took the pending frees off the measured
     // use, which under steady eviction let real use creep past the limit on 6 GB cards.)
+    // Loading screens: a burst of the game's map data reads (4 MiB or more), then 2 s (120
+    // frames) without: free what the previous scene left behind.
+    {
+        const u64 bytes = Common::FefwSceneLoad::map_bytes_read.load(std::memory_order_relaxed);
+        const u64 read = bytes - scene_load_bytes_seen;
+        scene_load_bytes_seen = bytes;
+        if (read != 0) {
+            if (!scene_load.active) {
+                scene_load = {true, frame_tick, frame_tick, 0};
+            }
+            scene_load.bytes += read;
+            scene_load.last_frame = frame_tick;
+        } else if (scene_load.active && frame_tick > scene_load.last_frame + 120) {
+            if (scene_load.bytes >= 4_MiB && scene_load.start_frame > 0) {
+                LOG_INFO(HW_GPU, "Loading screen: {} MiB of map data read over {} frames",
+                         scene_load.bytes >> 20, scene_load.last_frame - scene_load.start_frame);
+                scene_sweep_below = scene_load.start_frame;
+                const u32 freed = RunGarbageCollector();
+                if (freed != 0) {
+                    collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+                }
+            }
+            scene_load.active = false;
+        }
+    }
     if (total_used_memory > minimum_memory &&
         (frame_tick >= collect_quiet_until || total_used_memory >= critical_memory)) {
         const u32 freed = RunGarbageCollector();

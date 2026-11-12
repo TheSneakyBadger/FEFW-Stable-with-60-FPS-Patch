@@ -503,7 +503,7 @@ Result FSP_SRV::OpenDataStorageByCurrentProcess(OutInterface<IStorage> out_inter
         romfs = current_romfs;
     }
 
-    *out_interface = std::make_shared<IStorage>(system, romfs);
+    *out_interface = std::make_shared<IStorage>(system, romfs, true);
 
     R_SUCCEED();
 }
@@ -562,7 +562,7 @@ Result FSP_SRV::OpenDataStorageWithProgramIndex(OutInterface<IStorage> out_inter
         R_RETURN(ResultUnknown);
     }
 
-    *out_interface = std::make_shared<IStorage>(system, std::move(patched_romfs));
+    *out_interface = std::make_shared<IStorage>(system, std::move(patched_romfs), true);
 
     R_SUCCEED();
 }
