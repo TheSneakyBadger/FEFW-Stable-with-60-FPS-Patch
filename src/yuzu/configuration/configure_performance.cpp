@@ -28,9 +28,8 @@ ConfigurePerformance::ConfigurePerformance(
     box_layout->addWidget(intro);
 
     for (Settings::BasicSetting* const setting :
-         {static_cast<Settings::BasicSetting*>(&Settings::values.fefw_60fps),
-          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reflections),
-          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_ambient_occlusion),
+         {static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reflections),
+          static_cast<Settings::BasicSetting*>(&Settings::values.fefw_no_ambient_occlusion),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_crowd_detail),
           static_cast<Settings::BasicSetting*>(&Settings::values.fefw_reduced_scenery_detail)}) {
         auto* const widget = builder.BuildWidget(setting, apply_funcs);
@@ -50,10 +49,6 @@ ConfigurePerformance::ConfigurePerformance(
 
     layout->addWidget(box);
 
-    sixty_note = new QLabel(this);
-    sixty_note->setWordWrap(true);
-    layout->addWidget(sixty_note);
-
     layout->addStretch(1);
 
     RetranslateUI();
@@ -63,9 +58,9 @@ ConfigurePerformance::ConfigurePerformance(
 ConfigurePerformance::~ConfigurePerformance() = default;
 
 bool ConfigurePerformance::Shows(u32 setting_id) {
-    return setting_id == Settings::values.fefw_60fps.Id() ||
-           setting_id == Settings::values.fefw_reflections.Id() ||
-           setting_id == Settings::values.fefw_ambient_occlusion.Id() ||
+    // 60 FPS mode is on the Graphics page: every tick box here makes the game lighter.
+    return setting_id == Settings::values.fefw_reflections.Id() ||
+           setting_id == Settings::values.fefw_no_ambient_occlusion.Id() ||
            setting_id == Settings::values.fefw_reduced_crowd_detail.Id() ||
            setting_id == Settings::values.fefw_reduced_scenery_detail.Id();
 }
@@ -88,11 +83,9 @@ void ConfigurePerformance::changeEvent(QEvent* event) {
 
 void ConfigurePerformance::RetranslateUI() {
     setAccessibleName(tr("Performance"));
-    intro->setText(tr("60 FPS mode, and lighter versions of the game's own graphics effects for "
-                      "PCs that can't hold the frame rate. Nothing is changed on disk."));
+    intro->setText(tr("Lighter versions of the game's own graphics effects, for PCs that can't "
+                      "hold the frame rate. Each tick makes the game lighter. Nothing is changed "
+                      "on disk."));
     restart_note->setText(
         tr("<i>Changes take effect the next time the game starts.</i>"));
-    sixty_note->setText(tr("60 FPS mode is made and tested for game version 1.1.0. On other "
-                           "versions it turns on only if the game's code matches (untested: turn "
-                           "it off if anything looks wrong); otherwise the game runs at 30 FPS."));
 }

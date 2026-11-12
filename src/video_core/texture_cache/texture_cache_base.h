@@ -653,6 +653,17 @@ private:
     /// Bytes freed by recent cleanup passes (frame, bytes): images are destroyed, and stop
     /// counting in the memory in use, TICKS_TO_DESTROY frames after a pass frees them.
     std::array<std::pair<u64, u64>, 16> recent_frees{};
+    /// Loading screens (bursts of the game's map data reads): from the first read's frame to the
+    /// last, and how much was read. Once 2 s pass without reads, what the previous scene left
+    /// behind is freed (scene_sweep_below: images unused since the load began).
+    struct SceneLoad {
+        bool active = false;
+        u64 start_frame = 0;
+        u64 last_frame = 0;
+        u64 bytes = 0;
+    } scene_load;
+    u64 scene_load_bytes_seen = 0;
+    u64 scene_sweep_below = 0;
     u64 collect_quiet_until = 0;     ///< No cleanup pass before this frame unless over the limit
     u64 texture_memory_estimate = 0; ///< Bytes of the cached images (diagnostics)
     u32 minute_passes = 0;           ///< Cleanup since the last "Video memory in use" report

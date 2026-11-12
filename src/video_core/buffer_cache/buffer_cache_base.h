@@ -359,6 +359,9 @@ public:
     /// caching pages and the GPU has written the region. Reads the state as it is at some moment
     /// during the call; false means "ask OnCPUWrite under the lock" (not "not held").
     [[nodiscard]] bool IsHeldWithoutLock(DAddr addr, u64 size) const noexcept;
+    /// Whether any page of the region holds a buffer, read without the lock (relaxed: a buffer
+    /// being created meanwhile may be missed, and is then asked about under the lock).
+    [[nodiscard]] bool IsRegisteredWithoutLock(DAddr addr, u64 size) const noexcept;
 
     /// Return true when a CPU region is modified from the CPU
     [[nodiscard]] bool IsRegionCpuModified(DAddr addr, size_t size);
