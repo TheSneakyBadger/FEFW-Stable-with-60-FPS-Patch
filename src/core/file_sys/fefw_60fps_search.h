@@ -16,15 +16,29 @@
 // hold the exact instruction it holds in 1.1.0, or nothing is changed.
 namespace FefwSixtySearch {
 
-/// Fortune's Eden: room the NSO loader adds after main when 60 FPS mode is on (loader/nso.cpp),
-/// for when a mod uses the free space the patch usually takes: the first page for the routines,
-/// the second for the table. Read-write, part of main's data region to the game (an executable
-/// page there looked like another module to its rtld). Zero until the patch uses it.
+/// Fortune's Eden: room the loader adds after the last module (rtld, main, subsdks, sdk) when 60
+/// FPS mode is on (loader/deconstructed_rom_directory.cpp), for when a mod uses the free space the
+/// patch usually takes: the first page for the routines, the second for the table. Read-write (an
+/// executable page looked like another module to the game's rtld). After every module, not right
+/// after main, so no module moves: mods reach other modules at fixed distances from main (#45).
 inline constexpr u64 ReserveBytes = 0x2000;
 
-/// Where that room starts in the main image being patched (no NSO header), or 0 when there is
-/// none. Set by the loader around PatchManager::PatchNSO.
-inline thread_local u64 reserved_offset = 0;
+/// That room while main is patched: where it starts from main's start (0 when there is none) and
+/// its bytes, which the loader maps there once every module is loaded. Set by the loader around
+/// PatchManager::PatchNSO for main.
+struct Room {
+    u64 offset = 0;
+    std::span<u8> bytes;
+};
+inline thread_local Room room{};
+
+/// The room for the whole load: its address in the process (0 when there is none) and its bytes.
+/// Set by the loader for its loading pass; nso.cpp turns it into `room` while main is patched.
+struct LoaderRoom {
+    u64 address = 0;
+    std::span<u8> bytes;
+};
+inline thread_local LoaderRoom loader_room{};
 
 struct Layout {
     u64 app_object; ///< main-relative: the pointer to the application object (the rate is at +0x1DC)
@@ -35,10 +49,12 @@ struct Layout {
 
 /// `image` is main as loaded (no NSO header; .text at 0, .text `text_size` bytes long). Patches
 /// it and returns the layout, or leaves it untouched and says why in `why`. `reserved`: where the
-/// loader's added room starts in `image` (ReserveBytes long), or 0 when there is none.
-/// `prefer_room`: put them in that room even where the game's own space is free (a test of it).
+/// loader's added room starts, from main's start (0 when there is none); `room`: its bytes
+/// (ReserveBytes), written when the routines go there. `prefer_room`: put them in that room even
+/// where the game's own space is free (a test of it).
 [[nodiscard]] std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why,
-                                          u64 reserved = 0, bool prefer_room = false);
+                                          u64 reserved = 0, std::span<u8> room = {},
+                                          bool prefer_room = false);
 
 /// Anchors found at 1.1.0's own addresses (a check of the search on 1.1.0; nothing is patched).
 [[nodiscard]] bool MatchesReference(std::span<const u8> image, u32 text_size, std::string& why);
