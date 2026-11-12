@@ -479,6 +479,31 @@ void Config::ReadRendererValues() {
     ReadCategory(Settings::Category::RendererExtensions);
     ReadCategory(Settings::Category::RendererDebug);
 
+    // v1.6.8.1 and earlier: "fefw_ambient_occlusion", on by default. While there is no
+    // fefw_no_ambient_occlusion entry yet, a saved "off" there (this file's own, or a game's own
+    // choice) carries over to the new tick box.
+    if (config->GetValue(GetSection().c_str(),
+                         GetFullKey("fefw_no_ambient_occlusion", false).c_str(), nullptr) ==
+            nullptr &&
+        config->GetValue(GetSection().c_str(), GetFullKey("fefw_ambient_occlusion", false).c_str(),
+                         nullptr) != nullptr) {
+        auto& no_ambient_occlusion = Settings::values.fefw_no_ambient_occlusion;
+        bool use_global = true;
+        if (!global) {
+            use_global = ReadBooleanSetting(std::string("fefw_ambient_occlusion\\use_global"),
+                                            std::make_optional(true));
+            no_ambient_occlusion.SetGlobal(use_global);
+        }
+        if (global || !use_global) {
+            const bool ambient_occlusion =
+                ReadBooleanSetting(std::string("fefw_ambient_occlusion"), std::make_optional(true));
+            no_ambient_occlusion.SetValue(!ambient_occlusion);
+            if (!ambient_occlusion) {
+                LOG_INFO(Config, "Ambient occlusion stays off (from the old setting)");
+            }
+        }
+    }
+
     // v1.6.2 and earlier had a tick box per upscaler. Keep a player's choice when there is no
     // upscaler entry yet: NVIDIA DLSS, AMD FSR 4 or AMD FSR 3.1 when ticked, else AMD FSR 3.1,
     // the default since v1.6.3.

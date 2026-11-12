@@ -166,8 +166,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Screen-space reflections in the hubs, which trace 32 rays per pixel. Reduced traces "
               "8 (a little grainier), Off removes them. Can raise FPS in the hubs on slower GPUs.\n"
               "Takes effect when the game starts."));
-    INSERT(Settings, fefw_ambient_occlusion, tr("Ambient occlusion"),
-           tr("The soft shading in corners and creases (SSAO). Turning it off saves some GPU time "
+    INSERT(Settings, fefw_no_ambient_occlusion, tr("Turn ambient occlusion off"),
+           tr("Removes the soft shading in corners and creases (SSAO). Saves some GPU time "
               "everywhere, with flatter lighting. Takes effect when the game starts."));
     INSERT(Settings, fefw_reduced_crowd_detail, tr("Reduced crowd detail"),
            tr("Crowd characters switch to their simpler models twice as soon, which lightens busy "

@@ -449,8 +449,11 @@ struct Values {
     SwitchableSetting<bool> fefw_60fps{linkage, false, "fefw_60fps", Category::Renderer};
     SwitchableSetting<FefwReflections, true> fefw_reflections{
         linkage, FefwReflections::Full, "fefw_reflections", Category::Renderer};
-    SwitchableSetting<bool> fefw_ambient_occlusion{linkage, true, "fefw_ambient_occlusion",
-                                                   Category::Renderer};
+    // A tick turns ambient occlusion off, like the other tick boxes here, which all lighten the
+    // game. v1.6.8.1 and earlier had "fefw_ambient_occlusion" (on by default); a saved "off"
+    // there carries over (frontend_common/config.cpp).
+    SwitchableSetting<bool> fefw_no_ambient_occlusion{linkage, false, "fefw_no_ambient_occlusion",
+                                                      Category::Renderer};
     SwitchableSetting<bool> fefw_reduced_crowd_detail{linkage, false, "fefw_reduced_crowd_detail",
                                                       Category::Renderer};
     // Scenery (map models) switches to its simpler models at 60% of the game's distances, and

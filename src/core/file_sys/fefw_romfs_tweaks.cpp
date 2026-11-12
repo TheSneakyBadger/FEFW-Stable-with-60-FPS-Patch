@@ -246,7 +246,7 @@ bool PatchSet(std::vector<u8>& bytes, Changes& changes) {
         return false;
     }
     const auto reflections = Settings::values.fefw_reflections.GetValue();
-    const bool ssao = Settings::values.fefw_ambient_occlusion.GetValue();
+    const bool ssao = !Settings::values.fefw_no_ambient_occlusion.GetValue();
     bool changed = false;
     for (const Leaf& leaf : leaves) {
         u8& b = bytes[leaf.offset];
@@ -345,7 +345,7 @@ void Walk(const VirtualDir& dir, const std::vector<std::string>& path,
 
 bool Any() {
     return Settings::values.fefw_reflections.GetValue() != Settings::FefwReflections::Full ||
-           !Settings::values.fefw_ambient_occlusion.GetValue() ||
+           Settings::values.fefw_no_ambient_occlusion.GetValue() ||
            Settings::values.fefw_reduced_crowd_detail.GetValue() ||
            Settings::values.fefw_reduced_scenery_detail.GetValue();
 }
@@ -378,7 +378,7 @@ VirtualDir Build(const VirtualDir& romfs) {
     };
     const bool set_files = Settings::values.fefw_reflections.GetValue() !=
                                Settings::FefwReflections::Full ||
-                           !Settings::values.fefw_ambient_occlusion.GetValue();
+                           Settings::values.fefw_no_ambient_occlusion.GetValue();
     const bool lod = Settings::values.fefw_reduced_crowd_detail.GetValue() ||
                      Settings::values.fefw_reduced_scenery_detail.GetValue();
     Walk(settings, {"Graphics", "Settings"},
