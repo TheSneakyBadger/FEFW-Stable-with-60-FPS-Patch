@@ -153,7 +153,7 @@ std::vector<u32> TextWords(std::span<const u8> image, u32 text_size) {
 } // Anonymous namespace
 
 std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why, u64 reserved,
-                            bool prefer_room) {
+                            std::span<u8> room, bool prefer_room) {
     if (text_size == 0 || text_size > image.size() || image.size() < 0x10) {
         why = "the game's code segment is not where it should be";
         return std::nullopt;
@@ -191,39 +191,24 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
         return std::nullopt;
     }
     const u64 bss_end = mod0 + static_cast<s64>(static_cast<s32>(Read32(image, mod0 + 12)));
-    // The loader's added room (when there is some): routines in its first page, table in its
-    // second. Used only where the game's own free space is taken (by a mod).
+    // The loader's added room (when there is some), after the last module so no module moves
+    // (#45: a mod's code reached other modules at fixed distances from main): routines in its
+    // first page, table in its second. Used only where the game's own free space is taken.
+    const bool has_room = reserved != 0 && reserved % 0x1000 == 0 && room.size() >= ReserveBytes;
     const auto room_free = [&](u64 start, u64 size) {
-        return reserved != 0 && start + size <= image.size() &&
-               std::all_of(image.begin() + start, image.begin() + start + size,
-                           [](u8 b) { return b == 0; });
+        return has_room && start >= reserved && start - reserved + size <= room.size() &&
+               std::all_of(room.begin() + (start - reserved),
+                           room.begin() + (start - reserved + size), [](u8 b) { return b == 0; });
     };
-    const bool has_room = reserved != 0 && reserved % 0x1000 == 0 &&
-                          reserved + ReserveBytes <= image.size();
     bool used_room = false;
-    u64 table = Align(bss_end, 0x100);
-    if (prefer_room && has_room && room_free(reserved + 0x1000, TableBytes)) {
-        table = reserved + 0x1000;
-        used_room = true;
-    } else if (table + TableBytes > Align(bss_end, 0x1000) || table + TableBytes > image.size() ||
-        std::any_of(image.begin() + table, image.begin() + table + TableBytes,
-                    [](u8 b) { return b != 0; })) {
-        if (!has_room || !room_free(reserved + 0x1000, TableBytes)) {
-            why = "there is no free room after the game's data for the patch's table";
-            return std::nullopt;
-        }
-        table = reserved + 0x1000;
-        used_room = true;
-    }
 
     // The routines: in the .text page padding, as high as it is still all zero (built-in
-    // patches and mods put their own code at its start).
+    // patches and mods put their own code at its start), or else in the room.
     const u64 padding_end = Align(text_size, 0x1000);
     const u64 padding_start = Align(text_size, 16);
     std::optional<u64> free_start;
-    if (prefer_room && has_room && Cave.size() <= 0x1000 && room_free(reserved, Cave.size())) {
+    if (prefer_room && Cave.size() <= 0x1000 && room_free(reserved, Cave.size())) {
         free_start = reserved;
-        used_room = true;
     } else if (padding_end <= image.size()) {
         for (u64 start = (padding_end - Cave.size()) & ~u64{0xF};
              start >= padding_start && start + Cave.size() <= padding_end; start -= 16) {
@@ -237,14 +222,33 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
             }
         }
     }
-    if (!free_start && has_room && Cave.size() <= 0x1000 && room_free(reserved, Cave.size())) {
+    if (!free_start && Cave.size() <= 0x1000 && room_free(reserved, Cave.size())) {
         free_start = reserved;
-        used_room = true;
     }
     if (!free_start) {
         why = fmt::format("the {} bytes of free space after the game's code it needs are in use",
                           Cave.size());
         return std::nullopt;
+    }
+    const bool routines_in_room = has_room && *free_start == reserved;
+    used_room = routines_in_room;
+
+    // The table: right after the game's bss (MOD0's bss end), in the rest of that page; in the
+    // room with the routines when a mod has the game's free space (it may keep its own data in
+    // the zeroed memory after the bss too).
+    u64 table = Align(bss_end, 0x100);
+    if ((prefer_room || routines_in_room) && room_free(reserved + 0x1000, TableBytes)) {
+        table = reserved + 0x1000;
+        used_room = true;
+    } else if (table + TableBytes > Align(bss_end, 0x1000) || table + TableBytes > image.size() ||
+               std::any_of(image.begin() + table, image.begin() + table + TableBytes,
+                           [](u8 b) { return b != 0; })) {
+        if (!room_free(reserved + 0x1000, TableBytes)) {
+            why = "there is no free room after the game's data for the patch's table";
+            return std::nullopt;
+        }
+        table = reserved + 0x1000;
+        used_room = true;
     }
     const u64 cave_start = *free_start;
 
@@ -287,7 +291,11 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
         site_words.emplace_back(found[site.anchor], word);
     }
 
-    std::memcpy(image.data() + cave_start, cave.data(), cave.size());
+    if (routines_in_room) {
+        std::memcpy(room.data() + (cave_start - reserved), cave.data(), cave.size());
+    } else {
+        std::memcpy(image.data() + cave_start, cave.data(), cave.size());
+    }
     for (const auto& [offset, word] : site_words) {
         Write32(image, offset, word);
     }

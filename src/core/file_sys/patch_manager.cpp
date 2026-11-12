@@ -213,8 +213,8 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
                     const Loader::NSOHeader& header, const std::string& build_id) {
     const bool reference = build_id == FefwUltrawide::MainBuildId;
     // EDEN_60FPS_SEARCH=2: place the patch by searching on 1.1.0 too (a test of that path).
-    // EDEN_60FPS_ROOM=1: and put its routines and table in the room the loader adds after main,
-    // as a mod in the game's free space would (a test of that room).
+    // EDEN_60FPS_ROOM=1: and put its routines and table in the room the loader adds after the
+    // modules, as a mod in the game's free space would (a test of that room).
     const char* const search = std::getenv("EDEN_60FPS_SEARCH");
     const char* const room = std::getenv("EDEN_60FPS_ROOM");
     const bool prefer_room = room != nullptr && room[0] == '1';
@@ -233,12 +233,13 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
     }
     // Another version, or 1.1.0 with a mod in the patch's usual space: find every spot again
     // and put the routines in whatever padding is still free, or else in the room the loader
-    // added after main (FefwSixtySearch::ReserveBytes).
+    // adds after the last module (FefwSixtySearch::ReserveBytes).
     std::string why;
     const std::span<u8> image(out.data() + sizeof(Loader::NSOHeader),
                               out.size() - sizeof(Loader::NSOHeader));
     if (const auto layout = FefwSixtySearch::Apply(image, header.segments[0].size, why,
-                                                   FefwSixtySearch::reserved_offset, prefer_room)) {
+                                                   FefwSixtySearch::room.offset,
+                                                   FefwSixtySearch::room.bytes, prefer_room)) {
         FefwFrameRate::SetFoundLayout(build_id, layout->app_object, layout->table);
         if (reference) {
             LOG_INFO(Loader,
@@ -246,7 +247,7 @@ void ApplyFefwSixty(const std::vector<u8>& original, std::vector<u8>& out,
                      "table at {:#x}: a mod uses the space they usually go in{}",
                      layout->routines, layout->table,
                      layout->reserved ? ", so they are in memory Fortune's Eden adds after the "
-                                        "game's code"
+                                        "game's modules"
                                       : "");
         } else {
             LOG_WARNING(Loader,
