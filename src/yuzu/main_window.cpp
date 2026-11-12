@@ -5031,12 +5031,6 @@ void MainWindow::UpdateUITheme() {
     }
 
     QString theme_uri{QStringLiteral(":%1/style.qss").arg(current_theme)};
-    // Fortune's Eden: EDEN_STYLE_QSS=<file> loads the stylesheet from that file instead (to try
-    // theme changes without rebuilding).
-    if (const char* const style_file = std::getenv("EDEN_STYLE_QSS"); style_file && *style_file) {
-        theme_uri = QString::fromLocal8Bit(style_file);
-        LOG_INFO(Frontend, "Stylesheet from {}", theme_uri.toStdString());
-    }
     QFile f(theme_uri);
     if (f.open(QFile::ReadOnly | QFile::Text)) {
         QTextStream ts(&f);
