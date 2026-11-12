@@ -46,5 +46,4 @@ private:
     std::vector<std::function<void(bool)>> apply_funcs;
     QLabel* intro = nullptr;
     QLabel* restart_note = nullptr;
-    QLabel* sixty_note = nullptr;
 };
