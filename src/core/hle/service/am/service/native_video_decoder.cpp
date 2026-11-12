@@ -20,6 +20,8 @@
 #include "video_core/gpu.h"
 #include "video_core/textures/decoders.h"
 #include <mutex>
+#include <string>
+#include <fmt/format.h>
 #include "core/hle/service/nvdrv/core/syncpoint_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "core/hle/service/am/service/native_video_layout.h"
@@ -641,6 +643,24 @@ private:
         pending_input_bytes = pending_input_bytes >= bytes ? pending_input_bytes - bytes : 0;
     }
 
+    // A line for the log when something has waited a while (decode_mutex held). The images
+    // only from the service's calls, which own them.
+    std::string DecodeState(bool with_images = false) const {
+        std::string text = fmt::format(
+            "pending {} ({} bytes), in decoder {}, decoded {}, decoder full {}, busy {}, eos {}, "
+            "frames at once {}",
+            pending_inputs.size(), pending_input_bytes, av1_in_flight.size(),
+            decoded_frames.size(), av1_decoder_full, decode_busy, eos_in_progress,
+            Av1FrameDelay());
+        if (with_images) {
+            text += fmt::format(", images handed back {} of {}",
+                                std::ranges::count_if(registered_images,
+                                                      [](const auto& image) { return image.available; }),
+                                registered_images.size());
+        }
+        return text;
+    }
+
     // AV1 decode worker, the only user of the libgav1 decoder while decode_busy (Stop and Flush
     // wait for it to be idle before touching the decoder). It hands libgav1 every input it will
     // take, so frame-parallel decoding has several frames to work on at once, then takes the
@@ -662,9 +682,19 @@ private:
             return !pending_inputs.empty() && pending_inputs.front().eos && av1_in_flight.empty() &&
                    decoded_frames.size() < MaximumDecodedAhead;
         };
-        while (decode_cv.wait(lock, stop, [&] {
+        const auto ready = [&] {
             return !decode_error && (can_enqueue() || can_dequeue() || can_end_stream());
-        })) {
+        };
+        while (true) {
+            // Waiting over 2 s mid-movie: say for what (issue #22's frame threading).
+            if (!decode_cv.wait_for(lock, stop, std::chrono::seconds{2}, ready)) {
+                if (stop.stop_requested()) break;
+                if (!pending_inputs.empty() || !av1_in_flight.empty()) {
+                    LOG_WARNING(Service_AM, "Native video decode worker waiting 2 s: {}",
+                                DecodeState());
+                }
+                continue;
+            }
             if (stop.stop_requested()) break;
             if (can_enqueue()) {
                 PendingInput input = std::move(pending_inputs.front());
@@ -695,10 +725,16 @@ private:
                 const auto wait_start = std::chrono::steady_clock::now();
                 std::optional<DecodedFrame> frame;
                 const bool dequeued = Av1Dequeue(frame, timestamp);
+                const auto waited = std::chrono::steady_clock::now() - wait_start;
                 if (frame) {
-                    frame->decode_time = std::chrono::steady_clock::now() - wait_start;
+                    frame->decode_time = waited;
                 }
                 lock.lock();
+                if (waited > std::chrono::seconds{1}) {
+                    LOG_WARNING(Service_AM, "Native video: taking a frame out took {} ms ({}): {}",
+                                std::chrono::duration_cast<std::chrono::milliseconds>(waited).count(),
+                                frame ? "a frame" : "no frame", DecodeState());
+                }
                 decode_busy = false;
                 av1_decoder_full = false;
                 if (!dequeued) {
@@ -882,10 +918,16 @@ private:
                 if (no_wait && decoded_frames.empty() && !decode_error) {
                     break;
                 }
-                decode_cv.wait(lock, [&] {
+                const auto frame_or_idle = [&] {
                     return !decoded_frames.empty() || decode_error ||
                            (pending_inputs.empty() && av1_in_flight.empty() && !decode_busy);
-                });
+                };
+                while (!decode_cv.wait_for(lock, std::chrono::seconds{2}, frame_or_idle)) {
+                    LOG_WARNING(Service_AM,
+                                "Native video: the game has waited 2 s for a frame ({}): {}",
+                                from_submit ? "submitting" : "handing an image back",
+                                DecodeState(true));
+                }
                 if (decode_error) {
                     const Result error = *decode_error;
                     decode_error.reset();
