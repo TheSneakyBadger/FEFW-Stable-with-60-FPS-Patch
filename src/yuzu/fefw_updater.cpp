@@ -23,6 +23,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -46,7 +47,12 @@ namespace {
 constexpr const char* kApiHost = "https://api.github.com";
 constexpr const char* kLatestPath =
     "/repos/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/latest";
+#ifdef _WIN32
 constexpr const char* kAssetName = "FEFW-Stable-60FPS-Portable.zip";
+#else
+// Linux: the AppImage itself, which replaces the running one (see InstallAppImage).
+constexpr const char* kAssetName = "Fortunes-Eden-x86_64.AppImage";
+#endif
 constexpr const char* kUserAgent = "FortunesEden-Updater";
 
 QString Tr(const char* text) {
@@ -302,12 +308,61 @@ try {
 }
 )PS";
 
+#ifndef _WIN32
+/// Linux: the downloaded AppImage replaces the running one (a rename: the running emulator keeps
+/// the old file until it closes), and starts once the emulator has closed, from the same folder,
+/// so a portable "user" folder next to it is still used.
+bool InstallAppImage(QWidget* parent, const QString& downloaded, const QString& appimage,
+                     const Release& release) {
+    QFile::setPermissions(downloaded, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                          QFile::ReadGroup | QFile::ExeGroup | QFile::ReadOther |
+                                          QFile::ExeOther);
+    if (std::rename(QFile::encodeName(downloaded).constData(),
+                    QFile::encodeName(appimage).constData()) != 0) {
+        LOG_ERROR(Frontend, "Update: couldn't replace {}", appimage.toStdString());
+        QFile::remove(downloaded);
+        QMessageBox::warning(parent, Tr("Update"),
+                             Tr("Couldn't replace the AppImage. Please download the update from "
+                                "the release page."));
+        return false;
+    }
+    // The new AppImage sets up its own environment: drop what this one's runtime set, and
+    // anything pointing into its mount, which goes away when it closes.
+    const QString appdir = qEnvironmentVariable("APPDIR");
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    for (const QString& key : environment.keys()) {
+        if (!appdir.isEmpty() && environment.value(key).contains(appdir)) {
+            environment.remove(key);
+        }
+    }
+    for (const char* key : {"APPDIR", "APPIMAGE", "ARGV0", "OWD"}) {
+        environment.remove(QString::fromLatin1(key));
+    }
+    QString folder = qEnvironmentVariable("OWD");
+    if (folder.isEmpty()) {
+        folder = QFileInfo(appimage).absolutePath();
+    }
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, [appimage, environment, folder] {
+        QProcess process;
+        process.setProgram(appimage);
+        process.setWorkingDirectory(folder);
+        process.setProcessEnvironment(environment);
+        process.startDetached();
+    });
+    LOG_INFO(Frontend, "Update: {} installed, starting it after the emulator closes", release.tag);
+    return true;
+}
+#endif
+
 } // Anonymous namespace
 
 std::optional<Release> CheckForUpdate() {
 #ifndef _WIN32
-    // The releases are Windows packages, installed by a PowerShell script.
-    return std::nullopt;
+    // Linux: only an AppImage can update itself (the runtime says where it is).
+    if (qEnvironmentVariableIsEmpty("APPIMAGE")) {
+        LOG_INFO(Frontend, "Update check: not running from an AppImage, no automatic updates");
+        return std::nullopt;
+    }
 #endif
     try {
         const auto result = MakeClient(kApiHost)->Get(
@@ -394,10 +449,23 @@ bool OfferUpdate(QWidget* parent, const Release& release) {
         return false;
     }
 
+#ifdef _WIN32
     const QString work = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
                              .filePath(QStringLiteral("FortunesEdenUpdate"));
     QDir().mkpath(work);
     const QString zip_path = QDir(work).filePath(QString::fromLatin1(kAssetName));
+#else
+    // Next to the running AppImage, so the new one can be renamed over it.
+    const QString appimage = qEnvironmentVariable("APPIMAGE");
+    if (!QFileInfo(QFileInfo(appimage).absolutePath()).isWritable()) {
+        QMessageBox::warning(parent, Tr("Update"),
+                             Tr("The folder Fortune's Eden is in can't be written to, so it can't "
+                                "update itself. Please download the update from the release page."));
+        QDesktopServices::openUrl(QUrl(QString::fromStdString(release.html_url)));
+        return false;
+    }
+    const QString zip_path = appimage + QStringLiteral(".download");
+#endif
 
     const int maximum = release.asset_size > 0 ? 1000 : 0;
     QProgressDialog progress(Tr("Downloading Fortune's Eden %1...").arg(QString::fromStdString(release.tag)),
@@ -439,6 +507,9 @@ bool OfferUpdate(QWidget* parent, const Release& release) {
         return false;
     }
 
+#ifndef _WIN32
+    return InstallAppImage(parent, zip_path, appimage, release);
+#else
     const QString script_path = QDir(work).filePath(QStringLiteral("install-update.ps1"));
     {
         QFile script(script_path);
@@ -464,6 +535,7 @@ bool OfferUpdate(QWidget* parent, const Release& release) {
     }
     LOG_INFO(Frontend, "Update: installing {} after the emulator closes", release.tag);
     return true;
+#endif
 }
 
 } // namespace FefwUpdater
