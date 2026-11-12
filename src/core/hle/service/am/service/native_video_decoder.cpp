@@ -19,9 +19,11 @@
 #include "core/hle/service/nvdrv/devices/nvhost_as_gpu.h"
 #include "video_core/gpu.h"
 #include "video_core/textures/decoders.h"
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <fmt/format.h>
+#include "common/fefw_hang_dump.h"
 #include "core/hle/service/nvdrv/core/syncpoint_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "core/hle/service/am/service/native_video_layout.h"
@@ -34,6 +36,10 @@
 #include "gav1/decoder.h"
 #ifdef FEFW_HAVE_DAV1D
 #include <dav1d/dav1d.h>
+// externals/dav1d/src/fefw_state.c: dav1d's frame-threading state as one line (issue #22)
+extern "C" size_t dav1d_fefw_describe(Dav1dContext* c, char* buf, size_t n);
+// Wakes dav1d's workers to look for tasks again (a lost wakeup stalls them, issue #22).
+extern "C" void dav1d_fefw_kick(Dav1dContext* c);
 #endif
 #include "video_core/host1x/ffmpeg.h"
 #include <map>
@@ -77,12 +83,12 @@ int Av1DecodeThreads() {
 // among its threads, and heavy frames (fire, fast camera moves) took 30-43 ms each, over the
 // 33 ms a 30 FPS video has, so the movie fell behind and the game faded the dialogue (#22).
 // Several at once, a frame still takes as long but one is finished every 10-15 ms.
-// Off by default (one at a time, as before): with 4 at once the decode thread stopped inside
-// dav1d partway through a fire scene on a Ryzen 9 + RTX 4090 and the movie froze (still being
-// looked into). EDEN_AV1_FRAME_DELAY=2-8 turns it on for testing.
+// 4 at once by default. On many cores dav1d sometimes loses the wakeup for its worker threads
+// and the movie froze (v1.6.8.3 decoded one at a time for that); Dav1dWatch now wakes them.
+// EDEN_AV1_FRAME_DELAY=1 decodes one at a time as before; 2-8 sets how many.
 int Av1FrameDelay() {
     static const int delay = [] {
-        int value = 1;
+        int value = 4;
         if (const char* const env = std::getenv("EDEN_AV1_FRAME_DELAY")) {
             const int requested = std::atoi(env);
             if (requested >= 1 && requested <= 8) {
@@ -130,6 +136,17 @@ bool AsyncVideoOutput() {
     }();
     return enabled;
 }
+
+#ifdef FEFW_HAVE_DAV1D
+// EDEN_AV1_NO_WAKE=1 turns off Dav1dWatch (to compare with and without it).
+bool Dav1dKickDisabled() {
+    static const bool disabled = [] {
+        const char* value = std::getenv("EDEN_AV1_NO_WAKE");
+        return value && value[0] == '1';
+    }();
+    return disabled;
+}
+#endif
 
 // Which AV1 decoder runs the cutscenes: dav1d, unless EDEN_AV1_DECODER=libgav1. Fortune's Weave's
 // 1440p cutscenes are one tile per frame, and libgav1 only splits work across tiles or whole
@@ -271,6 +288,7 @@ private:
         // them. The output worker never waits for codec_mutex (held here), so it sees the stop.
         StopOutputWorker();
         decode_worker = std::jthread{};
+        dav1d_watch = std::jthread{}; // after the decode worker, which it may have to unstick
         deferred_output_error.reset();
         decode_busy = false;
         decode_error.reset();
@@ -353,8 +371,8 @@ private:
                     } else {
                         ++submissions_refused;
                         // The game retries while the queue is full (about 30 a second during a
-                        // movie): logged only when testing frame threading or timing.
-                        if ((Av1FrameDelay() > 1 || VideoTimingEnabled()) &&
+                        // movie): logged only with EDEN_VIDEO_TIMING=1.
+                        if (VideoTimingEnabled() &&
                             (submissions_refused == 1 || submissions_refused % 100 == 0)) {
                             LOG_WARNING(Service_AM,
                                         "Native video: submission refused ({} bytes; {} so far): {}",
@@ -654,6 +672,99 @@ private:
         pending_input_bytes = pending_input_bytes >= bytes ? pending_input_bytes - bytes : 0;
     }
 
+    // The decode worker marks its calls into the AV1 decoder, so the output thread can tell when
+    // one has not come back (testing frame threading, issue #22).
+    struct DecoderCall {
+        DecoderCall(INativeVideoCodec& owner_, int call_kind) : owner{owner_} {
+            owner.decoder_call_kind.store(call_kind, std::memory_order_relaxed);
+            owner.decoder_call_since.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                           std::memory_order_release);
+        }
+        ~DecoderCall() {
+            owner.decoder_call_since.store(0, std::memory_order_release);
+        }
+        INativeVideoCodec& owner;
+    };
+
+    // From the output thread every 2 s: a decoder call still running after 5 s is logged, and
+    // (EDEN_HANG_DUMP_DIR) every thread's stack is written to a dump, once.
+#ifdef FEFW_HAVE_DAV1D
+    // With several frames decoded at once, dav1d's workers sometimes all go to sleep while a frame
+    // still has work they could do: the signal that should wake them is lost (dav1d issue #444,
+    // many cores). The decode thread then waits in dav1d forever: the movie freezes, and so does
+    // closing the game. Here, a call into dav1d that has waited over 20 ms wakes the workers to look
+    // again, every 5 ms until it returns. In the title movie's heavy stretch it happened dozens of
+    // times a second, and waking after 150 ms still dropped 58 frames; a wake when nothing is stuck
+    // only costs the workers one look.
+    void Dav1dWatch(std::stop_token stop) {
+        Common::SetCurrentThreadName("NativeVideoWatch");
+        std::mutex mutex;
+        std::condition_variable_any cv;
+        u64 wakes = 0;
+        auto last_log = std::chrono::steady_clock::time_point{};
+        while (true) {
+            {
+                std::unique_lock lock{mutex};
+                cv.wait_for(lock, stop, std::chrono::milliseconds{5}, [] { return false; });
+            }
+            if (stop.stop_requested()) {
+                break;
+            }
+            const auto since = decoder_call_since.load(std::memory_order_acquire);
+            if (since == 0) {
+                continue;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            const auto held = now.time_since_epoch() - std::chrono::steady_clock::duration{since};
+            if (held < std::chrono::milliseconds{20}) {
+                continue;
+            }
+            dav1d_fefw_kick(dav1d);
+            ++wakes;
+            if (now - last_log > std::chrono::seconds{60}) {
+                last_log = now;
+                LOG_WARNING(Service_AM, "Native video: woke dav1d's workers, the decode thread had waited {} ms ({} times so far)",
+                            std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), wakes);
+            }
+        }
+    }
+#endif
+
+    void CheckDecoderCall() {
+        const auto since = decoder_call_since.load(std::memory_order_acquire);
+        if (since == 0) {
+            decoder_call_reports = 0;
+            return;
+        }
+        const auto held = std::chrono::steady_clock::now().time_since_epoch() -
+                          std::chrono::steady_clock::duration{since};
+        // At 5 s, and again at 15 s to show whether dav1d moved at all in between.
+        if (decoder_call_reports >= 2 ||
+            held < std::chrono::seconds{decoder_call_reports == 0 ? 5 : 15}) {
+            return;
+        }
+        ++decoder_call_reports;
+        static constexpr const char* kinds[] = {"?", "sending data to", "taking a frame from",
+                                                "flushing"};
+        const int call_kind = decoder_call_kind.load(std::memory_order_relaxed);
+        LOG_WARNING(Service_AM, "Native video: the decode thread has been {} the AV1 decoder for {} s: {}",
+                    kinds[(call_kind >= 0 && call_kind <= 3) ? call_kind : 0],
+                    std::chrono::duration_cast<std::chrono::seconds>(held).count(), DecodeState());
+#ifdef FEFW_HAVE_DAV1D
+        if (dav1d) {
+            std::string text(16384, '\0');
+            text.resize(dav1d_fefw_describe(dav1d, text.data(), text.size()));
+            LOG_WARNING(Service_AM, "Native video: {}", text);
+        }
+#endif
+        if (decoder_call_reports == 1) {
+            const std::string dump = Common::FefwHangDump::Write("native video decoder");
+            if (!dump.empty()) {
+                LOG_WARNING(Service_AM, "Native video: thread stacks written to {}", dump);
+            }
+        }
+    }
+
     // A line for the log when something has waited a while (decode_mutex held). The images
     // only from the service's calls, which own them.
     std::string DecodeState(bool with_images = false) const {
@@ -714,6 +825,7 @@ private:
                 pending_inputs.pop_front();
                 decode_busy = true;
                 lock.unlock();
+                const DecoderCall enqueue_call{*this, 1};
                 const int enqueue = Av1Enqueue(input);
                 lock.lock();
                 decode_busy = false;
@@ -742,7 +854,11 @@ private:
                 // Waits for the oldest frame only; libgav1 keeps decoding the others meanwhile.
                 const auto wait_start = std::chrono::steady_clock::now();
                 std::optional<DecodedFrame> frame;
-                const bool dequeued = Av1Dequeue(frame, timestamp);
+                bool dequeued;
+                {
+                    const DecoderCall dequeue_call{*this, 2};
+                    dequeued = Av1Dequeue(frame, timestamp);
+                }
                 const auto waited = std::chrono::steady_clock::now() - wait_start;
                 if (frame) {
                     frame->decode_time = waited;
@@ -790,7 +906,11 @@ private:
             decode_busy = true;
             eos_in_progress = true;
             lock.unlock();
-            const bool reset = Av1Reset();
+            bool reset;
+            {
+                const DecoderCall reset_call{*this, 3};
+                reset = Av1Reset();
+            }
             lock.lock();
             decode_busy = false;
             eos_in_progress = false;
@@ -1132,10 +1252,13 @@ private:
         Common::SetCurrentThreadName("NativeVideoOutput");
         std::unique_lock lock{decode_mutex};
         while (true) {
-            decode_cv.wait(lock, [&] {
+            while (!decode_cv.wait_for(lock, std::chrono::seconds{2}, [&] {
                 return output_stop ||
                        (output_wanted && (!decoded_frames.empty() || decode_error.has_value()));
-            });
+            })) {
+                CheckDecoderCall();
+            }
+            CheckDecoderCall();
             if (output_stop) {
                 return;
             }
@@ -1722,6 +1845,11 @@ private:
                                     transfer_memory = memory.GetPointerUnsafe();
                                     transfer_memory->Open(kernel);
                                     decode_worker = std::jthread{[this](std::stop_token stop) { DecodeWorker(stop); }};
+#ifdef FEFW_HAVE_DAV1D
+                                    if (dav1d && Av1FrameDelay() > 1 && !Dav1dKickDisabled()) {
+                                        dav1d_watch = std::jthread{[this](std::stop_token stop) { Dav1dWatch(stop); }};
+                                    }
+#endif
                                     StartOutputWorker();
                                     result = ResultSuccess;
                                 }
@@ -1782,6 +1910,9 @@ private:
     std::deque<PendingInput> pending_inputs;
     u64 pending_input_bytes{};
     u64 submissions_refused{};  ///< Submissions refused for a full queue (the log).
+    std::atomic<std::chrono::steady_clock::rep> decoder_call_since{0}; ///< 0: not in a call
+    std::atomic<int> decoder_call_kind{0};
+    int decoder_call_reports{}; ///< output thread only
     std::chrono::steady_clock::time_point last_frame_out{};
     u64 next_submission_id{1};
     bool started{};
@@ -1824,6 +1955,7 @@ private:
     std::optional<Result> deferred_output_error;
     std::thread output_worker;
 
+    std::jthread dav1d_watch;   ///< Dav1dWatch: joined after the decode worker
     std::jthread decode_worker; // Last: stopped and joined first (Reset also joins it).
 };
 
