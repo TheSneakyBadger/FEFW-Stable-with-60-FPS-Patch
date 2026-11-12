@@ -939,6 +939,25 @@ int CpuWriteFastMode() {
     return mode;
 }
 
+// Fortune's Eden: guest CPU writes to buffer memory the GPU didn't write (the game's per-frame
+// uniform and vertex data) are held too, like those to GPU-written memory: answered without the
+// lock and applied in one batch before the next command list (OnCachedWrites), instead of each
+// waiting for the buffer cache's lock, which the draw thread holds while it draws. On a Ryzen 9
+// 5900X they were 17,000 a second on battle maps, waiting 0.38 s of every second (#41).
+// EDEN_CPU_WRITE_HOLD=0 writes them through under the lock as before.
+bool CpuWriteHoldAll() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_CPU_WRITE_HOLD");
+        const bool parsed = value == nullptr || std::atoi(value) != 0;
+        if (!parsed) {
+            LOG_INFO(Render_Vulkan, "EDEN_CPU_WRITE_HOLD=0: guest CPU writes to buffers the GPU "
+                                    "didn't write go through under the lock");
+        }
+        return parsed;
+    }();
+    return enabled;
+}
+
 struct CpuWriteCounters {
     std::atomic<u64> fast{0};
     std::atomic<u64> locked{0};
@@ -989,6 +1008,10 @@ void CountCpuWrite(bool fast) {
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
     const int fast_mode = CpuWriteFastMode();
+    if (fast_mode == 1 && CpuWriteHoldAll() && buffer_cache.IsRegisteredWithoutLock(addr, size)) {
+        CountCpuWrite(true);
+        return true;
+    }
     if (fast_mode != 0 && buffer_cache.IsHeldWithoutLock(addr, size)) {
         if (fast_mode != 2) {
             CountCpuWrite(true);

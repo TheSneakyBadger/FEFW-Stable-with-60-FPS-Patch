@@ -214,6 +214,26 @@ bool BufferCache<P>::OnCPUWrite(DAddr device_addr, u64 size) {
 }
 
 template <class P>
+bool BufferCache<P>::IsRegisteredWithoutLock(DAddr device_addr, u64 size) const noexcept {
+    if (size == 0) {
+        return false;
+    }
+    const u64 page_begin = device_addr >> CACHING_PAGEBITS;
+    const u64 page_end = Common::DivCeil(device_addr + size, CACHING_PAGESIZE);
+    if (page_end > page_table.size()) {
+        return false;
+    }
+    for (u64 page = page_begin; page < page_end; ++page) {
+        u32& index = const_cast<u32&>(page_table[page].index);
+        if (std::atomic_ref<u32>(index).load(std::memory_order_relaxed) !=
+            Common::SlotId::INVALID_INDEX) {
+            return true;
+        }
+    }
+    return false;
+}
+
+template <class P>
 bool BufferCache<P>::IsHeldWithoutLock(DAddr device_addr, u64 size) const noexcept {
     if (size == 0) {
         return false;
