@@ -23,6 +23,7 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 
 ## What's new
 
+- **v1.6.8.6:** 60 FPS mode plays menus and other UI animations, and prints spoken text, at their normal speed instead of twice as fast ([#46](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/46)); reactive flushing is on by default, so cutscene effects such as dust clouds no longer jump; and menu check boxes no longer overlap the text in the dark themes ([#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).
 - **v1.6.8.5:** 60 FPS mode no longer freezes the game on Continue with mods whose code reaches the game's other modules, such as settings mods ([#45](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/45)).
 - **v1.6.8.4:** the busiest pre-rendered cutscenes keep up with the voices: the video decoder works on 4 frames at once, and no longer freezes the movie (or leaves the game running after closing) on PCs with many cores ([#22](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/22)).
 - **v1.6.8.3:** no more crash in long pre-rendered cutscenes with frame generation on, and 60 FPS mode works with mods that use the free space after the game's code ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30), [#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).

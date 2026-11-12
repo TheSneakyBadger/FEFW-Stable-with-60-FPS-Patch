@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.6.8.6
+
+60 FPS mode with menus and spoken text at their normal speed ([#46](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/46)), and cutscene effects that no longer jump.
+
+#### ⏱️ 60 FPS mode
+
+- **Menus, windows and other UI animations play at their normal speed.** The game moves every UI animation on by one step per frame, so at 60 FPS menu transitions, windows opening and closing and other UI effects ran twice as fast. Each step is now scaled to the real frame time, so they play as they do at 30 FPS, at any frame rate in between too.
+- **Spoken text prints at its normal speed.** Each frame, the game shows 3 more letters of the current line, so at 60 FPS lines printed twice as fast. Letters now come in on the game's own 30 steps a second, so text prints as fast as it does at 30 FPS. Pressing the button to show the whole line works as before.
+
+#### 🎨 Graphics
+
+- **Effects no longer jump back mid-animation.** Some effects, such as the dust clouds in cutscenes, could snap back to an earlier frame now and then. Reactive flushing (Graphics > Advanced) fixes this and is now on by default. Existing settings are switched on once; you can turn it off again if you want.
+
+#### 🔧 Fixes
+
+- **Menu check boxes no longer overlap the text** in the Fortune's Eden and Qt Dark themes ([#39](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/39)).
+
+Everything else is as in [v1.6.8.5](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.5).
+
 ## v1.6.8.5
 
 60 FPS mode with mods that reach the game's other modules ([#45](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/45)).

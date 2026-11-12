@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.5 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.6 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -464,6 +464,13 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
 $fpsText$optionalText
+
+New in v1.6.8.6:
+- 60 FPS mode: menus, windows and other UI animations, and the letters of spoken text, now
+  play at their normal speed. They used to run twice as fast at 60 FPS.
+- Reactive flushing is on by default (Graphics > Advanced). With it off, some effects (such as
+  dust clouds in cutscenes) could jump back mid-animation. Existing settings are switched once.
+- Fortune's Eden and Qt Dark themes: menu check boxes no longer overlap the text.
 
 New in v1.6.8.5:
 - 60 FPS mode works with mods whose code reaches the game's other modules (such as settings
