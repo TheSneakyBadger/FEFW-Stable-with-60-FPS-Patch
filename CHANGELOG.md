@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.8.5
+
+60 FPS mode with mods that reach the game's other modules ([#45](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/45)).
+
+#### 🔧 Fixes
+
+- **60 FPS mode no longer freezes the game on Continue with some mods.** Since v1.6.8.3, when a mod uses the free space after the game's code, 60 FPS mode puts its routines in memory Fortune's Eden adds. That memory went right after the game's main code, which moved the rest of the game's code along a little. Mods whose code reaches those other parts at fixed distances, such as settings mods that add their own options, then read the wrong places and the game froze when loading a save. The memory now goes after all of the game's code, so nothing moves.
+
+Everything else is as in [v1.6.8.4](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.4).
+
 ## v1.6.8.4
 
 Pre-rendered cutscenes that keep up in their heaviest scenes ([#22](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/22)).
