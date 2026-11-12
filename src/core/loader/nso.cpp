@@ -268,14 +268,16 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     // Load codeset for current process
     process.LoadModule(system.Kernel(), std::move(codeset), load_base);
     if (fefw_reserved_at != 0) {
-        // The 60 FPS routines' page runs as code; the table's page is written each frame.
+        // Read-write, like the data before it, so the room is part of main's data region. The
+        // game's rtld takes every executable region as the start of a module: an executable
+        // page here was read as one, and the game stuck at boot following its "header". The
+        // emulated CPU runs code from any mapped page (a native-code build would need it
+        // executable, and another place for it).
         auto& page_table = process.GetPageTable();
-        const Result code_result = page_table.SetProcessMemoryPermission(
-            load_base + fefw_reserved_at, 0x1000, Kernel::Svc::MemoryPermission::ReadExecute);
-        const Result table_result = page_table.SetProcessMemoryPermission(
-            load_base + fefw_reserved_at + 0x1000, FefwSixtySearch::ReserveBytes - 0x1000,
+        const Result result = page_table.SetProcessMemoryPermission(
+            load_base + fefw_reserved_at, FefwSixtySearch::ReserveBytes,
             Kernel::Svc::MemoryPermission::ReadWrite);
-        if (code_result.IsError() || table_result.IsError()) {
+        if (result.IsError()) {
             LOG_ERROR(Loader, "60 FPS mode: the room after main at {:#x} could not be set up",
                       load_base + fefw_reserved_at);
         }
