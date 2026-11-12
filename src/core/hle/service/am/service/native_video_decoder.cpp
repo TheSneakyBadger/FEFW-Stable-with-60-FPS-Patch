@@ -83,12 +83,12 @@ int Av1DecodeThreads() {
 // among its threads, and heavy frames (fire, fast camera moves) took 30-43 ms each, over the
 // 33 ms a 30 FPS video has, so the movie fell behind and the game faded the dialogue (#22).
 // Several at once, a frame still takes as long but one is finished every 10-15 ms.
-// Off by default (one at a time, as before): with 4 at once the decode thread stopped inside
-// dav1d partway through a fire scene on a Ryzen 9 + RTX 4090 and the movie froze (still being
-// looked into). EDEN_AV1_FRAME_DELAY=2-8 turns it on for testing.
+// 4 at once by default. On many cores dav1d sometimes loses the wakeup for its worker threads
+// and the movie froze (v1.6.8.3 decoded one at a time for that); Dav1dWatch now wakes them.
+// EDEN_AV1_FRAME_DELAY=1 decodes one at a time as before; 2-8 sets how many.
 int Av1FrameDelay() {
     static const int delay = [] {
-        int value = 1;
+        int value = 4;
         if (const char* const env = std::getenv("EDEN_AV1_FRAME_DELAY")) {
             const int requested = std::atoi(env);
             if (requested >= 1 && requested <= 8) {
@@ -371,8 +371,8 @@ private:
                     } else {
                         ++submissions_refused;
                         // The game retries while the queue is full (about 30 a second during a
-                        // movie): logged only when testing frame threading or timing.
-                        if ((Av1FrameDelay() > 1 || VideoTimingEnabled()) &&
+                        // movie): logged only with EDEN_VIDEO_TIMING=1.
+                        if (VideoTimingEnabled() &&
                             (submissions_refused == 1 || submissions_refused % 100 == 0)) {
                             LOG_WARNING(Service_AM,
                                         "Native video: submission refused ({} bytes; {} so far): {}",
@@ -721,7 +721,7 @@ private:
             }
             dav1d_fefw_kick(dav1d);
             ++wakes;
-            if (now - last_log > std::chrono::seconds{10}) {
+            if (now - last_log > std::chrono::seconds{60}) {
                 last_log = now;
                 LOG_WARNING(Service_AM, "Native video: woke dav1d's workers, the decode thread had waited {} ms ({} times so far)",
                             std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), wakes);
