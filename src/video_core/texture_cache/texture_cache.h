@@ -1142,7 +1142,8 @@ std::array<ImageId, 4> TextureCache<P>::FrameGenUiLayerIds() {
     if (count != 0) {
         fg_ui_last = sorted[0].first;
         fg_ui_last_addr = slot_images[fg_ui_last].gpu_addr;
-    } else if (fg_ui_last && slot_images[fg_ui_last].gpu_addr == fg_ui_last_addr &&
+    } else if (fg_ui_last && True(slot_images[fg_ui_last].flags & ImageFlagBits::Registered) &&
+               slot_images[fg_ui_last].gpu_addr == fg_ui_last_addr &&
                slot_images[fg_ui_last].info.size.width == fg_ui_size.width &&
                slot_images[fg_ui_last].info.size.height == fg_ui_size.height) {
         // The game didn't redraw its UI this frame (nothing in it changed): it still shows the
@@ -3261,6 +3262,26 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     ASSERT_MSG(False(image.flags & ImageFlagBits::Tracked), "Image was not untracked");
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered), "Image was not unregistered");
+
+    // Frame generation keeps the last UI layer across frames (FrameGenUiLayerIds) and counts this
+    // frame's targets: forget a deleted one. Kept, a UI target freed while the game showed a
+    // pre-rendered video (no UI drawn, so unused for 30 s) was asked for a view when the next
+    // frame was presented: a view of no image, which crashed NVIDIA's driver.
+    if (fg_ui_last == image_id) {
+        fg_ui_last = ImageId{};
+        fg_ui_last_addr = 0;
+    }
+    if (fg_ui_exclude == image_id) {
+        fg_ui_exclude = ImageId{};
+    }
+    for (size_t i = 0; i < fg_ui_count_size;) {
+        if (fg_ui_counts[i].first == image_id) {
+            fg_ui_counts[i] = fg_ui_counts[--fg_ui_count_size];
+            fg_ui_counts[fg_ui_count_size] = {};
+        } else {
+            ++i;
+        }
+    }
 
     // Mark render targets as dirty
     auto& dirty = maxwell3d->dirty.flags;
