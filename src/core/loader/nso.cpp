@@ -176,10 +176,10 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
 
         // Fortune's Eden: the 60 FPS patch's room after the last module (the loader maps it once
         // every module is loaded), as seen from main's start.
-        const auto& loader_room = FefwSixtySearch::loader_room;
-        if (name == "main" && load_into_process && loader_room.address > load_base + module_start) {
-            FefwSixtySearch::room = {loader_room.address - (load_base + module_start),
-                                     loader_room.bytes};
+        const auto& pending_room = FefwSixtySearch::loader_room;
+        if (name == "main" && load_into_process && pending_room.address > load_base + module_start) {
+            FefwSixtySearch::room = {pending_room.address - (load_base + module_start),
+                                     pending_room.bytes};
         }
         pi_header = pm->PatchNSO(pi_header, name);
         FefwSixtySearch::room = {};

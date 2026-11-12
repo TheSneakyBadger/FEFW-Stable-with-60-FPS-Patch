@@ -153,7 +153,7 @@ std::vector<u32> TextWords(std::span<const u8> image, u32 text_size) {
 } // Anonymous namespace
 
 std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why, u64 reserved,
-                            std::span<u8> room, bool prefer_room) {
+                            std::span<u8> room_bytes, bool prefer_room) {
     if (text_size == 0 || text_size > image.size() || image.size() < 0x10) {
         why = "the game's code segment is not where it should be";
         return std::nullopt;
@@ -194,11 +194,11 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
     // The loader's added room (when there is some), after the last module so no module moves
     // (#45: a mod's code reached other modules at fixed distances from main): routines in its
     // first page, table in its second. Used only where the game's own free space is taken.
-    const bool has_room = reserved != 0 && reserved % 0x1000 == 0 && room.size() >= ReserveBytes;
+    const bool has_room = reserved != 0 && reserved % 0x1000 == 0 && room_bytes.size() >= ReserveBytes;
     const auto room_free = [&](u64 start, u64 size) {
-        return has_room && start >= reserved && start - reserved + size <= room.size() &&
-               std::all_of(room.begin() + (start - reserved),
-                           room.begin() + (start - reserved + size), [](u8 b) { return b == 0; });
+        return has_room && start >= reserved && start - reserved + size <= room_bytes.size() &&
+               std::all_of(room_bytes.begin() + (start - reserved),
+                           room_bytes.begin() + (start - reserved + size), [](u8 b) { return b == 0; });
     };
     bool used_room = false;
 
@@ -292,7 +292,7 @@ std::optional<Layout> Apply(std::span<u8> image, u32 text_size, std::string& why
     }
 
     if (routines_in_room) {
-        std::memcpy(room.data() + (cave_start - reserved), cave.data(), cave.size());
+        std::memcpy(room_bytes.data() + (cave_start - reserved), cave.data(), cave.size());
     } else {
         std::memcpy(image.data() + cave_start, cave.data(), cave.size());
     }
