@@ -11,9 +11,11 @@
 #include <vector>
 #include "common/logging.h"
 #include "common/random.h"
+#include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
+#include "core/file_sys/fefw_60fps_search.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/nup_container.h"
 #include "core/file_sys/patch_manager.h"
@@ -329,6 +331,17 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     // Add patch size to the total module size
     code_size += patch_ctx.GetTotalPatchSize();
 
+    // Fortune's Eden: room for the 60 FPS patch's routines and table after the last module, for
+    // when a mod uses the free space they usually go in. After every module rather than right
+    // after main, so no module moves: mods reach other modules at fixed distances from main, and
+    // a room after main broke one that does (#45). Not with native code (NCE), whose patch
+    // sections sit after the modules and which would need the room executable.
+    const std::size_t fefw_room_at = code_size;
+    const bool fefw_room_possible = !Settings::IsNceEnabled();
+    if (fefw_room_possible) {
+        code_size += FefwSixtySearch::ReserveBytes;
+    }
+
     // TODO: this is bad form of ASLR, it sucks
     std::uintptr_t aslr_offset = ((::Settings::values.rng_seed_enabled.GetValue()
         ? ::Settings::values.rng_seed.GetValue() : Common::Random::Random64(0)) << 12) & 0xfff000;
@@ -344,6 +357,14 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     VAddr next_load_addr{base_address};
     const FileSys::PatchManager pm{metadata.GetTitleID(), system.GetFileSystemController(),
                                    system.GetContentProvider()};
+    std::vector<u8> fefw_room;
+    if (fefw_room_possible && pm.FefwSixtyEnabled()) {
+        fefw_room.assign(FefwSixtySearch::ReserveBytes, 0);
+        FefwSixtySearch::loader_room = {base_address + fefw_room_at, fefw_room};
+    }
+    SCOPE_EXIT {
+        FefwSixtySearch::loader_room = {};
+    };
     for (size_t i = 0; i < static_modules.size(); i++) {
         const auto& module = static_modules[i];
         const FileSys::VirtualFile module_file{dir->GetFile(module)};
@@ -363,6 +384,21 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
         next_load_addr = *tentative_next_load_addr;
         modules.insert_or_assign(load_addr, module);
         LOG_DEBUG(Loader, "loaded module {} @ {:#x}", module, load_addr);
+    }
+
+    if (!fefw_room.empty()) {
+        // Read-write: the game's rtld takes every executable region as the start of a module (an
+        // executable room was read as one, and the game stuck at boot following its "header").
+        // The emulated CPU runs code from any mapped page.
+        const VAddr room_address = base_address + fefw_room_at;
+        process.GetMemory().WriteBlock(room_address, fefw_room.data(), fefw_room.size());
+        const Result room_result = process.GetPageTable().SetProcessMemoryPermission(
+            room_address, fefw_room.size(), Kernel::Svc::MemoryPermission::ReadWrite);
+        if (room_result.IsError()) {
+            LOG_ERROR(Loader,
+                      "60 FPS mode: the room after the game's modules at {:#x} could not be set up",
+                      room_address);
+        }
     }
 
     is_loaded = true;
