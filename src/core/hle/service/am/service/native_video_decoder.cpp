@@ -692,8 +692,10 @@ private:
     // With several frames decoded at once, dav1d's workers sometimes all go to sleep while a frame
     // still has work they could do: the signal that should wake them is lost (dav1d issue #444,
     // many cores). The decode thread then waits in dav1d forever: the movie freezes, and so does
-    // closing the game. Here, a call into dav1d that has waited over 150 ms wakes the workers to
-    // look again; a wake when nothing is stuck only costs them one look.
+    // closing the game. Here, a call into dav1d that has waited over 20 ms wakes the workers to look
+    // again, every 5 ms until it returns. In the title movie's heavy stretch it happened dozens of
+    // times a second, and waking after 150 ms still dropped 58 frames; a wake when nothing is stuck
+    // only costs the workers one look.
     void Dav1dWatch(std::stop_token stop) {
         Common::SetCurrentThreadName("NativeVideoWatch");
         std::mutex mutex;
@@ -703,7 +705,7 @@ private:
         while (true) {
             {
                 std::unique_lock lock{mutex};
-                cv.wait_for(lock, stop, std::chrono::milliseconds{50}, [] { return false; });
+                cv.wait_for(lock, stop, std::chrono::milliseconds{5}, [] { return false; });
             }
             if (stop.stop_requested()) {
                 break;
@@ -714,7 +716,7 @@ private:
             }
             const auto now = std::chrono::steady_clock::now();
             const auto held = now.time_since_epoch() - std::chrono::steady_clock::duration{since};
-            if (held < std::chrono::milliseconds{150}) {
+            if (held < std::chrono::milliseconds{20}) {
                 continue;
             }
             dav1d_fefw_kick(dav1d);
