@@ -687,11 +687,13 @@ struct Values {
     SwitchableSetting<bool> use_video_framerate{linkage, false, "use_video_framerate",
                                                 Category::RendererAdvanced};
 
+    // Fortune's Eden: on (v1.6.8.6). Off, the game read stale copies of images the GPU drew, and
+    // effects that follow them jumped (the dust behind the torches in Leda's chapter 1 part 2).
     SwitchableSetting<bool> use_reactive_flushing{linkage,
 #ifdef __ANDROID__
                                                   false,
 #else
-                                                  false,
+                                                  true,
 #endif
                                                   "use_reactive_flushing",
                                                   Category::RendererAdvanced};

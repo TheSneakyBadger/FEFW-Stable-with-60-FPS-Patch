@@ -538,6 +538,19 @@ void Config::ReadRendererValues() {
                          "AMD FSR 3.1");
     }
 
+    // v1.6.8.6: reactive flushing on. Off (the package's old setting) the game read stale copies
+    // of what the GPU drew, and effects that follow it jumped (the dust behind the torches in
+    // Leda's chapter 1 part 2 snapped every second or so); on, frame pacing was as smooth. Every
+    // download's config saves it as chosen, so it is turned on here once; turned off after this,
+    // it stays off.
+    if (global && !ReadBooleanSetting(std::string("fefw_reactive_flushing_applied"),
+                                      std::make_optional(false))) {
+        if (!Settings::values.use_reactive_flushing.GetValue()) {
+            Settings::values.use_reactive_flushing.SetValue(true);
+            LOG_INFO(Config, "Reactive flushing turned on (new default)");
+        }
+    }
+
     EndGroup();
 }
 
@@ -925,6 +938,8 @@ void Config::SaveRendererValues() {
     WriteCategory(Settings::Category::RendererDebug);
     if (global) {
         WriteBooleanSetting(std::string("fefw_upscaler_fsr3_applied"), true,
+                            std::make_optional(false));
+        WriteBooleanSetting(std::string("fefw_reactive_flushing_applied"), true,
                             std::make_optional(false));
     }
 
