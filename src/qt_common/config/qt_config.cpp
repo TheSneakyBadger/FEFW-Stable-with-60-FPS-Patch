@@ -268,6 +268,19 @@ void QtConfig::ReadShortcutValues() {
         EndGroup(); // group
     }
 
+    // Fortune's Eden v1.6.8.2: Change Docked Mode lost its F10 shortcut (easy to hit by accident;
+    // handheld mode only drops Fortune's Weave to 1080p). The config every download ships with
+    // saves each shortcut as if chosen, so F10 is cleared here once; set again after this, it stays.
+    if (!ReadBooleanSetting(std::string("fefw_docked_mode_f10_cleared"),
+                            std::make_optional(false))) {
+        for (auto& shortcut : UISettings::values.shortcuts) {
+            if (shortcut.name == "Change Docked Mode" && shortcut.shortcut.keyseq == "F10") {
+                shortcut.shortcut.keyseq.clear();
+                LOG_INFO(Config, "Change Docked Mode: F10 shortcut removed");
+            }
+        }
+    }
+
     EndGroup();
 }
 
@@ -497,6 +510,9 @@ void QtConfig::SaveShortcutValues() {
         EndGroup(); // name
         EndGroup(); // group
     }
+
+    WriteBooleanSetting(std::string("fefw_docked_mode_f10_cleared"), true,
+                        std::make_optional(false));
 
     EndGroup();
 }
