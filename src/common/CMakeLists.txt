@@ -84,6 +84,7 @@ add_library(
     multi_level_page_table.h
     overflow.h
     fefw_hidden_settings.h
+    fefw_scene_load.h
     fefw_version.h
     page_filter.h
     page_table.cpp
