@@ -349,6 +349,12 @@ private:
                         result = PumpOutput(/*from_submit=*/true, /*no_wait=*/OutputAsync());
                         RequestOutput();
                     } else {
+                        ++submissions_refused;
+                        if (submissions_refused == 1 || submissions_refused % 100 == 0) {
+                            LOG_WARNING(Service_AM,
+                                        "Native video: submission refused ({} bytes; {} so far): {}",
+                                        input.size(), submissions_refused, DecodeState(true));
+                        }
                         lock.unlock();
                         if (submission_event) submission_event->Clear(kernel);
                     }
@@ -648,10 +654,10 @@ private:
     std::string DecodeState(bool with_images = false) const {
         std::string text = fmt::format(
             "pending {} ({} bytes), in decoder {}, decoded {}, decoder full {}, busy {}, eos {}, "
-            "frames at once {}",
+            "frames at once {}, submissions refused {}",
             pending_inputs.size(), pending_input_bytes, av1_in_flight.size(),
             decoded_frames.size(), av1_decoder_full, decode_busy, eos_in_progress,
-            Av1FrameDelay());
+            Av1FrameDelay(), submissions_refused);
         if (with_images) {
             text += fmt::format(", images handed back {} of {}",
                                 std::ranges::count_if(registered_images,
@@ -689,7 +695,9 @@ private:
             // Waiting over 2 s mid-movie: say for what (issue #22's frame threading).
             if (!decode_cv.wait_for(lock, stop, std::chrono::seconds{2}, ready)) {
                 if (stop.stop_requested()) break;
-                if (!pending_inputs.empty() || !av1_in_flight.empty()) {
+                if (!pending_inputs.empty() || !av1_in_flight.empty() || !decoded_frames.empty() ||
+                    (submissions_refused != 0 &&
+                     std::chrono::steady_clock::now() - last_frame_out < std::chrono::seconds{60})) {
                     LOG_WARNING(Service_AM, "Native video decode worker waiting 2 s: {}",
                                 DecodeState());
                 }
@@ -712,6 +720,11 @@ private:
                     ReleaseInFlightBytes(input.bytes.size());
                     decode_error = Kernel::ResultInvalidArgument;
                 } else {
+                    // The decoder has its own copy: the game's transfer memory is free again.
+                    // Counted until the frame came out, several heavy frames in progress at once
+                    // (2 MB each in the fire scenes) filled it, the game's next submission was
+                    // refused, and the movie stopped (frame threading, issue #22).
+                    ReleaseInFlightBytes(input.bytes.size());
                     av1_in_flight.push_back(std::move(input));
                 }
                 decode_cv.notify_all();
@@ -739,13 +752,9 @@ private:
                 av1_decoder_full = false;
                 if (!dequeued) {
                     // The decoder dropped every frame it had after a failure
-                    for (const PendingInput& input : av1_in_flight) {
-                        ReleaseInFlightBytes(input.bytes.size());
-                    }
                     av1_in_flight.clear();
                     decode_error = Kernel::ResultInvalidArgument;
                 } else if (!frame) {
-                    ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
                     av1_in_flight.pop_front();
                 } else {
                     // The frame's own input (by its submission ID; dav1d decodes several at once),
@@ -756,17 +765,16 @@ private:
                         frame->timestamp = own->timestamp;
                         while (!av1_in_flight.empty()) {
                             const bool last = &av1_in_flight.front() == &*own;
-                            ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
                             av1_in_flight.pop_front();
                             if (last) {
                                 break;
                             }
                         }
                     } else {
-                        ReleaseInFlightBytes(av1_in_flight.front().bytes.size());
                         av1_in_flight.pop_front();
                     }
                     decoded_frames.push_back(std::move(*frame));
+                    last_frame_out = std::chrono::steady_clock::now();
                 }
                 decode_cv.notify_all();
                 continue;
@@ -1768,6 +1776,8 @@ private:
     std::deque<DecodedFrame> decoded_frames;
     std::deque<PendingInput> pending_inputs;
     u64 pending_input_bytes{};
+    u64 submissions_refused{};  ///< Submissions refused for a full queue (the log).
+    std::chrono::steady_clock::time_point last_frame_out{};
     u64 next_submission_id{1};
     bool started{};
     bool flushed{}; // Flushed since the last Start: Start may resume decoding.
