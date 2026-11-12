@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: 2022 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <chrono>
 #include <cstdlib>
 
 #include "common/assert.h"
@@ -31,9 +32,21 @@ namespace {
 constexpr u32 Gf100BindClassMask = 0xffff;
 constexpr u32 Gf100BindValidMask =  0x1f0000 | Gf100BindClassMask;
 
+// Fortune's Eden: guest CPU writes to cached memory are held until the next command list
+// (vk_rasterizer.cpp, OnCPUWrite). A semaphore acquire is where a list already running waits for
+// the game, which writes what the rest of the list reads and then releases it: apply them here,
+// or the GPU goes on with its older copy (the 55g freeze). Callers have drained the split's back
+// thread, so the front may use the rasterizer.
+void ApplyHeldCpuWrites(DmaPusher& dma_pusher) {
+    dma_pusher.rasterizer->InvalidateGPUCache();
+}
+
 u32 ReadNativeSemaphoreWord(DmaPusher& dma_pusher, GPUVAddr address) {
     const auto cpu_address = dma_pusher.memory_manager.GpuToCpuAddress(address);
     if (cpu_address && dma_pusher.rasterizer->MustFlushRegion(*cpu_address, sizeof(u32), VideoCommon::CacheType::BufferCache)) {
+        // Held guest writes go in first: the readback would otherwise put the GPU's older copy
+        // over them (as OnCPURead does).
+        ApplyHeldCpuWrites(dma_pusher);
         namespace BackStats = VideoCommon::BackStats;
         const u64 readback_start = BackStats::Enabled() ? BackStats::Stamp() : 0;
         dma_pusher.rasterizer->FlushRegion(*cpu_address, sizeof(u32), VideoCommon::CacheType::BufferCache);
@@ -156,6 +169,7 @@ bool Puller::CanResumeNativeAcquire(DmaPusher& dma_pusher) const {
 bool Puller::ResumeNativeAcquire(DmaPusher& dma_pusher) {
     if (!native_acquire) return true;
     if (!CanResumeNativeAcquire(dma_pusher)) return false;
+    ApplyHeldCpuWrites(dma_pusher);
     LOG_WARNING(HW_GPU, "Native channel resumed after semaphore: channel={}, address={:#x}, current={}, required={}",
                 dma_pusher.channel_state.bind_id, native_acquire->address,
                 dma_pusher.memory_manager.Read<u32>(native_acquire->address), native_acquire->value);
@@ -184,6 +198,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
         const u32 word_before =
             probe ? dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress()) : 0;
         DrainBack(VideoCommon::BackStats::DrainSemaphoreAcquire);
+        ApplyHeldCpuWrites(dma_pusher);
         do {
             u32 word = dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
             if (dma_pusher.channel_state.native_abi) {
@@ -223,6 +238,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
                 if (!ready_at_once) {
                     const BackStats::ScopedSharedTime fence_time{BackStats::shared.acquire_fence_ticks};
                     dma_pusher.rasterizer->ReleaseFences(true);
+                    ApplyHeldCpuWrites(dma_pusher);
                     word = ReadNativeSemaphoreWord(dma_pusher, regs.semaphore_address.SemaphoreAddress());
                 }
                 if (BackStats::Enabled()) {
@@ -283,13 +299,30 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
     DrainBack(VideoCommon::BackStats::DrainAcquire);
-    u32 word = dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
+    ApplyHeldCpuWrites(dma_pusher);
+    const GPUVAddr address = regs.semaphore_address.SemaphoreAddress();
+    u32 word = dma_pusher.memory_manager.Read<u32>(address);
     const auto value = regs.semaphore_acquire;
+    const auto wait_start = std::chrono::steady_clock::now();
+    auto next_report = wait_start + std::chrono::seconds(5);
     while (word != value) {
+        // Stopping the game must not wait for a semaphore nothing will release.
+        if (dma_pusher.memory_manager.IsShuttingDown()) {
+            LOG_WARNING(HW_GPU, "Semaphore acquire abandoned for shutdown: address={:#x}, current={}, required={}",
+                        address, word, value);
+            return;
+        }
         regs.acquire_active = true;
         regs.acquire_value = value;
         dma_pusher.rasterizer->ReleaseFences();
-        word = dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
+        ApplyHeldCpuWrites(dma_pusher);
+        word = dma_pusher.memory_manager.Read<u32>(address);
+        if (const auto now = std::chrono::steady_clock::now(); now >= next_report) {
+            next_report = now + std::chrono::seconds(5);
+            LOG_WARNING(HW_GPU, "GPU waiting {} s for semaphore: address={:#x}, current={}, required={}",
+                        std::chrono::duration_cast<std::chrono::seconds>(now - wait_start).count(),
+                        address, word, value);
+        }
         // TODO(kemathe73) figure out how to do the acquire_timeout
         regs.acquire_mode = false;
         regs.acquire_source = false;
