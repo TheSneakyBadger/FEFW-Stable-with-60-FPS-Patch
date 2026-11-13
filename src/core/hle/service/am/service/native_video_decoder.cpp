@@ -371,12 +371,13 @@ private:
                     } else {
                         ++submissions_refused;
                         // The game retries while the queue is full (about 30 a second during a
-                        // movie): logged only with EDEN_VIDEO_TIMING=1.
+                        // movie): normal back-pressure, logged only with EDEN_VIDEO_TIMING=1.
                         if (VideoTimingEnabled() &&
                             (submissions_refused == 1 || submissions_refused % 100 == 0)) {
-                            LOG_WARNING(Service_AM,
-                                        "Native video: submission refused ({} bytes; {} so far): {}",
-                                        input.size(), submissions_refused, DecodeState(true));
+                            LOG_INFO(Service_AM,
+                                     "Native video: queue full, the game will hand this over "
+                                     "again ({} bytes; {} so far): {}",
+                                     input.size(), submissions_refused, DecodeState(true));
                         }
                         lock.unlock();
                         if (submission_event) submission_event->Clear(kernel);
