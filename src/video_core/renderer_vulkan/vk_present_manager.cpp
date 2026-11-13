@@ -136,6 +136,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , use_present_thread{Settings::values.async_presentation.GetValue() ||
                          Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::Off}
 {
+    swapchain.SetAcquireOnPresentThread(use_present_thread);
     SetImageCount();
 
     auto& dld = device.GetLogical();
