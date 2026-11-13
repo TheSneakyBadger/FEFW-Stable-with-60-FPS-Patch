@@ -41,8 +41,10 @@ public:
     };
 
     /// Throws vk::Exception when the fsr4-vk provider or a Vulkan context is unavailable.
+    /// The context accepts render and upscale sizes up to max_render and max_upscale.
     explicit Fsr4Upscaler(const Device& device, Scheduler& scheduler,
-                          MemoryAllocator& memory_allocator);
+                          MemoryAllocator& memory_allocator, VkExtent2D max_render,
+                          VkExtent2D max_upscale);
     ~Fsr4Upscaler();
 
     /// Records one evaluation into the output image (RGBA16F at the upscale size, GENERAL
@@ -60,6 +62,12 @@ public:
         return *point_sampler;
     }
 
+    /// Whether this context can take these sizes (otherwise make a bigger one).
+    [[nodiscard]] bool Fits(VkExtent2D render, VkExtent2D upscale) const noexcept {
+        return render.width <= max_render_size.width && render.height <= max_render_size.height &&
+               upscale.width <= max_upscale_size.width && upscale.height <= max_upscale_size.height;
+    }
+
     /// Whether the fsr4-vk provider library can be loaded. Does not create a Vulkan context.
     [[nodiscard]] static bool IsAvailable();
 
@@ -70,6 +78,8 @@ private:
     Scheduler& scheduler;
     MemoryAllocator& memory_allocator;
     void* context{};
+    VkExtent2D max_render_size{};
+    VkExtent2D max_upscale_size{};
     VkExtent2D render_extent{};
     VkExtent2D upscale_extent{};
     vk::Image output_image;
