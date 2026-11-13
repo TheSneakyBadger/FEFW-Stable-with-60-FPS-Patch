@@ -120,4 +120,9 @@ void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& inputs);
 void FrameGenPresentStart(u64 index, bool tagged);
 void FrameGenPresentEnd(u64 index, bool tagged);
 
+/// On the present thread, before the swapchain is made again (window resized, fullscreen toggled,
+/// out of date): turns frame generation off and frees its resources, so its own present thread
+/// stops using the old swapchain. The next tagged present turns it on again.
+void FrameGenBeforeSwapchainRecreate();
+
 } // namespace Vulkan::Streamline

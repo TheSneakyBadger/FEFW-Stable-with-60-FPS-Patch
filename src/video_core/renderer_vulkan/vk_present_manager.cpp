@@ -394,6 +394,11 @@ void PresentManager::PresentThread(std::stop_token token) {
 }
 
 void PresentManager::RecreateSwapchain(Frame* frame) {
+#ifdef EGLANTINE_STREAMLINE
+    // DLSS frame generation presents from its own thread: stop it before the old swapchain goes,
+    // or it presents to a destroyed swapchain (a crash after a resize or fullscreen toggle).
+    Streamline::FrameGenBeforeSwapchainRecreate();
+#endif
     swapchain.Create(*surface, frame->width, frame->height); // Pass raw pointer
     SetImageCount();
 }
