@@ -145,7 +145,8 @@ if (MSVC AND NOT CXX_CLANG)
     endif()
 
     set(CMAKE_EXE_LINKER_FLAGS_DEBUG   "/DEBUG /MANIFEST:NO" CACHE STRING "" FORCE)
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/DEBUG /MANIFEST:NO /INCREMENTAL:NO /OPT:REF,ICF" CACHE STRING "" FORCE)
+    # /PDBALTPATH:%_PDB% - store only the .pdb file name in the exe, not the builder's folder
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/DEBUG /MANIFEST:NO /INCREMENTAL:NO /OPT:REF,ICF /PDBALTPATH:%_PDB%" CACHE STRING "" FORCE)
 else()
     if (NOT MSVC)
         add_compile_options(
