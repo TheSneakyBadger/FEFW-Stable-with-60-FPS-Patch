@@ -10,6 +10,10 @@
 // The sections using code from Ryujinx are marked with a link to the original version
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <mutex>
+#include <fstream>
 #include <array>
 #include <numeric>
 #include <optional>
@@ -922,6 +926,42 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(Tegra::Memory
     return copies;
 }
 
+namespace {
+// TEST ONLY: EDEN_ASTC_DUMP=<folder> writes each ASTC texture's decoded first mip level (RGBA8,
+// what the BC1/BC3 encoders get) as <width>x<height>_<hash>.rgba, to compare encoders offline.
+// Up to 4000 textures and 2 GiB; a texture already written is skipped.
+void DumpDecodedAstc(std::span<const u8> astc, std::span<const u8> rgba, u32 width, u32 height,
+                     u32 layers, u32 level) {
+    static const char* const folder = std::getenv("EDEN_ASTC_DUMP");
+    if (!folder || !*folder || level != 0 || layers != 1 || width < 16 || height < 16) {
+        return;
+    }
+    static std::mutex mutex;
+    static u32 count = 0;
+    static u64 total = 0;
+    const u64 bytes = u64{width} * height * 4;
+    std::scoped_lock lock{mutex};
+    if (count >= 4000 || total + bytes > (u64{2} << 30)) {
+        return;
+    }
+    u64 hash = 1469598103934665603ULL;
+    for (const u8 byte : astc.first(std::min<size_t>(astc.size(), 65536))) {
+        hash = (hash ^ byte) * 1099511628211ULL;
+    }
+    const std::filesystem::path path = std::filesystem::path{folder} /
+        fmt::format("{}x{}_{:016x}.rgba", width, height, hash);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (std::filesystem::exists(path, ec)) {
+        return;
+    }
+    std::ofstream file{path, std::ios::binary};
+    file.write(reinterpret_cast<const char*>(rgba.data()), static_cast<std::streamsize>(bytes));
+    ++count;
+    total += bytes;
+}
+} // Anonymous namespace
+
 void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8> output,
                   std::span<BufferImageCopy> copies) {
     u32 output_offset = 0;
@@ -948,6 +988,9 @@ void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8
                 input_offset, copy.image_extent.width, copy.image_extent.height,
                 copy.image_subresource.num_layers * copy.image_extent.depth, tile_size.width,
                 tile_size.height, output.subspan(output_offset));
+            DumpDecodedAstc(input_offset, output.subspan(output_offset), copy.image_extent.width,
+                            copy.image_extent.height,
+                            copy.image_subresource.num_layers * copy.image_extent.depth, level);
 
             output_offset += copy.image_extent.width * copy.image_extent.height *
                              copy.image_subresource.num_layers *
@@ -970,6 +1013,9 @@ void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8
                 input_offset, copy.image_extent.width, copy.image_extent.height,
                 copy.image_subresource.num_layers * copy.image_extent.depth, tile_size.width,
                 tile_size.height, decode_scratch);
+            DumpDecodedAstc(input_offset, decode_scratch, copy.image_extent.width,
+                            copy.image_extent.height,
+                            copy.image_subresource.num_layers * copy.image_extent.depth, level);
 
             compress(decode_scratch, copy.image_extent.width, copy.image_extent.height,
                      copy.image_subresource.num_layers * copy.image_extent.depth,
