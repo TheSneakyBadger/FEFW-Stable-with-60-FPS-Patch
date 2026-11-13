@@ -55,6 +55,10 @@ void CoreTiming::Initialize(std::function<void()>&& on_thread_init_) {
     on_thread_init = std::move(on_thread_init_);
     event_fifo_id = 0;
     cpu_ticks = 0;
+    clock_frozen = false;
+    offset_ns = 0;
+    offset_cntpct = 0;
+    offset_gpu_tick = 0;
     if (is_multicore) {
         timer_thread = std::jthread([this](std::stop_token stop_token) {
             Common::SetCurrentThreadName("HostTiming");
@@ -103,11 +107,44 @@ void CoreTiming::Pause(bool is_paused) {
     }
 }
 
+void CoreTiming::FreezeGuestClock() {
+    if (!is_multicore || clock_frozen) {
+        return;
+    }
+    // A guest thread that read the clock just before this keeps its reading, so the frozen time
+    // is put 1 ms ahead: the clock never goes backwards.
+    static constexpr s64 Margin = 1'000'000; // ns
+    frozen_ns = Common::g_wall_clock.GetTimeNS().count() - offset_ns + Margin;
+    frozen_cntpct = Common::g_wall_clock.GetCNTPCT() - offset_cntpct +
+                    Margin * s64{Common::WallClock::CNTFRQ} / 1'000'000'000;
+    frozen_gpu_tick = Common::g_wall_clock.GetGPUTick() - offset_gpu_tick +
+                      Margin * s64{Common::WallClock::GPUTickFreq} / 1'000'000'000;
+    clock_frozen = true;
+}
+
+void CoreTiming::ThawGuestClock() {
+    if (!clock_frozen) {
+        return;
+    }
+    // Carry on from the frozen time: the pause is taken off. The offsets are stored before the
+    // flag is cleared, so a reading after it uses them.
+    offset_ns = Common::g_wall_clock.GetTimeNS().count() - frozen_ns;
+    offset_cntpct = Common::g_wall_clock.GetCNTPCT() - frozen_cntpct;
+    offset_gpu_tick = Common::g_wall_clock.GetGPUTick() - frozen_gpu_tick;
+    clock_frozen = false;
+}
+
 void CoreTiming::SyncPause(bool is_paused) {
     if (is_paused == paused && paused_set == paused) {
         return;
     }
 
+    // Fortune's Weave times its cutscenes, movies and voiced text by the clock: if it kept
+    // running through a pause, the game raced to catch up afterwards and the voices fell behind
+    // the pictures (#54).
+    if (is_paused) {
+        FreezeGuestClock();
+    }
     Pause(is_paused);
     if (timer_thread.joinable()) {
         if (!is_paused) {
@@ -119,6 +156,7 @@ void CoreTiming::SyncPause(bool is_paused) {
     }
 
     if (!is_paused) {
+        ThawGuestClock();
         pause_end_time = GetGlobalTimeNs().count();
     }
 }
@@ -213,7 +251,14 @@ u64 CoreTiming::GetClockTicks() const {
     // 2040 MHz) used to scale it, which runs Fortune's Weave's clock 1.7-2x fast: its movies
     // play ahead of their voices, which drop out, and dialogue animations finish early. The
     // setting is ignored (and hidden), so a saved Boost or Overclock does nothing.
-    const u64 fres = is_multicore ? Common::g_wall_clock.GetCNTPCT() : Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
+    u64 fres;
+    if (!is_multicore) {
+        fres = Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
+    } else if (clock_frozen) {
+        fres = u64(frozen_cntpct.load());
+    } else {
+        fres = u64(Common::g_wall_clock.GetCNTPCT() - offset_cntpct.load());
+    }
     if (::Settings::values.sync_core_speed.GetValue()) {
         auto const ticks = f64(fres);
         auto const speed_limit = f64(Settings::SpeedLimit()) * 0.01;
@@ -223,9 +268,13 @@ u64 CoreTiming::GetClockTicks() const {
 }
 
 u64 CoreTiming::GetGPUTicks() const {
-    return is_multicore
-        ? Common::g_wall_clock.GetGPUTick()
-        : Common::WallClock::CPUTickToGPUTick(cpu_ticks);
+    if (!is_multicore) {
+        return Common::WallClock::CPUTickToGPUTick(cpu_ticks);
+    }
+    if (clock_frozen) {
+        return u64(frozen_gpu_tick.load());
+    }
+    return u64(Common::g_wall_clock.GetGPUTick() - offset_gpu_tick.load());
 }
 
 std::optional<s64> CoreTiming::Advance() {
@@ -300,16 +349,21 @@ void CoreTiming::Reset() {
 
 /// @brief Returns current time in nanoseconds.
 std::chrono::nanoseconds CoreTiming::GetGlobalTimeNs() const noexcept {
-    return is_multicore
-        ? Common::g_wall_clock.GetTimeNS()
-        : std::chrono::nanoseconds{Common::WallClock::CPUTickToNS(cpu_ticks)};
+    if (!is_multicore) {
+        return std::chrono::nanoseconds{Common::WallClock::CPUTickToNS(cpu_ticks)};
+    }
+    if (clock_frozen) {
+        return std::chrono::nanoseconds{frozen_ns.load()};
+    }
+    return Common::g_wall_clock.GetTimeNS() - std::chrono::nanoseconds{offset_ns.load()};
 }
 
 /// @brief Returns current time in microseconds.
 std::chrono::microseconds CoreTiming::GetGlobalTimeUs() const noexcept {
-    return is_multicore
-        ? Common::g_wall_clock.GetTimeUS()
-        : std::chrono::microseconds{Common::WallClock::CPUTickToUS(cpu_ticks)};
+    if (!is_multicore) {
+        return std::chrono::microseconds{Common::WallClock::CPUTickToUS(cpu_ticks)};
+    }
+    return std::chrono::duration_cast<std::chrono::microseconds>(GetGlobalTimeNs());
 }
 
 #ifdef _WIN32
