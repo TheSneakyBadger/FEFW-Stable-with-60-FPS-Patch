@@ -891,4 +891,26 @@ void FrameGenPresentEnd(u64 index, bool tagged) {
     }
 }
 
+void FrameGenBeforeSwapchainRecreate() {
+    FrameGenRuntime& fg = GetFrameGen();
+    if (!fg.loaded || !fg.on) {
+        return;
+    }
+    const sl::ViewportHandle viewport{0u};
+    sl::DLSSGOptions options{};
+    options.mode = sl::DLSSGMode::eOff;
+    options.numFramesToGenerate = 1;
+    if (const sl::Result result = fg.set_options(viewport, options); result != sl::Result::eOk) {
+        LOG_ERROR(Render_Vulkan, "Streamline rejected turning DLSS frame generation off ({})",
+                  static_cast<int>(result));
+    }
+    if (const sl::Result result = GetApi().free_resources(sl::kFeatureDLSS_G, viewport);
+        result != sl::Result::eOk) {
+        LOG_WARNING(Render_Vulkan, "Streamline could not free DLSS frame generation ({})",
+                    static_cast<int>(result));
+    }
+    fg.on = false;
+    LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation off while the swapchain is made again");
+}
+
 } // namespace Vulkan::Streamline
