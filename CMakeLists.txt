@@ -260,7 +260,7 @@ mark_as_advanced(FORCE ENABLE_OPENGL)
 option(ENABLE_WEB_SERVICE "Enable web services (telemetry, etc.)" ON)
 option(ENABLE_WIFI_SCAN "Enable WiFi scanning" OFF)
 
-cmake_dependent_option(USE_DISCORD_PRESENCE "Enables Discord Rich Presence" OFF "ENABLE_QT" OFF)
+cmake_dependent_option(USE_DISCORD_PRESENCE "Enables Discord Rich Presence" ON "ENABLE_QT" OFF)
 
 option(YUZU_TESTS "Compile tests" "${BUILD_TESTING}")
 
