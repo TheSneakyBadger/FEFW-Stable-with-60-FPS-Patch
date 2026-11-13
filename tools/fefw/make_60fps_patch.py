@@ -261,27 +261,9 @@ r_P34:
     mov w9, #4
 1:  b 0x14cf5dc
 
-// AN1/AN2: nn::ui2d animators (menus, windows, text boxes): frame += speed x step, the step
-// being 1.0 per game frame (a clock speed, not a time), so at 60 FPS every UI animation ran
-// twice as fast. The step x s, at the top of Animator::UpdateFrame (0x582640, pane and group
-// animators) and AnimatorEx::UpdateFrame (0x584E70); neither uses x16 or s1 at these points.
-r_AN1:
-    adrp x16, TABLE
-    ldr w16, [x16, {L('S')}]
-    cbz w16, 1f
-    fmov s1, w16
-    fmul s0, s0, s1
-1:  ldr s1, [x0, #0x3c]
-    b 0x582644
-
-r_AN2:
-    adrp x16, TABLE
-    ldr w16, [x16, {L('S')}]
-    cbz w16, 1f
-    fmov s1, w16
-    fmul s0, s0, s1
-1:  ldr s9, [x0, #0x3c]
-    b 0x584e8c
+// (No UI animator routine: ui2d animations are already timed by the game. Its clock passes
+// a step of 2.0 per frame at 30 FPS and 1.0 at 60 (time in 60ths of a second), so menus run at
+// the same speed either way. v1.6.8.6 halved the step at 60 and made every menu half speed.)
 
 // TX: talk text printing. Each frame the talk sequence (fn 0x1154310) moves the line's
 // "shown up to" marker on by 3 letters through 0x115D330(pane, n) -> 0x193BFC0 (the marker is
@@ -387,7 +369,7 @@ SITES = [(s, n) for n, s, *_ in MOVK] + [
     (0xA686E8, 'CP'), (0xA68734, 'CB'), (0xA687F0, 'CD'), (0xA68990, 'CW'), (0xA68A98, 'CK'),
     (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
     (0x133FEB4, 'M2'), (0x14CF5D4, 'P34'), (0x16A8D68, 'BG1'), (0x16A8D74, 'BG2'),
-    (0x16A8EF4, 'BG5'), (0x582640, 'AN1'), (0x584E88, 'AN2'), (0x115D330, 'TX')] + [(s, f'UD{i}') for i, s in enumerate(UMD_SITES)] + \
+    (0x16A8EF4, 'BG5'), (0x115D330, 'TX')] + [(s, f'UD{i}') for i, s in enumerate(UMD_SITES)] + \
     [(s, f'UG{i}') for i, s in enumerate(UMA_SITES)]
 
 # The original instruction at every site (checked against main before patching).
@@ -400,7 +382,7 @@ EXPECT = {
     0x14CF5D4: 'mov\tw8, #0x2', 0x16A8D68: 'fcsel\ts11, s0, s9, eq',
     0x16A8D74: 'csel\tw8, w8, w27, eq', 0x16A8EF4: 'movi\tv2.2s, #0x3d, lsl #24',
     0xF3A968: 'fdiv\ts0, s0, s1',
-    0x582640: 'ldr\ts1, [x0, #0x3c]', 0x584E88: 'ldr\ts9, [x0, #0x3c]', 0x115D330: 'pacibsp',
+    0x115D330: 'pacibsp',
 }
 for s in UMD_SITES: EXPECT[s] = 'fmov\ts2, #6.00000000'
 for s in UMA_SITES: EXPECT[s] = 'ldr\ts1, [x19, #0xd4]'
