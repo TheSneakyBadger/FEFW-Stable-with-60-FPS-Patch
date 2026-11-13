@@ -150,6 +150,15 @@ public:
 #endif
     u64 event_fifo_id = 0;
     s64 pause_end_time{};
+    /// The guest clock stops while emulation is paused (multicore only: single core counts
+    /// emulated CPU ticks, which stop by themselves). Readings while paused are the frozen_*
+    /// values; after a pause, the time spent paused is taken off the host clock (*_offset), so
+    /// the guest does not see the pause as time gone by.
+    void FreezeGuestClock();
+    void ThawGuestClock();
+    std::atomic<bool> clock_frozen{};
+    std::atomic<s64> frozen_ns{}, frozen_cntpct{}, frozen_gpu_tick{};
+    std::atomic<s64> offset_ns{}, offset_cntpct{}, offset_gpu_tick{};
     /// Cycle timing
     u64 cpu_ticks{};
     s64 downcount{};
