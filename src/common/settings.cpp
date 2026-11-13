@@ -424,10 +424,40 @@ void SetHdrOutputActive(bool active) {
     }
 }
 
+namespace {
+/// EDEN_ASTC, for comparing how ASTC textures are converted (ASTC re-compression is not in
+/// Settings, and goes back to Auto whenever the config is read):
+///   uncompressed  decoded on the GPU, not re-compressed (4x the memory of BC3)
+///   bc3-cpu       decoded and re-compressed to BC3 on the CPU (stalls while textures load)
+///   bc3-gpu       decoded and re-compressed to BC3 on the GPU (what Auto picks)
+enum class AstcOverride { None, Uncompressed, Bc3Cpu, Bc3Gpu };
+
+AstcOverride GetAstcOverride() {
+    static const AstcOverride value = [] {
+        const char* env = std::getenv("EDEN_ASTC");
+        if (env == nullptr) {
+            return AstcOverride::None;
+        }
+        const std::string_view text{env};
+        if (text == "uncompressed") {
+            return AstcOverride::Uncompressed;
+        }
+        if (text == "bc3-cpu") {
+            return AstcOverride::Bc3Cpu;
+        }
+        if (text == "bc3-gpu") {
+            return AstcOverride::Bc3Gpu;
+        }
+        return AstcOverride::None;
+    }();
+    return value;
+}
+} // namespace
+
 bool GpuBcnTranscodeAllowed() {
     static const bool allowed = [] {
         const char* value = std::getenv("EDEN_GPU_BCN_TRANSCODE");
-        return value == nullptr || value[0] != '0';
+        return (value == nullptr || value[0] != '0') && GetAstcOverride() != AstcOverride::Bc3Cpu;
     }();
     return allowed && values.accelerate_astc.GetValue() == AstcDecodeMode::Gpu;
 }
@@ -435,7 +465,16 @@ bool GpuBcnTranscodeAllowed() {
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
-    if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
+    if (const AstcOverride override_value = GetAstcOverride();
+        override_value != AstcOverride::None) {
+        effective = override_value == AstcOverride::Uncompressed ? AstcRecompression::Uncompressed
+                                                                 : AstcRecompression::Bc3;
+        LOG_INFO(Common, "ASTC textures: {} (EDEN_ASTC={})",
+                 override_value == AstcOverride::Uncompressed ? "uncompressed"
+                 : gpu_bcn_transcode                          ? "BC3, re-compressed on the GPU"
+                                                              : "BC3, re-compressed on the CPU",
+                 std::getenv("EDEN_ASTC"));
+    } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
         // The GPU decodes ASTC and re-compresses it to BC3 itself: a quarter of the memory of
         // uncompressed, without the CPU stalls that BC3 used to cost.
         effective = AstcRecompression::Bc3;
