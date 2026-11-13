@@ -9,6 +9,7 @@
 #include "common/assert.h"
 #include "common/fs/file.h"
 #include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #ifdef __ANDROID__
 #include "common/fs/fs_android.h"
 #endif
@@ -254,10 +255,11 @@ void IOFile::Open(const fs::path& path, FileAccessMode mode, FileType type, File
     errno = 0;
 
 #ifdef _WIN32
+    const fs::path open_path = ToLongPath(path);
     if (flag != FileShareFlag::ShareNone) {
-        file = _wfsopen(path.c_str(), AccessModeToWStr(mode, type), ToWindowsFileShareFlag(flag));
+        file = _wfsopen(open_path.c_str(), AccessModeToWStr(mode, type), ToWindowsFileShareFlag(flag));
     } else {
-        _wfopen_s(&file, path.c_str(), AccessModeToWStr(mode, type));
+        _wfopen_s(&file, open_path.c_str(), AccessModeToWStr(mode, type));
     }
 #elif __ANDROID__
     if (Android::IsContentUri(path)) {

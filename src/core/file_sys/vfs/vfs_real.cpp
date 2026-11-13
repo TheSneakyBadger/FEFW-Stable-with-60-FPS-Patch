@@ -392,7 +392,7 @@ std::vector<VirtualFile> RealVfsDirectory::IterateEntries<RealVfsFile, VfsFile>(
 
     const FS::DirEntryCallable callback = [this,
                                            &out](const std::filesystem::directory_entry& entry) {
-        const auto full_path_string = FS::PathToUTF8String(entry.path());
+        const auto full_path_string = FS::PathToUTF8String(FS::FromLongPath(entry.path()));
 
         out.emplace_back(base.OpenFileFromEntry(full_path_string, entry.file_size(), path, perms));
 
@@ -414,7 +414,7 @@ std::vector<VirtualDir> RealVfsDirectory::IterateEntries<RealVfsDirectory, VfsDi
 
     const FS::DirEntryCallable callback = [this,
                                            &out](const std::filesystem::directory_entry& entry) {
-        const auto full_path_string = FS::PathToUTF8String(entry.path());
+        const auto full_path_string = FS::PathToUTF8String(FS::FromLongPath(entry.path()));
 
         out.emplace_back(base.OpenDirectory(full_path_string, perms));
 

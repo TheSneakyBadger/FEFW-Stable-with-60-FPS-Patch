@@ -72,6 +72,16 @@ enum EmuPath {
  */
 [[nodiscard]] bool ValidatePath(const std::filesystem::path& path);
 
+/**
+ * On Windows, returns an absolute path of MAX_PATH characters or more with the \\?\ prefix
+ * (normalised, with backslashes), so files deep inside an extracted game folder still open
+ * whether or not long paths are turned on in Windows. Any other path is returned unchanged.
+ */
+[[nodiscard]] std::filesystem::path ToLongPath(const std::filesystem::path& path);
+
+/// Removes the \\?\ prefix ToLongPath adds (for paths handed back from a directory listing).
+[[nodiscard]] std::filesystem::path FromLongPath(const std::filesystem::path& path);
+
 #ifdef _WIN32
 template <typename Path>
 [[nodiscard]] bool ValidatePath(const Path& path) {
