@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <vector>
 
 #include "common/common_types.h"
@@ -38,6 +40,12 @@ public:
 
     /// Acquires the next image in the swapchain, waits as needed.
     bool AcquireNextImage();
+
+    /// Whether AcquireNextImage runs on the present thread (PresentManager decides), where it
+    /// must not wait for a tick the GPU thread hasn't submitted.
+    void SetAcquireOnPresentThread(bool value) {
+        acquire_on_present_thread = value;
+    }
 
     /// Presents the rendered image to the swapchain.
     void Present(VkSemaphore render_semaphore);
@@ -110,6 +118,7 @@ public:
     }
 
 private:
+    std::atomic<bool> acquire_on_present_thread{};
     void CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities);
     void CreateSemaphores();
     void CreateImageViews();

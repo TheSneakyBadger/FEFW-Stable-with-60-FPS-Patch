@@ -215,8 +215,11 @@ bool Swapchain::AcquireNextImage() {
     // asynchronous presentation this runs on the present thread, where waiting for an unsubmitted
     // tick makes Scheduler::Wait flush the GPU thread's command chunk from the wrong thread. Wait
     // for the last submitted tick instead; the swapchain copy does not use scheduler work.
+    // Frame generation presents on the present thread too: checking only the asynchronous
+    // presentation setting let it flush from there, and the GPU thread then recorded into a
+    // command chunk that was gone (AMD FSR 3.1 frame generation crashed, #52).
     u64 wait_tick = resource_ticks[image_index];
-    if (Settings::values.async_presentation.GetValue()) {
+    if (acquire_on_present_thread) {
         wait_tick = (std::min)(wait_tick, scheduler.CurrentTick() - 1);
     }
 
