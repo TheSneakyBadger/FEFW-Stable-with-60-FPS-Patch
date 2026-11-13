@@ -211,7 +211,8 @@ bool ValidatePath(const fs::path& path) {
     }
 
 #ifdef _WIN32
-    if (path.u16string().size() >= MAX_PATH) {
+    // Longer paths are opened through ToLongPath; 32767 is the Windows limit for those.
+    if (path.u16string().size() >= 32767) {
         LOG_ERROR(Common_Filesystem, "Input path is too long, path={}", PathToUTF8String(path));
         return false;
     }
@@ -223,6 +224,36 @@ bool ValidatePath(const fs::path& path) {
 #endif
 
     return true;
+}
+
+fs::path ToLongPath(const fs::path& path) {
+#ifdef _WIN32
+    const std::wstring& native = path.native();
+    // Directories are limited to MAX_PATH - 12 (room for an 8.3 file name).
+    if (native.size() < MAX_PATH - 12 || !path.is_absolute() || native.starts_with(L"\\\\?\\")) {
+        return path;
+    }
+    std::wstring full = path.lexically_normal().make_preferred().native();
+    if (full.starts_with(L"\\\\")) {
+        return fs::path{L"\\\\?\\UNC\\" + full.substr(2)};
+    }
+    return fs::path{L"\\\\?\\" + full};
+#else
+    return path;
+#endif
+}
+
+fs::path FromLongPath(const fs::path& path) {
+#ifdef _WIN32
+    const std::wstring& native = path.native();
+    if (native.starts_with(L"\\\\?\\UNC\\")) {
+        return fs::path{L"\\\\" + native.substr(8)};
+    }
+    if (native.starts_with(L"\\\\?\\")) {
+        return fs::path{native.substr(4)};
+    }
+#endif
+    return path;
 }
 
 fs::path ConcatPath(const fs::path& first, const fs::path& second) {
