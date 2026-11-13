@@ -93,8 +93,6 @@ struct UpscaleVersionDesc {
     ffxCreateContextDescHeader header;
     uint32_t version;
 };
-constexpr VkExtent2D MAX_RENDER_SIZE{3840, 2160};
-constexpr VkExtent2D MAX_UPSCALE_SIZE{3840, 2160};
 
 struct BackendVkDesc {
     ffxCreateContextDescHeader header;
@@ -262,8 +260,10 @@ constexpr VkPipelineStageFlags WRITE_STAGES =
 } // Anonymous namespace
 
 Fsr4Upscaler::Fsr4Upscaler(const Device& device_, Scheduler& scheduler_,
-                           MemoryAllocator& memory_allocator_)
-    : device{device_}, scheduler{scheduler_}, memory_allocator{memory_allocator_} {
+                           MemoryAllocator& memory_allocator_, VkExtent2D max_render,
+                           VkExtent2D max_upscale)
+    : device{device_}, scheduler{scheduler_}, memory_allocator{memory_allocator_},
+      max_render_size{max_render}, max_upscale_size{max_upscale} {
     if (!GetApi().Load()) {
         throw vk::Exception(VK_ERROR_FEATURE_NOT_PRESENT);
     }
@@ -305,8 +305,8 @@ Fsr4Upscaler::Fsr4Upscaler(const Device& device_, Scheduler& scheduler_,
     desc.header.pNext = reinterpret_cast<ffxApiHeader*>(&version);
     desc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE |
                  FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
-    desc.maxRenderSize = {MAX_RENDER_SIZE.width, MAX_RENDER_SIZE.height};
-    desc.maxUpscaleSize = {MAX_UPSCALE_SIZE.width, MAX_UPSCALE_SIZE.height};
+    desc.maxRenderSize = {max_render_size.width, max_render_size.height};
+    desc.maxUpscaleSize = {max_upscale_size.width, max_upscale_size.height};
     desc.fpMessage = &LogProviderMessage;
 
     // AMD's SDK 2.4 descriptors first; then the deprecated backend type with no version
@@ -338,8 +338,8 @@ Fsr4Upscaler::Fsr4Upscaler(const Device& device_, Scheduler& scheduler_,
         }
     }
     LOG_INFO(Render_Vulkan, "FSR4 temporal upscaler created (max {}x{} -> {}x{})",
-             MAX_RENDER_SIZE.width, MAX_RENDER_SIZE.height, MAX_UPSCALE_SIZE.width,
-             MAX_UPSCALE_SIZE.height);
+             max_render_size.width, max_render_size.height, max_upscale_size.width,
+             max_upscale_size.height);
 }
 
 Fsr4Upscaler::~Fsr4Upscaler() {
