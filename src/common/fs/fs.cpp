@@ -425,7 +425,7 @@ void IterateDirEntries(const std::filesystem::path& path, const DirEntryCallable
 
     std::error_code ec;
     bool callback_error = false;
-    for (auto const& entry : fs::directory_iterator(path, ec)) {
+    for (auto const& entry : fs::directory_iterator(ToLongPath(path), ec)) {
         if ((True(filter & DirEntryFilter::File) && entry.status().type() == fs::file_type::regular)
         || (True(filter & DirEntryFilter::Directory) && entry.status().type() == fs::file_type::directory)) {
             if (!callback(entry)) {
@@ -458,7 +458,7 @@ void IterateDirEntriesRecursively(const std::filesystem::path& path, const DirEn
     std::error_code ec;
     bool callback_error = false;
     // MSVC should now be fixed... right... right?!?!?!
-    for (const auto& entry : fs::recursive_directory_iterator(path, ec)) {
+    for (const auto& entry : fs::recursive_directory_iterator(ToLongPath(path), ec)) {
         if ((True(filter & DirEntryFilter::File) && entry.status().type() == fs::file_type::regular)
         || (True(filter & DirEntryFilter::Directory) && entry.status().type() == fs::file_type::directory)) {
             if (!callback(entry)) {
@@ -481,10 +481,10 @@ bool Exists(const fs::path& path) {
     if (Android::IsContentUri(path)) {
         return Android::Exists(path);
     } else {
-        return fs::exists(path, ec);
+        return fs::exists(ToLongPath(path), ec);
     }
 #else
-    return fs::exists(path, ec);
+    return fs::exists(ToLongPath(path), ec);
 #endif
 }
 
@@ -494,10 +494,10 @@ bool IsFile(const fs::path& path) {
     if (Android::IsContentUri(path)) {
         return !Android::IsDirectory(path);
     } else {
-        return fs::is_regular_file(path, ec);
+        return fs::is_regular_file(ToLongPath(path), ec);
     }
 #else
-    return fs::is_regular_file(path, ec);
+    return fs::is_regular_file(ToLongPath(path), ec);
 #endif
 }
 
@@ -507,10 +507,10 @@ bool IsDir(const fs::path& path) {
     if (Android::IsContentUri(path)) {
         return Android::IsDirectory(path);
     } else {
-        return fs::is_directory(path, ec);
+        return fs::is_directory(ToLongPath(path), ec);
     }
 #else
-    return fs::is_directory(path, ec);
+    return fs::is_directory(ToLongPath(path), ec);
 #endif
 }
 
@@ -544,7 +544,7 @@ bool SetCurrentDir(const fs::path& path) {
 fs::file_type GetEntryType(const fs::path& path) {
     std::error_code ec;
 
-    const auto file_status = fs::status(path, ec);
+    const auto file_status = fs::status(ToLongPath(path), ec);
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to retrieve the entry type of path={}, ec_message={}",
@@ -564,7 +564,7 @@ u64 GetSize(const fs::path& path) {
 
     std::error_code ec;
 
-    const auto file_size = fs::file_size(path, ec);
+    const auto file_size = fs::file_size(ToLongPath(path), ec);
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to retrieve the file size of path={}, ec_message={}",
