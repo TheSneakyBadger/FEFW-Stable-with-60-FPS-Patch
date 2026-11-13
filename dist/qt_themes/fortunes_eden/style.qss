@@ -535,7 +535,7 @@ QPushButton {
     border-radius: 2px;
     padding: 5px 0px 5px 0px;
     outline: none;
-    min-width: 100px;
+    min-width: 80px; /* QDarkStyle's: 100px made the Configure window about 25% wider (#47) */
     min-height: 13px;
     background-color: #14121b;
 }
