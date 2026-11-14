@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.6.8.8
+
+Steady frame generation in busy battles, smooth play map after map, and the Discord setting you can actually reach.
+
+#### 🎨 Graphics
+
+- **NVIDIA DLSS frame generation no longer drags busy battles below 60 FPS.** In battles full of lit effects (many torches and magic floor tiles), one stall could leave the graphics card's work piling up faster than it could be sent, and frames reached the screen late. Frame generation now steps aside for a moment when that happens, usually a quarter of a second, and comes back on as soon as the backlog has cleared.
+
+#### 🔧 Fixes
+
+- **Performance no longer drops map after map** ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)). Battle maps keep loading small files while you play, so the loading screen between them was never recognised and the previous map's textures stayed in graphics memory. Loading screens in battles are now caught, and textures unused for 5 minutes are freed.
+- **Discord Rich Presence can be turned on.** In v1.6.8.7 its setting was on a tab that wasn't shown anywhere. It's now in *Configure → General → Discord*.
+
+Everything else is as in [v1.6.8.7](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.7).
+
 ## v1.6.8.7
 
 Fixes for frame generation crashes, AMD FSR 4 at high resolutions, menu speed at 60 FPS, and pausing during cutscenes.
