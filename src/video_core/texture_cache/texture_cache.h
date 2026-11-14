@@ -295,7 +295,17 @@ u32 TextureCache<P>::RunGarbageCollector() {
         }
         // Each image written back waits for the GPU copy: keep a pass's write-backs to 256 MiB
         // so a big pass doesn't become one long hitch (the rest go in the next passes).
-        if (must_download && (writeback_bytes >= 256_MiB || !allow_writebacks)) {
+        // Testing (issue #57): EDEN_TC_WRITEBACKS=0 keeps images that would be written back
+        // instead of writing them to guest memory and freeing them.
+        static const bool no_writebacks = [] {
+            const char* const value = std::getenv("EDEN_TC_WRITEBACKS");
+            const bool off = value && value[0] == '0';
+            if (off) {
+                LOG_INFO(HW_GPU, "Texture cache: write-backs to guest memory off (EDEN_TC_WRITEBACKS=0)");
+            }
+            return off;
+        }();
+        if (must_download && (no_writebacks || writeback_bytes >= 256_MiB || !allow_writebacks)) {
             return false;
         }
         if (True(image.flags & ImageFlagBits::Tracked)) {
