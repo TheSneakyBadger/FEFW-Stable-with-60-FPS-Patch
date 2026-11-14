@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.6.8.7
+
+Fixes for frame generation crashes, AMD FSR 4 at high resolutions, menu speed at 60 FPS, and pausing during cutscenes.
+
+#### ⏱️ 60 FPS mode
+
+- **Menus, the map and teleports run at their normal speed again** ([#51](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/51)). v1.6.8.6 slowed UI animations down at 60 FPS, but the game already times them by the clock, so they ended up at half speed. Spoken text still prints at its normal speed.
+
+#### 🎨 Graphics
+
+- **AMD FSR 3.1 frame generation no longer crashes after a few minutes** ([#52](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/52)).
+- **NVIDIA DLSS frame generation no longer crashes** when the window changes size or goes in or out of fullscreen.
+- **AMD FSR 4 works at 2x resolution and above** ([#53](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/53)). Before, only the menus were drawn and the game stayed black.
+- **The NVIDIA DLSS panel points to the NVIDIA app's model override** if you see thin lines with DLSS ([#50](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/50)).
+
+#### 🔧 Fixes
+
+- **Pausing (F4) no longer fast-forwards cutscenes** ([#54](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/54)). The game's clock now stops while paused, so scenes carry on where they were and the voices stay in sync.
+- **Games in very deep folders load** ([#48](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/48)). Files with paths over 260 characters couldn't be opened, which left some areas stuck on the loading screen.
+- **Buttons in the Fortune's Eden theme are no longer too wide** ([#47](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/47)).
+
+#### ✨ New
+
+- **Discord Rich Presence** shows that you're playing Fortune's Weave on Discord. It's off until you turn it on in *Configure → Web*.
+
+Everything else is as in [v1.6.8.6](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.6).
+
 ## v1.6.8.6
 
 60 FPS mode with menus and spoken text at their normal speed ([#46](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/46)), and cutscene effects that no longer jump.
