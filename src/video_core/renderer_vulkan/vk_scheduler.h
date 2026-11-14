@@ -58,6 +58,9 @@ public:
     /// Sends currently recorded work to the worker thread.
     void DispatchWork();
 
+    /// Command chunks waiting for the worker to record and submit them (how far behind it is).
+    [[nodiscard]] size_t QueuedChunks();
+
     /// Requests to begin a renderpass.
     void RequestRenderpass(const Framebuffer* framebuffer);
 
