@@ -6,7 +6,10 @@
 
 #pragma once
 
+#include <array>
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -80,6 +83,9 @@ private:
     /// made again through Streamline now that it has the device.
     VkSurfaceKHR SwapchainSurface();
 
+    /// Whether frame generation is held off for this game frame (the card is behind).
+    bool FrameGenHeldOff(std::chrono::steady_clock::time_point now, f32 wait_ms,
+                         f32 interval_ms);
     void GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                           u32 presented_height);
 
@@ -130,6 +136,21 @@ private:
     u64 dlssg_index{};     ///< NVIDIA DLSS frame generation: the last frame index presented.
     f32 fsr_fg_wait_ms{};
     f32 fsr_fg_minute_wait_ms{};
+    /// Frame generation held off while the graphics card is behind (it then costs the game
+    /// frames: a battle with many lit effects went from 60 to ~50 FPS with it on).
+    struct FrameGenBackoff {
+        std::array<u8, 60> behind{}; ///< The last 60 game frames: 1 where the card was behind.
+        u32 behind_at{};
+        u32 behind_count{};
+        std::optional<std::chrono::steady_clock::time_point> held_until;
+        std::optional<std::chrono::steady_clock::time_point> resumed_at;
+        std::optional<std::chrono::steady_clock::time_point> slow_ignored_until;
+        f32 hold_s{5.0f};
+        u32 held_frames{};      ///< In this hold: game frames, and those still slow.
+        u32 held_slow_frames{};
+        u32 holds{};            ///< For the 10 s report.
+        u32 skipped{};
+    } fg_backoff;
 
     Frame applet_frame;
 };

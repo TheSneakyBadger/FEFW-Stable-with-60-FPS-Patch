@@ -303,6 +303,81 @@ VkSurfaceKHR RendererVulkan::SwapchainSurface() {
     return *surface;
 }
 
+bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now, f32 wait_ms,
+                                     f32 interval_ms) {
+    // EDEN_FG_BACKOFF=0: frame generation on whatever the card's load (as before).
+    static const bool disabled = [] {
+        const char* const value = std::getenv("EDEN_FG_BACKOFF");
+        return value && value[0] == '0';
+    }();
+    if (disabled) {
+        return false;
+    }
+    FrameGenBackoff& b = fg_backoff;
+    // Slower than 60 FPS but not a 30 FPS scene or a single hitch.
+    const bool slow = interval_ms > 18.0f && interval_ms < 28.0f;
+    const auto seconds = [](f32 s) {
+        return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<f32>(s));
+    };
+    if (b.held_until) {
+        ++b.skipped;
+        ++b.held_frames;
+        b.held_slow_frames += slow ? 1 : 0;
+        if (now < *b.held_until) {
+            return true;
+        }
+        if (b.held_slow_frames * 4 > b.held_frames) {
+            // Just as slow without it: the card wasn't what held the game back. Slow frames
+            // don't count for a while (only waits for the card do).
+            b.slow_ignored_until = now + std::chrono::seconds{60};
+            b.hold_s = 5.0f;
+            LOG_INFO(Render_Vulkan,
+                     "Frame generation back on: the game was as slow without it ({} of {} frames "
+                     "slow), so slow frames are ignored for 60 s",
+                     b.held_slow_frames, b.held_frames);
+        } else {
+            LOG_INFO(Render_Vulkan,
+                     "Frame generation back on after {:.0f} s ({} of {} game frames slow while "
+                     "it was off)",
+                     b.hold_s, b.held_slow_frames, b.held_frames);
+        }
+        b.held_until.reset();
+        b.resumed_at = now;
+        b.behind.fill(0);
+        b.behind_count = 0;
+        return false;
+    }
+    const bool slow_counts = !b.slow_ignored_until || now >= *b.slow_ignored_until;
+    const u8 behind = wait_ms > 2.0f || (slow_counts && slow) ? 1 : 0;
+    b.behind_count = b.behind_count + behind - b.behind[b.behind_at];
+    b.behind[b.behind_at] = behind;
+    b.behind_at = (b.behind_at + 1) % static_cast<u32>(b.behind.size());
+    if (b.behind_count < 10) {
+        // A while without falling behind: the next hold is short again.
+        if (b.resumed_at && now - *b.resumed_at > std::chrono::seconds{30}) {
+            b.hold_s = 5.0f;
+            b.resumed_at.reset();
+        }
+        return false;
+    }
+    // Behind again soon after coming back on: hold off for longer (up to a minute).
+    if (b.resumed_at && now - *b.resumed_at < std::chrono::seconds{10}) {
+        b.hold_s = (std::min)(b.hold_s * 2.0f, 60.0f);
+    }
+    b.held_until = now + seconds(b.hold_s);
+    b.held_frames = 0;
+    b.held_slow_frames = 0;
+    ++b.holds;
+    ++b.skipped;
+    LOG_INFO(Render_Vulkan,
+             "Frame generation held off for {:.0f} s: the graphics card is behind ({} of the last "
+             "{} game frames late; this one {:.1f} ms waiting for a free frame, {:.1f} ms after "
+             "the last)",
+             b.hold_s, b.behind_count, b.behind.size(), wait_ms, interval_ms);
+    return true;
+}
+
 void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                                       u32 presented_height) {
     frame->present_delay = {};
@@ -315,6 +390,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
     }
     // The game's frame interval (smoothed): the generated frame goes halfway through it.
     const auto now = std::chrono::steady_clock::now();
+    const f32 composite_wait_ms = fsr_fg_wait_ms;
+    f32 game_interval_ms = 0.0f;
     if (fsr_fg_last_composite) {
         // The game's own interval: without the time this thread waited for free frames, which
         // the pacing itself causes (counted, it fed back: longer waits, slower game, longer
@@ -324,6 +401,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                                .count() -
                            fsr_fg_wait_ms,
                        1.0f);
+        game_interval_ms = interval;
         fsr_fg_minute_wait_ms += fsr_fg_wait_ms;
         fsr_fg_interval_ms = fsr_fg_interval_ms == 0.0f || interval > 4.0f * fsr_fg_interval_ms
                                  ? interval
@@ -340,14 +418,16 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
                  "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
                  "started the next, {} not matched to a game frame, {} given the newest motion; UI "
-                 "copies made again {}",
+                 "copies made again {}; held off for {} game frames ({} times) with the card behind",
 
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
                              : 0.0f,
                  fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback,
-                 generator->TakeUiCopiesRecreated());
+                 generator->TakeUiCopiesRecreated(), fg_backoff.skipped, fg_backoff.holds);
+        fg_backoff.skipped = 0;
+        fg_backoff.holds = 0;
         fsr_fg_fallback = 0;
         fsr_fg_ui_layers = 0;
         fsr_fg_late = 0;
@@ -381,6 +461,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         }
     }
     const bool prepared = generator->HasPrepared(game_frame.seq);
+    // Frames the game had motion for count towards whether the card is behind.
+    const bool held = prepared && FrameGenHeldOff(now, composite_wait_ms, game_interval_ms);
     if (prepared) {
         fsr_fg_late += game_frame.previous ? 1 : 0;
         fsr_fg_unknown += game_frame.known ? 0 : 1;
@@ -392,7 +474,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         Streamline::IsFrameGenerationAvailable()) {
         frame->sl_frame_gen = true;
         frame->sl_index = ++dlssg_index;
-        if (!prepared || !frame->storage_view) {
+        if (!prepared || !frame->storage_view || held) {
             ++fsr_fg_skipped;
             generator->Skip(game_frame.seq);
             return;
@@ -456,12 +538,12 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         return;
     }
 #endif
-    const bool wanted = prepared && frame->storage_view &&
+    const bool wanted = prepared && !held && frame->storage_view &&
                         fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
     if (!wanted) {
         // Once a session: why no frame was made while the game had motion.
         static bool logged{};
-        if (prepared && !logged) {
+        if (prepared && !held && !logged) {
             logged = true;
             LOG_INFO(Render_Vulkan,
                      "AMD FSR 3.1 frame generation skipped: frame storage {}, {:.1f} ms apart",
