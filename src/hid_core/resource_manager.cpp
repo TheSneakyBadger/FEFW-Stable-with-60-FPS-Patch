@@ -4,6 +4,13 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string>
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -446,25 +453,74 @@ Result ResourceManager::GetVibrationDeviceInfo(Core::HID::VibrationDeviceInfo& d
     return ResultSuccess;
 }
 
+namespace {
+// Testing (issue #49): why the game's vibration values didn't reach a controller, every 10 s
+// while it sends them, and the first few handles it uses.
+void NoteVibrationGate(const Core::HID::VibrationDeviceHandle& handle, const char* outcome) {
+    static std::mutex mutex;
+    static std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    static std::map<std::string, u32> counts;
+    static u32 reports{};
+    static u32 handles_logged{};
+    static std::set<u32> handles;
+    std::scoped_lock lock{mutex};
+    u32 raw{};
+    std::memcpy(&raw, &handle, (std::min)(sizeof(raw), sizeof(handle)));
+    if (handles_logged < 8 && handles.insert(raw).second) {
+        ++handles_logged;
+        LOG_INFO(Service_HID, "Vibration handle {:#x}: npad type {}, npad id {}, device {}: {}",
+                 raw, static_cast<u32>(handle.npad_type), static_cast<u32>(handle.npad_id),
+                 static_cast<u32>(handle.device_index), outcome);
+    }
+    ++counts[outcome];
+    const auto now = std::chrono::steady_clock::now();
+    if (now - start < std::chrono::seconds{10}) {
+        return;
+    }
+    if (reports++ < 60) {
+        std::string text;
+        for (const auto& [name, count] : counts) {
+            text += fmt::format("{}{} {}", text.empty() ? "" : ", ", count, name);
+        }
+        LOG_INFO(Service_HID, "Vibration values, last 10 s: {}", text);
+    }
+    counts.clear();
+    start = now;
+}
+} // namespace
+
 Result ResourceManager::SendVibrationValue(u64 aruid,
                                            const Core::HID::VibrationDeviceHandle& handle,
                                            const Core::HID::VibrationValue& value) {
     bool has_active_aruid{};
     NpadVibrationDevice* device{nullptr};
     Result result = IsVibrationAruidActive(aruid, has_active_aruid);
+    if (result.IsError()) {
+        NoteVibrationGate(handle, "aruid error");
+    } else if (!has_active_aruid) {
+        NoteVibrationGate(handle, "vibration not permitted for the game");
+    }
 
     if (result.IsSuccess() && has_active_aruid) {
         result = IsVibrationHandleValid(handle);
+        if (result.IsError()) {
+            NoteVibrationGate(handle, "invalid handle");
+        }
     }
     if (result.IsSuccess() && has_active_aruid) {
         device = GetNSVibrationDevice(handle);
+        if (device == nullptr) {
+            NoteVibrationGate(handle, "no vibration device");
+        }
     }
     if (device != nullptr) {
         // Prevent sending vibrations to an inactive vibration handle
         if (!device->IsActive()) {
+            NoteVibrationGate(handle, "device not active");
             return ResultSuccess;
         }
         result = device->SendVibrationValue(value);
+        NoteVibrationGate(handle, result.IsSuccess() ? "passed on" : "device error");
     }
     return result;
 }

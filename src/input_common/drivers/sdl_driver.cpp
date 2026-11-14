@@ -219,6 +219,13 @@ public:
         return false;
     }
 
+    bool RumbleLogged() const {
+        return rumble_logged;
+    }
+    void SetRumbleLogged() {
+        rumble_logged = true;
+    }
+
     bool HasHDRumble() const {
         constexpr Uint16 valve_vendor_id = 0x28DE;
         const auto is_known_hd_type = [](SDL_GamepadType type) {
@@ -399,6 +406,7 @@ private:
     bool has_accel{false};
     bool has_vibration{false};
     bool is_vibration_tested{false};
+    bool rumble_logged{false};
     BasicMotion motion;
 };
 
@@ -831,7 +839,18 @@ void SDLDriver::VibrationLoop(std::stop_token stop) {
         }
         for (const auto& pending : batch) {
             if (const auto joystick = pending.joystick.lock()) {
-                joystick->RumblePlay(pending.vibration);
+                const bool ok = joystick->RumblePlay(pending.vibration);
+                // Testing (issue #49): how the controller took the first rumble, and failures.
+                static u32 logged{};
+                if ((!ok || !joystick->RumbleLogged()) && logged < 20) {
+                    ++logged;
+                    joystick->SetRumbleLogged();
+                    LOG_INFO(Input, "Rumble on {} (HD rumble {}): {} ({:.0f} / {:.0f}){}{}",
+                             joystick->GetControllerName(), joystick->HasHDRumble() ? "yes" : "no",
+                             ok ? "sent" : "failed", pending.vibration.low_amplitude,
+                             pending.vibration.high_amplitude, ok ? "" : ": ",
+                             ok ? "" : SDL_GetError());
+                }
             }
         }
         batch.clear();

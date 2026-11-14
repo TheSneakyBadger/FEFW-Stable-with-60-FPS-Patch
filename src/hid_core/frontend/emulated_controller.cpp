@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <common/scope_exit.h>
 
 #include <ranges>
@@ -1210,6 +1211,55 @@ void EmulatedController::SetNfc(const Common::Input::CallbackStatus& callback) {
     }
 }
 
+namespace {
+// Testing (issue #49): what happened to the game's vibration requests, every 10 s while it sends
+// them.
+struct VibrationStats {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    u32 requests{}, moving{}, same{}, off{}, no_device{}, filtered{}, sent{}, failed{};
+    float peak{};
+    u32 reports{};
+};
+VibrationStats& GetVibrationStats() {
+    static VibrationStats stats;
+    return stats;
+}
+enum class VibrationOutcome { Same, Off, NoDevice, Filtered, Sent, Failed };
+void NoteVibration(const Core::HID::VibrationValue& value, VibrationOutcome outcome, float strength) {
+    VibrationStats& v = GetVibrationStats();
+    std::scoped_lock lock{v.mutex};
+    ++v.requests;
+    if (value.low_amplitude != 0.0f || value.high_amplitude != 0.0f) {
+        ++v.moving;
+        v.peak = (std::max)(v.peak, (std::max)(value.low_amplitude, value.high_amplitude));
+    }
+    switch (outcome) {
+    case VibrationOutcome::Same: ++v.same; break;
+    case VibrationOutcome::Off: ++v.off; break;
+    case VibrationOutcome::NoDevice: ++v.no_device; break;
+    case VibrationOutcome::Filtered: ++v.filtered; break;
+    case VibrationOutcome::Sent: ++v.sent; break;
+    case VibrationOutcome::Failed: ++v.failed; break;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - v.start < std::chrono::seconds{10}) {
+        return;
+    }
+    if (v.reports++ < 60) {
+        LOG_INFO(Service_HID,
+                 "Vibration, last 10 s: {} requests ({} with motion, strongest {:.2f}); sent {}, "
+                 "failed {}; not sent: {} same as the last, {} within 15 ms, {} vibration off, {} "
+                 "no output device; strength {:.0f}%",
+                 v.requests, v.moving, v.peak, v.sent, v.failed, v.same, v.filtered, v.off,
+                 v.no_device, strength * 100.0f);
+    }
+    v.requests = v.moving = v.same = v.off = v.no_device = v.filtered = v.sent = v.failed = 0;
+    v.peak = 0.0f;
+    v.start = now;
+}
+} // namespace
+
 bool EmulatedController::SetVibration(bool should_vibrate) {
     VibrationValue vibration_value = DEFAULT_VIBRATION_VALUE;
     if (should_vibrate) {
@@ -1237,11 +1287,13 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     }
     const std::size_t index = static_cast<std::size_t>(device_index);
     if (!output_devices[index]) {
+        NoteVibration(vibration, VibrationOutcome::NoDevice, 0.0f);
         return false;
     }
 
     // Skip duplicated vibrations
     if (last_vibration_value[index] == vibration) {
+        NoteVibration(vibration, VibrationOutcome::Same, 0.0f);
         return Settings::values.vibration_enabled.GetValue();
     }
 
@@ -1249,6 +1301,7 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     last_vibration_value[index] = vibration;
 
     if (!Settings::values.vibration_enabled) {
+        NoteVibration(vibration, VibrationOutcome::Off, 0.0f);
         return false;
     }
 
@@ -1257,6 +1310,7 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     const f32 strength = static_cast<f32>(player.vibration_strength) / 100.0f;
 
     if (!player.vibration_enabled) {
+        NoteVibration(vibration, VibrationOutcome::Off, strength);
         return false;
     }
 
@@ -1273,6 +1327,7 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
             // Not sent: keep the last sent value, so the same request is not skipped as a
             // duplicate once the filter would let it through.
             last_vibration_value[index] = previous_vibration;
+            NoteVibration(vibration, VibrationOutcome::Filtered, strength);
             return false;
         }
 
@@ -1296,7 +1351,10 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     // Send vibrations to Android's input overlay
     output_devices[4]->SetVibration(status);
 
-    return output_devices[index]->SetVibration(status) == Common::Input::DriverResult::Success;
+    const bool sent =
+        output_devices[index]->SetVibration(status) == Common::Input::DriverResult::Success;
+    NoteVibration(vibration, sent ? VibrationOutcome::Sent : VibrationOutcome::Failed, strength);
+    return sent;
 }
 
 VibrationValue EmulatedController::GetActualVibrationValue(DeviceIndex device_index) const {
