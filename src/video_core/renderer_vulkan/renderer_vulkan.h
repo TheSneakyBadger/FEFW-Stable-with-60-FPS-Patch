@@ -6,7 +6,10 @@
 
 #pragma once
 
+#include <array>
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -80,6 +83,8 @@ private:
     /// made again through Streamline now that it has the device.
     VkSurfaceKHR SwapchainSurface();
 
+    /// Whether frame generation is held off for this game frame (the card is behind).
+    bool FrameGenHeldOff(std::chrono::steady_clock::time_point now);
     void GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                           u32 presented_height);
 
@@ -130,6 +135,23 @@ private:
     u64 dlssg_index{};     ///< NVIDIA DLSS frame generation: the last frame index presented.
     f32 fsr_fg_wait_ms{};
     f32 fsr_fg_minute_wait_ms{};
+    /// Frame generation held off while the worker is behind with the card's work: with many lit
+    /// effects (a battle with torches and magic floor tiles) a stall left a backlog it couldn't
+    /// clear with frame generation's work added, and frames reached the screen late.
+    struct FrameGenBackoff {
+        std::array<u8, 8> backlog{}; ///< The last 8 game frames: 1 where the backlog was large.
+        u32 backlog_at{};
+        u32 backlog_count{};
+        bool held{};
+        u32 clear_frames{};       ///< Game frames in a row with the backlog cleared.
+        u32 clear_needed{15};     ///< ... before frame generation comes back on.
+        u32 held_frames{};        ///< In this hold.
+        size_t held_peak{};       ///< The largest backlog in this hold.
+        std::optional<std::chrono::steady_clock::time_point> resumed_at;
+        u32 holds{};              ///< For the 10 s report.
+        u32 skipped{};
+        u32 logged{};
+    } fg_backoff;
 
     Frame applet_frame;
 };

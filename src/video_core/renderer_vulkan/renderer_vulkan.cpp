@@ -303,6 +303,73 @@ VkSurfaceKHR RendererVulkan::SwapchainSurface() {
     return *surface;
 }
 
+bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) {
+    // EDEN_FG_BACKOFF=0: frame generation on whatever the backlog (as before).
+    static const bool disabled = [] {
+        const char* const value = std::getenv("EDEN_FG_BACKOFF");
+        return value && value[0] == '0';
+    }();
+    if (disabled) {
+        return false;
+    }
+    // Normally under 1 chunk on average, single spikes to ~16; a backlog grows to 50-300.
+    constexpr size_t LARGE = 24;
+    constexpr size_t CLEARED = 4;
+    FrameGenBackoff& b = fg_backoff;
+    const size_t queued = scheduler.QueuedChunks();
+    if (b.held) {
+        ++b.skipped;
+        ++b.held_frames;
+        b.held_peak = (std::max)(b.held_peak, queued);
+        b.clear_frames = queued <= CLEARED ? b.clear_frames + 1 : 0;
+        if (b.clear_frames < b.clear_needed) {
+            return true;
+        }
+        if (b.logged < 30) {
+            ++b.logged;
+            LOG_INFO(Render_Vulkan,
+                     "Frame generation back on: the backlog cleared after {} game frames (up to "
+                     "{} chunks)",
+                     b.held_frames, b.held_peak);
+        }
+        b.held = false;
+        b.resumed_at = now;
+        b.backlog.fill(0);
+        b.backlog_count = 0;
+        return false;
+    }
+    const u8 large = queued >= LARGE ? 1 : 0;
+    b.backlog_count = b.backlog_count + large - b.backlog[b.backlog_at];
+    b.backlog[b.backlog_at] = large;
+    b.backlog_at = (b.backlog_at + 1) % static_cast<u32>(b.backlog.size());
+    if (b.backlog_count < 4) {
+        // A while without a backlog: the next hold ends as soon as it has cleared.
+        if (b.resumed_at && now - *b.resumed_at > std::chrono::seconds{30}) {
+            b.clear_needed = 15;
+            b.resumed_at.reset();
+        }
+        return false;
+    }
+    // Back again soon after: wait longer before coming back on (up to 4 s clear).
+    if (b.resumed_at && now - *b.resumed_at < std::chrono::seconds{3}) {
+        b.clear_needed = (std::min)(b.clear_needed * 2, 240U);
+    }
+    b.held = true;
+    b.clear_frames = 0;
+    b.held_frames = 0;
+    b.held_peak = queued;
+    ++b.holds;
+    ++b.skipped;
+    if (b.logged < 30) {
+        ++b.logged;
+        LOG_INFO(Render_Vulkan,
+                 "Frame generation held off: {} chunks of the card's work waiting ({} of the last "
+                 "{} game frames over {}); back on after {} game frames under {}",
+                 queued, b.backlog_count, b.backlog.size(), LARGE, b.clear_needed, CLEARED + 1);
+    }
+    return true;
+}
+
 void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                                       u32 presented_height) {
     frame->present_delay = {};
@@ -340,14 +407,16 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
                  "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
                  "started the next, {} not matched to a game frame, {} given the newest motion; UI "
-                 "copies made again {}",
+                 "copies made again {}; held off for {} game frames ({} times) with a backlog",
 
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
                              : 0.0f,
                  fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback,
-                 generator->TakeUiCopiesRecreated());
+                 generator->TakeUiCopiesRecreated(), fg_backoff.skipped, fg_backoff.holds);
+        fg_backoff.skipped = 0;
+        fg_backoff.holds = 0;
         fsr_fg_fallback = 0;
         fsr_fg_ui_layers = 0;
         fsr_fg_late = 0;
@@ -381,6 +450,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         }
     }
     const bool prepared = generator->HasPrepared(game_frame.seq);
+    // Frames the game had motion for count towards whether the card is behind.
+    const bool held = prepared && FrameGenHeldOff(now);
     if (prepared) {
         fsr_fg_late += game_frame.previous ? 1 : 0;
         fsr_fg_unknown += game_frame.known ? 0 : 1;
@@ -392,7 +463,7 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         Streamline::IsFrameGenerationAvailable()) {
         frame->sl_frame_gen = true;
         frame->sl_index = ++dlssg_index;
-        if (!prepared || !frame->storage_view) {
+        if (!prepared || !frame->storage_view || held) {
             ++fsr_fg_skipped;
             generator->Skip(game_frame.seq);
             return;
@@ -456,12 +527,12 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         return;
     }
 #endif
-    const bool wanted = prepared && frame->storage_view &&
+    const bool wanted = prepared && !held && frame->storage_view &&
                         fsr_fg_interval_ms > 7.5f && fsr_fg_interval_ms < 70.0f;
     if (!wanted) {
         // Once a session: why no frame was made while the game had motion.
         static bool logged{};
-        if (prepared && !logged) {
+        if (prepared && !held && !logged) {
             logged = true;
             LOG_INFO(Render_Vulkan,
                      "AMD FSR 3.1 frame generation skipped: frame storage {}, {:.1f} ms apart",

@@ -529,6 +529,11 @@ void Scheduler::EndRenderPass()
     }
 
 
+size_t Scheduler::QueuedChunks() {
+    std::scoped_lock ql{queue_mutex};
+    return work_queue.size();
+}
+
 u64 Scheduler::StatsQueued() {
     if (!VideoCommon::BackStats::Enabled()) {
         return 0;
