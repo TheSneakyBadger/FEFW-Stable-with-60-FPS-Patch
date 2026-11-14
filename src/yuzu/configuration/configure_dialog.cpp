@@ -189,9 +189,14 @@ Q_DECLARE_METATYPE(QList<QWidget*>);
 void ConfigureDialog::PopulateSelectionList() {
     // Fortune's Eden: five pages for everyday settings and one Advanced page (advanced graphics
     // and post-processing, game folders and paths, logging). No network page: the game has no
-    // online play.
+    // online play. Discord Rich Presence (the web tab, trimmed to it) is on the General page; it
+    // wasn't on any page in v1.6.8.7, so it couldn't be turned on.
+    QList<QWidget*> general_tabs{general_tab.get(), hotkeys_tab.get(), ui_tab.get()};
+#ifdef USE_DISCORD_PRESENCE
+    general_tabs.push_back(web_tab.get());
+#endif
     const std::array<std::pair<QString, QList<QWidget*>>, 7> items{
-        {{tr("General"), {general_tab.get(), hotkeys_tab.get(), ui_tab.get()}},
+        {{tr("General"), general_tabs},
          {tr("System"), {system_tab.get(), profile_tab.get()}},
          {tr("Graphics"), {graphics_tab.get()}},
          {tr("Performance"), {performance_tab.get()}},

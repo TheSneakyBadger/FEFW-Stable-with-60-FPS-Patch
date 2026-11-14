@@ -48,6 +48,11 @@ ConfigureWeb::ConfigureWeb(QWidget* parent)
 #ifndef USE_DISCORD_PRESENCE
     ui->discord_group->setVisible(false);
 #endif
+    // Fortune's Eden: only Discord Rich Presence is shown (on the General page, as "Discord").
+    // The Eden web service is for online rooms, which Fortune's Weave doesn't use.
+    ui->groupBoxWebConfig->setVisible(false);
+    ui->label_disable_info->setVisible(false);
+    setAccessibleName(tr("Discord"));
 
     SetConfiguration();
     RetranslateUI();
@@ -65,6 +70,7 @@ void ConfigureWeb::changeEvent(QEvent* event) {
 
 void ConfigureWeb::RetranslateUI() {
     ui->retranslateUi(this);
+    setAccessibleName(tr("Discord"));
 }
 
 void ConfigureWeb::SetConfiguration() {
@@ -124,6 +130,5 @@ void ConfigureWeb::VerifyLogin() {
 }
 
 void ConfigureWeb::SetWebServiceConfigEnabled(bool enabled) {
-    ui->label_disable_info->setVisible(!enabled);
     ui->groupBoxWebConfig->setEnabled(enabled);
 }
