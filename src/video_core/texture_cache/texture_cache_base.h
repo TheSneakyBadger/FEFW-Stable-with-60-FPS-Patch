@@ -663,7 +663,13 @@ private:
         u64 bytes = 0;
     } scene_load;
     u64 scene_load_bytes_seen = 0;
+    /// Map data read in each of the last 120 frames (indexed by frame % 120), and their sum: a
+    /// load ends when the reads drop to a trickle, not only when they stop (#55).
+    std::array<u64, 120> scene_read_ring{};
+    u64 scene_read_window = 0;
     u64 scene_sweep_below = 0;
+    /// What the sweep is for, for the log: a loading screen, or images unused for 5 minutes.
+    bool scene_sweep_is_age = false;
     u64 collect_quiet_until = 0;     ///< No cleanup pass before this frame unless over the limit
     u64 texture_memory_estimate = 0; ///< Bytes of the cached images (diagnostics)
     u32 minute_passes = 0;           ///< Cleanup since the last "Video memory in use" report

@@ -336,11 +336,19 @@ u32 TextureCache<P>::RunGarbageCollector() {
         const auto ms = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - pass_start)
                             .count();
-        LOG_INFO(HW_GPU,
-                 "Loading screen: {} images from the previous scene freed ({} MiB) in {:.0f} ms, "
-                 "memory {} -> {} MiB",
-                 num_deleted, freed_bytes >> 20, ms, used_before >> 20,
-                 total_used_memory >> 20);
+        if (!scene_sweep_is_age) {
+            LOG_INFO(HW_GPU,
+                     "Loading screen: {} images from the previous scene freed ({} MiB) in {:.0f} "
+                     "ms, memory {} -> {} MiB",
+                     num_deleted, freed_bytes >> 20, ms, used_before >> 20,
+                     total_used_memory >> 20);
+        } else if (num_deleted != 0) {
+            LOG_INFO(HW_GPU,
+                     "{} images unused for 5 minutes freed ({} MiB) in {:.0f} ms, memory {} -> {} "
+                     "MiB",
+                     num_deleted, freed_bytes >> 20, ms, used_before >> 20,
+                     total_used_memory >> 20);
+        }
         return num_deleted;
     }
     Configure(false);
@@ -460,28 +468,53 @@ void TextureCache<P>::TickFrame() {
     // unless use is past the hard threshold, where v1.6.1 cleaned up every frame. (v1.6.2 instead took the pending frees off the measured
     // use, which under steady eviction let real use creep past the limit on 6 GB cards.)
     // Loading screens: a burst of the game's map data reads (4 MiB or more), then 2 s (120
-    // frames) without: free what the previous scene left behind.
+    // frames) of at most a trickle (256 KiB): free what the previous scene left behind.
+    // Fortune's Eden: "a trickle", not "none". Battle maps keep reading some map data now and
+    // then, so a load that waited for 2 s with no reads at all never ended once the first battle
+    // began: back-to-back skirmishes each left their textures behind (2,000 -> 5,100 images,
+    // 60 -> 50 FPS in 20 minutes, #55).
     {
         const u64 bytes = Common::FefwSceneLoad::map_bytes_read.load(std::memory_order_relaxed);
         const u64 read = bytes - scene_load_bytes_seen;
         scene_load_bytes_seen = bytes;
-        if (read != 0) {
+        u64& slot = scene_read_ring[frame_tick % scene_read_ring.size()];
+        scene_read_window = scene_read_window - slot + read;
+        slot = read;
+        static constexpr u64 TRICKLE_BYTES = 256_KiB;
+        if (read != 0 && (scene_load.active || scene_read_window > TRICKLE_BYTES)) {
             if (!scene_load.active) {
                 scene_load = {true, frame_tick, frame_tick, 0};
             }
             scene_load.bytes += read;
             scene_load.last_frame = frame_tick;
-        } else if (scene_load.active && frame_tick > scene_load.last_frame + 120) {
+        }
+        if (scene_load.active && frame_tick > scene_load.start_frame + 120 &&
+            scene_read_window <= TRICKLE_BYTES) {
             if (scene_load.bytes >= 4_MiB && scene_load.start_frame > 0) {
                 LOG_INFO(HW_GPU, "Loading screen: {} MiB of map data read over {} frames",
                          scene_load.bytes >> 20, scene_load.last_frame - scene_load.start_frame);
                 scene_sweep_below = scene_load.start_frame;
+                scene_sweep_is_age = false;
                 const u32 freed = RunGarbageCollector();
                 if (freed != 0) {
                     collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
                 }
             }
             scene_load.active = false;
+        }
+    }
+    // And whatever no load caught: every 30 s, images unused for 5 minutes go, as after a
+    // loading screen, however much video memory is free. On a 16 GB card the usual cleanup never
+    // got past its minimum level, so earlier maps' textures stayed all session (#55).
+    {
+        static constexpr u64 AGE_FRAMES = 5 * 60 * 60;
+        if (frame_tick % 1800 == 0 && frame_tick > AGE_FRAMES && !scene_load.active) {
+            scene_sweep_below = frame_tick - AGE_FRAMES;
+            scene_sweep_is_age = true;
+            const u32 freed = RunGarbageCollector();
+            if (freed != 0) {
+                collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+            }
         }
     }
     if (total_used_memory > minimum_memory &&
