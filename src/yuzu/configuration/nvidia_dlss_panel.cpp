@@ -409,7 +409,11 @@ void NvidiaDlssPanel::Refresh() {
     QString status;
     QString button;
     if (has_loader && has_model) {
-        status = Tr("<b>Ready.</b> Found %1 and %2.")
+        // The NVIDIA app's "DLSS Override - Model presets" replaces the preset asked for here, and
+        // its newer models draw thin lines across the picture at 2x and above (issue #50).
+        status = Tr("<b>Ready.</b> Found %1 and %2.<br><small>Thin lines across the picture at 2X "
+                    "resolution or above? In the NVIDIA app, set <i>DLSS Override - Model "
+                    "presets</i> back to its default.</small>")
                      .arg(Named(QStringLiteral("NVIDIA Streamline"), files.interposer_version), dlss);
     } else if (has_model) {
         status = Tr("<b>One file needed:</b> NVIDIA's Streamline loader (sl.interposer.dll). "

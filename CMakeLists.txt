@@ -211,6 +211,16 @@ if(MSVC)
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /${libflag}")
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /${libflag}d")
 
+    # Keep the builder's folders (and so their user name) out of __FILE__ strings in the
+    # program and its logs: trim the folder that holds the source, build and package cache.
+    if (NOT CXX_CLANG)
+        get_filename_component(FEFW_TRIM_ROOT "${CMAKE_SOURCE_DIR}" DIRECTORY)
+        file(TO_NATIVE_PATH "${FEFW_TRIM_ROOT}" FEFW_TRIM_ROOT)
+        if (NOT FEFW_TRIM_ROOT MATCHES " ")
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/d1trimfile:${FEFW_TRIM_ROOT}>")
+        endif()
+    endif()
+
     # Add this to ensure Cubeb uses the same runtime
     add_compile_options(
         $<$<COMPILE_LANGUAGE:C,CXX>:$<$<CONFIG:Debug>:/${libflag}d>>
@@ -250,7 +260,7 @@ mark_as_advanced(FORCE ENABLE_OPENGL)
 option(ENABLE_WEB_SERVICE "Enable web services (telemetry, etc.)" ON)
 option(ENABLE_WIFI_SCAN "Enable WiFi scanning" OFF)
 
-cmake_dependent_option(USE_DISCORD_PRESENCE "Enables Discord Rich Presence" OFF "ENABLE_QT" OFF)
+cmake_dependent_option(USE_DISCORD_PRESENCE "Enables Discord Rich Presence" ON "ENABLE_QT" OFF)
 
 option(YUZU_TESTS "Compile tests" "${BUILD_TESTING}")
 

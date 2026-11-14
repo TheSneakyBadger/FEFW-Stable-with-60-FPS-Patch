@@ -1667,14 +1667,27 @@ bool TextureCacheRuntime::Fsr4Upscale(Framebuffer* dst_framebuffer, ImageView& d
         ImageAspectMask(dst.format) != VK_IMAGE_ASPECT_COLOR_BIT) {
         return false;
     }
+    // The context is made for the sizes in use (at least 4K, so 1x-1.5x share one), and made
+    // again when the resolution scale goes beyond them: a fixed 4K limit failed at 2x and above.
+    const VkExtent2D render_extent{render_size[0], render_size[1]};
+    const VkExtent2D upscale_extent = dst_framebuffer->RenderArea();
+    if (fsr4_upscaler && !fsr4_upscaler->Fits(render_extent, upscale_extent)) {
+        scheduler.Finish();
+        fsr4_upscaler.reset();
+    }
     if (!fsr4_upscaler) {
         if (!Fsr4Upscaler::IsAvailable()) {
             LOG_WARNING(Render_Vulkan, "AMD FSR 4 is unavailable; falling back");
             fsr4_unsupported = true;
             return false;
         }
+        const auto at_least_4k = [](VkExtent2D size) {
+            return VkExtent2D{std::max(size.width, 3840u), std::max(size.height, 2160u)};
+        };
         try {
-            fsr4_upscaler = std::make_unique<Fsr4Upscaler>(device, scheduler, memory_allocator);
+            fsr4_upscaler = std::make_unique<Fsr4Upscaler>(device, scheduler, memory_allocator,
+                                                           at_least_4k(render_extent),
+                                                           at_least_4k(upscale_extent));
         } catch (const vk::Exception& exception) {
             LOG_WARNING(Render_Vulkan, "AMD FSR 4 unavailable ({}); falling back",
                         exception.what());
