@@ -1273,6 +1273,8 @@ FramebufferId TextureCache<P>::GetFramebufferId(const RenderTargets& key) {
 template <class P>
 void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
     ForEachImageInRegion(cpu_addr, size, [this](ImageId image_id, Image& image) {
+        // When the CPU wrote it: see RefreshContents (from Eglantine, kraibse).
+        image.cpu_modification_tick = ++modification_tick;
         if (True(image.flags & ImageFlagBits::CpuModified)) {
             return;
         }
@@ -1376,6 +1378,7 @@ void TextureCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t siz
                             [&](ImageId id, Image&) { deleted_images.push_back(id); });
     for (const ImageId id : deleted_images) {
         Image& image = slot_images[id];
+        image.cpu_modification_tick = ++modification_tick;
         if (False(image.flags & ImageFlagBits::CpuModified)) {
             image.flags |= ImageFlagBits::CpuModified;
             ++bank_generation;
@@ -1999,6 +2002,12 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
     }
 
     image.flags &= ~ImageFlagBits::CpuModified;
+    // The uploaded data is as new as the CPU write that made it, so an alias the GPU drew after
+    // that write stays newer and SynchronizeAliases copies it over this one; one drawn before it
+    // stays older (from Eglantine, kraibse: date CPU-refreshed images by the CPU write).
+    if (image.cpu_modification_tick > image.modification_tick) {
+        image.modification_tick = image.cpu_modification_tick;
+    }
 
     TrackImage(image, image_id);
 
