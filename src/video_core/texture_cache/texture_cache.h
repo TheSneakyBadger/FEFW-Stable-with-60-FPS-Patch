@@ -277,6 +277,19 @@ u32 TextureCache<P>::RunGarbageCollector() {
         const bool keeps_gpu_contents = True(image.flags & ImageFlagBits::GpuModified) &&
                                         False(image.flags & ImageFlagBits::CpuModified) &&
                                         !must_download;
+        // Fortune's Eden: an image the GPU drew and the game then kept reading for 10 s or more
+        // (Dagsion's sky, #64) is kept below the hard limit whatever its size up to 16 MiB:
+        // drawn once, it isn't drawn again, so freed while a shop menu covered the screen for a
+        // minute it came back black. Render targets of earlier scenes, drawn every frame they
+        // were used, still go after 30 s unused.
+        static constexpr u64 DRAWN_ONCE_READ_FRAMES = 600;
+        static constexpr u64 DRAWN_ONCE_MAX_BYTES = 16_MiB;
+        if (keeps_gpu_contents && !aggressive_mode &&
+            image.guest_size_bytes <= DRAWN_ONCE_MAX_BYTES &&
+            image.last_used_frame >= image.last_gpu_write_frame + DRAWN_ONCE_READ_FRAMES) {
+            ++num_iterations;
+            return false;
+        }
         if (keeps_gpu_contents && (image.guest_size_bytes <= KEEP_GPU_IMAGE_BYTES ||
                                    (image.guest_size_bytes <= SMALL_GPU_IMAGE_BYTES &&
                                     !evict_old_small_gpu && !scene_sweep))) {
@@ -2661,6 +2674,8 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         }
         if (True(overlap.flags & ImageFlagBits::GpuModified)) {
             new_image.flags |= ImageFlagBits::GpuModified;
+            new_image.last_gpu_write_frame =
+                (std::max)(new_image.last_gpu_write_frame, overlap.last_gpu_write_frame);
             const auto& resolution = Settings::values.resolution_info;
             const SubresourceBase base = new_image.TryFindBase(overlap.gpu_addr).value();
             const u32 up_scale = can_rescale ? resolution.up_scale : 1;
@@ -2820,6 +2835,7 @@ std::pair<u32, u32> TextureCache<P>::PrepareDmaImage(ImageId dst_id, GPUVAddr ba
     PrepareImage(dst_id, mark_as_modified, false);
     const auto& new_image = slot_images[dst_id];
     lru_cache.Touch(new_image.lru_index, frame_tick);
+    slot_images[dst_id].last_used_frame = frame_tick;
     return std::make_pair(base->level, base->layer);
 }
 
@@ -3093,6 +3109,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     total_used_memory += Common::AlignUp(tentative_size, 1024);
     texture_memory_estimate += Common::AlignUp(tentative_size, 1024);
     image.lru_index = lru_cache.Insert(image_id, frame_tick);
+    image.last_used_frame = frame_tick;
 
     ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, image_id](u64 page) {
         (*channel_state->gpu_page_table)[page].push_back(image_id);
@@ -3418,6 +3435,7 @@ void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_vi
 template <class P>
 void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
     image.flags |= ImageFlagBits::GpuModified;
+    image.last_gpu_write_frame = frame_tick;
     image.modification_tick = ++modification_tick;
 }
 
@@ -3451,6 +3469,7 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
     image.modification_tick = most_recent_tick;
     if (any_modified) {
         image.flags |= ImageFlagBits::GpuModified;
+        image.last_gpu_write_frame = frame_tick;
     }
     std::ranges::sort(aliased_images, [this](const AliasedImage* lhs, const AliasedImage* rhs) {
         const ImageBase& lhs_image = slot_images[lhs->id];
@@ -3492,6 +3511,7 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         MarkModification(image);
     }
     lru_cache.Touch(image.lru_index, frame_tick);
+    image.last_used_frame = frame_tick;
 }
 
 template <class P>
@@ -3575,6 +3595,7 @@ u64 TextureCache<P>::TryReuseViewBank(u64 hash, std::span<const u32> tics,
     if (entry->frame_tick != frame_tick) {
         for (const ImageId image_id : entry->images) {
             lru_cache.Touch(slot_images[image_id].lru_index, frame_tick);
+            slot_images[image_id].last_used_frame = frame_tick;
         }
         entry->frame_tick = frame_tick;
     }
