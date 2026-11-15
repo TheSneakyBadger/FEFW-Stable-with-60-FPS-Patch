@@ -1183,6 +1183,10 @@ bool AstcRecompressesToBc7();
 /// keeps it.
 void MarkAstcBc7Working(bool log = true);
 
+/// The BC7 converter couldn't be built: ASTC textures go to BC3 from now on (this start, and the
+/// later ones until Fortune's Eden is updated). Called before any texture is made.
+void TurnOffAstcBc7();
+
 // Restore the global state of all applicable settings in the Values struct
 void RestoreGlobalState(bool is_powered_on);
 
