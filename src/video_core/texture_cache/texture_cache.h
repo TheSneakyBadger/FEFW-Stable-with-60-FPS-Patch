@@ -508,6 +508,14 @@ void TextureCache<P>::TickFrame() {
         const u32 freed = RunGarbageCollector();
         if (freed != 0) {
             collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+        } else if (total_used_memory < expected_memory) {
+            // Fortune's Eden: under the expected level, a pass that found nothing to free waits
+            // half a second before the next (#63). Its walks of images unused for 30 s and
+            // 5 minutes step past every other old image, so their cost grew with the session:
+            // on a 12 GB card, from 37 ms a minute after boot to 940 ms after 18 minutes, every
+            // frame freeing nothing, until a restart.
+            static constexpr u64 IDLE_PASS_INTERVAL = 30;
+            collect_quiet_until = frame_tick + IDLE_PASS_INTERVAL;
         }
         ++minute_passes;
         minute_freed += freed;
