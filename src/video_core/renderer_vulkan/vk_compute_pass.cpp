@@ -5,6 +5,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <mutex>
+#include <thread>
 #include <cstdlib>
 #include <memory>
 #include <numeric>
@@ -14,6 +19,8 @@
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 
 #include "common/assert.h"
+#include "common/logging.h"
+#include "common/settings.h"
 #include "common/common_types.h"
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
@@ -696,16 +703,118 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, size_t gu
     }
 }
 
+namespace {
+/// A compute pipeline built on another thread: the BC7 converter (#65).
+struct ComputePipelineBuild {
+    std::mutex mutex;
+    std::condition_variable done_cv;
+    bool done = false;
+    vk::Pipeline pipeline;
+};
+
+VkComputePipelineCreateInfo EncoderPipelineInfo(VkShaderModule module, VkPipelineLayout layout) {
+    return VkComputePipelineCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = module,
+            .pName = "main",
+            .pSpecializationInfo = nullptr,
+        },
+        .layout = layout,
+        .basePipelineHandle = {},
+        .basePipelineIndex = 0,
+    };
+}
+} // Anonymous namespace
+
 BcEncoderPass::BcEncoderPass(const Device& device_, Scheduler& scheduler_,
                              DescriptorPool& descriptor_pool_,
                              ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
                              bool bc7_)
     : ComputePass(device_, scheduler_, descriptor_pool_, BC_ENCODER_DESCRIPTOR_SET_BINDINGS,
                   BC_ENCODER_DESCRIPTOR_UPDATE_TEMPLATE, ASTC_BANK_INFO,
-                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcEncoderPushConstants)>,
-                  bc7_ ? std::span<const u32>(BC7_ENCODER_COMP_SPV)
-                       : std::span<const u32>(BC_ENCODER_COMP_SPV)),
-      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_} {}
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcEncoderPushConstants)>, {}),
+      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_},
+      bc7{bc7_} {
+    const auto make_module = [this](std::span<const u32> code) {
+        device.SaveShader(code);
+        return device.GetLogical().CreateShaderModule({
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .codeSize = static_cast<u32>(code.size_bytes()),
+            .pCode = code.data(),
+        });
+    };
+    if (bc7) {
+        // Fortune's Eden: the BC7 converter is built on another thread, and if the driver hasn't
+        // built it within 10 s the textures go to BC3 instead (also on later starts, until
+        // Fortune's Eden is updated). On an RX 6800 XT (driver 26.10.1) building it never
+        // finished, and v1.7 stopped responding as the game started (#65). The build left
+        // behind keeps its shader module: the driver may still be using it.
+        static constexpr auto BUILD_TIMEOUT = std::chrono::seconds{10};
+        vk::ShaderModule bc7_module = make_module(BC7_ENCODER_COMP_SPV);
+        const VkShaderModule module_handle = *bc7_module;
+        const VkPipelineLayout layout_handle = *layout;
+        const auto build = std::make_shared<ComputePipelineBuild>();
+        const auto start = std::chrono::steady_clock::now();
+        std::thread([build, &device = device, module_handle, layout_handle] {
+            vk::Pipeline result;
+            try {
+                result = device.GetLogical().CreateComputePipeline(
+                    EncoderPipelineInfo(module_handle, layout_handle),
+                    device.StaticPipelineCache());
+            } catch (const std::exception&) {
+                // An empty pipeline: BC3 is used
+            }
+            {
+                std::scoped_lock lock{build->mutex};
+                build->pipeline = std::move(result);
+                build->done = true;
+            }
+            build->done_cv.notify_all();
+        }).detach();
+        bool finished = false;
+        bool built = false;
+        {
+            std::unique_lock lock{build->mutex};
+            finished =
+                build->done_cv.wait_for(lock, BUILD_TIMEOUT, [&build] { return build->done; });
+            if (finished) {
+                built = static_cast<bool>(build->pipeline);
+                pipeline = std::move(build->pipeline);
+            }
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+        if (built) {
+            encoder_module = std::move(bc7_module);
+            LOG_INFO(Render_Vulkan, "BC7 texture converter built in {} ms", ms);
+            return;
+        }
+        if (finished) {
+            LOG_WARNING(Render_Vulkan, "The graphics driver couldn't build the BC7 texture "
+                                       "converter: textures go to BC3 instead");
+        } else {
+            void(bc7_module.release()); // The driver may still be building with it
+            LOG_WARNING(Render_Vulkan, "The graphics driver hadn't built the BC7 texture "
+                                       "converter after {} ms: textures go to BC3 instead",
+                        ms);
+        }
+        bc7 = false;
+        Settings::TurnOffAstcBc7();
+    }
+    encoder_module = make_module(BC_ENCODER_COMP_SPV);
+    pipeline = device.GetLogical().CreateComputePipeline(
+        EncoderPipelineInfo(*encoder_module, *layout), device.StaticPipelineCache());
+}
 
 BcEncoderPass::~BcEncoderPass() = default;
 
