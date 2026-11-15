@@ -498,10 +498,13 @@ bool Bc7StartAllowed() {
     }
     if (std::filesystem::exists(off, ec)) {
         std::ifstream in{off};
-        const std::string version{std::istreambuf_iterator<char>{in}, {}};
+        std::string version{std::istreambuf_iterator<char>{in}, {}};
         in.close();
-        if (version.rfind(Common::FefwVersion, 0) == 0 &&
-            version.size() == std::string_view{Common::FefwVersion}.size()) {
+        while (!version.empty() && (version.back() == '\n' || version.back() == '\r' ||
+                                    version.back() == ' ')) {
+            version.pop_back();
+        }
+        if (version == Common::FefwVersion) {
             return false;
         }
         std::filesystem::remove(off, ec);
