@@ -1770,9 +1770,15 @@ void Device::CollectPhysicalMemoryInfo() {
     // Chooses what ASTC textures become for this boot (astc_recompression: Auto), before the
     // texture cache makes any: BC3 when the texture cache re-compresses ASTC on the GPU
     // (WillUseGpuBcnTranscode), otherwise from the video memory the emulator may use.
+    // The graphics card and driver go with a BC7 fallback (bc7-off.txt): a new driver or card
+    // tries BC7 again (#65).
+    const std::string gpu_driver =
+        fmt::format("{:04X}:{:04X} {}", properties.properties.vendorID,
+                    properties.properties.deviceID, properties.properties.driverVersion);
     Settings::ResolveAstcRecompression(device_access_memory,
                                        !is_optimal_astc_supported &&
-                                           Settings::GpuBcnTranscodeAllowed());
+                                           Settings::GpuBcnTranscodeAllowed(),
+                                       gpu_driver);
 }
 
 void Device::CollectToolingInfo() {
