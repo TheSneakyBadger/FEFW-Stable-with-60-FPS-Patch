@@ -5,6 +5,7 @@
 <p align="center">
   <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch?label=latest&color=e0b04a&style=for-the-badge" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-3a3448?style=for-the-badge" alt="Windows 10 or 11">
+  <img src="https://img.shields.io/badge/Linux-x86__64-3a3448?style=for-the-badge" alt="Linux x86_64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-8a2a3c?style=for-the-badge" alt="GPL-3.0 licence"></a>
 </p>
 
@@ -14,16 +15,21 @@
   <a href="#upscalers">Upscalers</a> &nbsp;·&nbsp;
   <a href="#troubleshooting">Troubleshooting</a> &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a> &nbsp;·&nbsp;
+  <a href="#credits-and-licence">Credits</a> &nbsp;·&nbsp;
   <a href="../../issues">Report a problem</a>
 </p>
 
-A portable, ready-to-play Windows build of the Eden emulator, made for *Fire Emblem: Fortune's Weave*. Unzip it, point it at your own copy of the game and press **Play**. Nothing to install, it updates itself, and it won't touch any other Eden setup you have.
+A portable, ready-to-play build of the Eden emulator for Windows (and Linux), made for *Fire Emblem: Fortune's Weave*. Unzip it, point it at your own copy of the game and press **Play**. Nothing to install, it updates itself, and it won't touch any other Eden setup you have.
 
 It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw/releases/tag/1.12).
 
-## What's new
+## What's new in v1.7
 
-- **v1.7:** HD Rumble (experimental, off by default): the game's detailed vibration on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026) through [RenHDrum](https://github.com/trzz1214/RenHDrum); and lips render properly, as textures are re-compressed to BC7 instead of BC3 ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)).
+- **HD Rumble (experimental, off by default).** Tick **HD Rumble** on the launch screen and the game's detailed vibration plays on your controller through [RenHDrum](https://github.com/trzz1214/RenHDrum): HD Rumble on a Switch Pro Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the Steam Controller (2026). Windows only for now.
+- **Lips render properly** ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)). The game's ASTC textures are re-compressed to BC7 instead of BC3 on the graphics card: the same video memory, and more accurate everywhere.
+
+### Recent releases
+
 - **v1.6.8.9:** no more broken textures or flashes after a few minutes in the same place ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
 - **v1.6.8.8:** NVIDIA DLSS frame generation no longer drags busy battles below 60 FPS; performance no longer drops map after map ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)); and the Discord Rich Presence setting is now in *Configure → General → Discord*.
 - **v1.6.8.7:** AMD FSR 3.1 frame generation no longer crashes after a few minutes ([#52](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/52)) and NVIDIA DLSS frame generation no longer crashes when the window changes; AMD FSR 4 works at 2x resolution and above ([#53](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/53)); menus, the map and teleports run at normal speed at 60 FPS again ([#51](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/51)); pausing no longer fast-forwards cutscenes ([#54](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/54)); games in very deep folders load ([#48](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/48)); and optional Discord Rich Presence.
@@ -36,18 +42,8 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 - **v1.6.8:** frame generation (experimental): AMD FSR 3.1 on any card, or NVIDIA DLSS on GeForce RTX 40/50, so 60 FPS shows as 120. The game's UI stays still.
 - **v1.6.8:** the main settings are on the launch screen, beside Play: 60 FPS, Ultrawide, HDR, upscaler, quality and frame generation.
 - **v1.6.8:** video memory no longer creeps up over long sessions ([#35](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/35), [#37](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/37), [#38](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/38)), and 60 FPS mode works with mods ([#30](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/30)).
-- **v1.6.7.4:** a real 60 FPS mode (*Settings → Performance*): game speed follows your frame rate from 30 to 60 FPS, so no slow motion below 60, and capes and hair move smoothly.
-- **v1.6.7.4:** new *Performance* page: Reflections, Ambient occlusion and Reduced crowd detail.
-- **v1.6.7.4:** video memory creeps up far less in long sessions.
-- **v1.6.7.3:** mouse mode: your PC mouse drives the game's Joy-Con mouse cursor (button at the bottom of the window, or Ctrl + Enter).
-- **v1.6.7.3:** faster cutscenes ([#22](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/22)) and busy scenes such as the Saramis Guesthouse ([#27](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/27)); fixes for long sessions.
-- **v1.6.7.3:** volume is always 100% (use your PC's volume).
-- **v1.6.7.2:** players who updated from v1.6.2 or earlier and were still on the game's own DLSS are moved to AMD FSR 3.1, the default, once.
-- **v1.6.7.1:** updated installs now get the tuned image and speed settings too (vsync Mailbox, asynchronous shaders, 16x filtering).
-- **v1.6.7.1:** text fits in buttons and lists at Windows display scaling.
-- **v1.6.7.1:** no more "Decryption keys are missing" question at startup.
 
-v1.6.7 brought the new look (theme, icon and launch screen) and a much shorter Settings window. Every version is in the [changelog](CHANGELOG.md).
+Every version is in the [changelog](CHANGELOG.md).
 
 ## Highlights
 
@@ -199,4 +195,18 @@ That gives `FEFW-Stable-60FPS-Portable` (with `Fortune's Eden.exe`) and a zip of
 
 ## Credits and licence
 
-Built on [Eden](https://eden-emu.dev), [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's 1.12 release](https://github.com/xDarkWindx/eden-fefw), with the NUP loader, AMD fix and NVIDIA DLSS support from [Djihads80's Eglantine](https://github.com/Djihads80/Eglantine) (Duck912, arisqz), and shader reuse and shutdown fixes from PokeDinner (Wael3rd, kraibse, Takoroka). AMD FSR 3.1 is built from AMD's FidelityFX SDK (MIT) with the upscaler from Eglantine (Duck912); AMD FSR 4 is AMD's own signed FSR 4.1.2 Vulkan library from the FSR SDK 2.4, redistributed unmodified under the FidelityFX SDK licence (`licenses\amd-fsr4`). AMD and FidelityFX are trademarks of AMD; this project is not made or endorsed by AMD. NVIDIA DLSS and Streamline are NVIDIA's; none of NVIDIA's files are included. HD Rumble uses [RenHDrum](https://github.com/trzz1214/RenHDrum) by Three-Dola and contributors (MIT / Apache-2.0, `licenses\renhdrum`), with its Eden integration by samaBR85. Licensed under **GPL-3.0-or-later**; the full source for this build is included as `source.zip` in each release download. Not affiliated with, endorsed by or sponsored by Nintendo or NVIDIA. For use only with games, keys and firmware legally dumped from your own console; see the legal notice at the top.
+Fortune's Eden stands on a lot of other people's work. Thank you to all of them:
+
+- **[Eden](https://eden-emu.dev)** and the yuzu project before it: the emulator itself.
+- **[Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe)** (eden-ns2-fe) and **[xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw)**: the Switch 2 and Fortune's Weave support this build starts from.
+- **[Djihads80's Eglantine](https://github.com/Djihads80/Eglantine)**: the NUP loader, the AMD fix and NVIDIA DLSS support (Duck912, arisqz), the AMD FSR 3.1 upscaler (Duck912), and fixes by Felipe Lima (failed pipeline draws), Zarigis (graphics memory writes), zortos293 (alpha-test pipelines), and Zortos and Kaj (accurate waits on AMD and Intel CPUs).
+- **Franseven**: shader and Vulkan fixes ported from Eden-NS2.
+- **PokeDinner** (Wael3rd, kraibse, Takoroka): shader reuse and shutdown fixes.
+- **[Kompas9](https://github.com/Kompas9/Switch-Game-Patches)**: the ultrawide 21:9 patch (MIT, `licenses\ultrawide-kompas9`).
+- **[RenHDrum](https://github.com/trzz1214/RenHDrum)** by Three-Dola and contributors: HD Rumble (`renhdrum.dll`, MIT / Apache-2.0, `licenses\renhdrum`), with its Eden integration by **samaBR85** and the Steam Controller (2026) grip research by iafx and LiveHaptics.
+- **AMD**: AMD FSR 3.1 and FSR 3.1 frame generation are built from AMD's FidelityFX SDK (MIT, `licenses\amd-fidelityfx-sdk`); AMD FSR 4 is AMD's own signed FSR 4.1.2 Vulkan library from the FSR SDK 2.4, redistributed unmodified under the FidelityFX SDK licence (`licenses\amd-fsr4`). AMD and FidelityFX are trademarks of AMD; this project is not made or endorsed by AMD.
+- **[dav1d](https://code.videolan.org/videolan/dav1d)** by VideoLAN: fast AV1 decoding for the pre-rendered cutscenes (BSD 2-clause, `licenses\dav1d`).
+- **NVIDIA**: DLSS and Streamline are NVIDIA's, downloaded from NVIDIA by the settings; none of NVIDIA's files are included.
+- **Everyone who reports problems** and sends logs, saves and test results: most fixes here started with one of your reports.
+
+Licensed under **GPL-3.0-or-later**; the full source for this build is included as `source.zip` in each release download, and each release's exact source is on a `source-v<version>` branch. Not affiliated with, endorsed by or sponsored by Nintendo, NVIDIA or AMD. For use only with games, keys and firmware legally dumped from your own console; see the legal notice at the top.
