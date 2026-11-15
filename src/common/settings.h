@@ -1179,6 +1179,10 @@ AstcRecompression EffectiveAstcRecompression();
 /// they are re-compressed on the GPU (Auto). Decided with EffectiveAstcRecompression.
 bool AstcRecompressesToBc7();
 
+/// Called once the game has drawn its first frames with BC7, or stopped normally: the next start
+/// keeps it.
+void MarkAstcBc7Working(bool log = true);
+
 // Restore the global state of all applicable settings in the Values struct
 void RestoreGlobalState(bool is_powered_on);
 

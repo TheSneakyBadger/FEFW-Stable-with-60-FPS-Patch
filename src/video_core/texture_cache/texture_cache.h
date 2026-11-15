@@ -140,6 +140,12 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
 }
 
 template <class P>
+TextureCache<P>::~TextureCache() {
+    // A game stopped before its 600th frame still got going: the next start keeps BC7.
+    Settings::MarkAstcBc7Working(false);
+}
+
+template <class P>
 u32 TextureCache<P>::RunGarbageCollector() {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
@@ -616,6 +622,9 @@ void TextureCache<P>::TickFrame() {
     TickAsyncUnswizzle();
 
     runtime.TickFrame();
+    if (frame_tick == 600 && Settings::AstcRecompressesToBc7()) {
+        Settings::MarkAstcBc7Working();
+    }
     ++frame_tick;
 
     if constexpr (IMPLEMENTS_ASYNC_DOWNLOADS) {
