@@ -59,6 +59,7 @@ private:
     QComboBox* frame_gen_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
+    QCheckBox* hd_rumble_box{};
     QSlider* paper_white{};
     QLabel* paper_white_label{};
     QString game_path;

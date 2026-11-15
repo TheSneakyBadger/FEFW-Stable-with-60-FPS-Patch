@@ -4,6 +4,7 @@
 #include <stb_dxt.h>
 #include <string.h>
 #include "common/alignment.h"
+#include "video_core/textures/bc7_encoder.h"
 #include "video_core/textures/bcn.h"
 #include "video_core/textures/workers.h"
 
@@ -80,6 +81,14 @@ void CompressBC3(std::span<const uint8_t> data, uint32_t width, uint32_t height,
     CompressBCN<16, false>(data, width, height, depth, output,
                            [](u8* block_output, const u8* block_input, bool any_alpha) {
                                stb_compress_bc3_block(block_output, block_input, STB_DXT_NORMAL);
+                           });
+}
+
+void CompressBC7(std::span<const uint8_t> data, uint32_t width, uint32_t height, uint32_t depth,
+                 std::span<uint8_t> output) {
+    CompressBCN<16, false>(data, width, height, depth, output,
+                           [](u8* block_output, const u8* block_input, bool) {
+                               EncodeBc7Block(block_output, block_input);
                            });
 }
 

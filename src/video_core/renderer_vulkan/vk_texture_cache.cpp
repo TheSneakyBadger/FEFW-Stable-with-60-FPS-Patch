@@ -976,7 +976,8 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                                   compute_pass_descriptor_queue, memory_allocator);
         if (Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Uncompressed) {
             bc_encoder_pass.emplace(device, scheduler, descriptor_pool,
-                                    compute_pass_descriptor_queue);
+                                    compute_pass_descriptor_queue,
+                                    Settings::AstcRecompressesToBc7());
             LOG_INFO(Render_Vulkan, "ASTC textures are decoded and re-compressed on the GPU");
         }
     }
@@ -3900,7 +3901,8 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     static bool logged_first = false;
     if (!std::exchange(logged_first, true)) {
         LOG_INFO(Render_Vulkan, "First ASTC texture re-compressed on the GPU: {}x{}, {} levels, {} layers, {}",
-                 width, height, levels, layers, bc3 ? "BC3" : "BC1");
+                 width, height, levels, layers,
+                 Settings::AstcRecompressesToBc7() ? "BC7" : (bc3 ? "BC3" : "BC1"));
     }
     pending.tick = scheduler.CurrentTick();
     pending_transcode_bytes += pending.bytes;
