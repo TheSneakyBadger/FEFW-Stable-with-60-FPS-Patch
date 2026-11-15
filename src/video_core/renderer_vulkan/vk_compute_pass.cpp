@@ -18,6 +18,7 @@
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
 #include "video_core/host_shaders/astc_decoder_comp_spv.h"
+#include "video_core/host_shaders/bc7_encoder_comp_spv.h"
 #include "video_core/host_shaders/bc_encoder_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_nosubgroups_comp_spv.h"
@@ -697,10 +698,13 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, size_t gu
 
 BcEncoderPass::BcEncoderPass(const Device& device_, Scheduler& scheduler_,
                              DescriptorPool& descriptor_pool_,
-                             ComputePassDescriptorQueue& compute_pass_descriptor_queue_)
+                             ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                             bool bc7_)
     : ComputePass(device_, scheduler_, descriptor_pool_, BC_ENCODER_DESCRIPTOR_SET_BINDINGS,
                   BC_ENCODER_DESCRIPTOR_UPDATE_TEMPLATE, ASTC_BANK_INFO,
-                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcEncoderPushConstants)>, BC_ENCODER_COMP_SPV),
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcEncoderPushConstants)>,
+                  bc7_ ? std::span<const u32>(BC7_ENCODER_COMP_SPV)
+                       : std::span<const u32>(BC_ENCODER_COMP_SPV)),
       scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_} {}
 
 BcEncoderPass::~BcEncoderPass() = default;

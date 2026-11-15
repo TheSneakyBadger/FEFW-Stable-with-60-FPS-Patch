@@ -1125,6 +1125,10 @@ void SetActiveFrameGeneration(const char* name);
 /// renderer's start, so it can't change under images already made.
 AstcRecompression EffectiveAstcRecompression();
 
+/// Whether ASTC textures the effective setting makes BC3 are made BC7 instead (same size): when
+/// they are re-compressed on the GPU (Auto). Decided with EffectiveAstcRecompression.
+bool AstcRecompressesToBc7();
+
 // Restore the global state of all applicable settings in the Values struct
 void RestoreGlobalState(bool is_powered_on);
 

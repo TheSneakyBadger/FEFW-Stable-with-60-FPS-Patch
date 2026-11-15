@@ -260,7 +260,11 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             tuple.format = is_srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
             break;
         case Settings::AstcRecompression::Bc3:
-            tuple.format = is_srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+            if (Settings::AstcRecompressesToBc7()) {
+                tuple.format = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+            } else {
+                tuple.format = is_srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+            }
             break;
         }
     }

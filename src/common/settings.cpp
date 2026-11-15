@@ -376,6 +376,7 @@ void TranslateResolutionInfo(ResolutionSetup setup, ResolutionScalingInfo& info)
 
 namespace {
 std::atomic<AstcRecompression> effective_astc_recompression{AstcRecompression::Auto};
+std::atomic<bool> astc_bc7{false};
 }
 
 namespace {
@@ -465,6 +466,7 @@ bool GpuBcnTranscodeAllowed() {
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
+    bool bc7 = false;
     if (const AstcOverride override_value = GetAstcOverride();
         override_value != AstcOverride::None) {
         effective = override_value == AstcOverride::Uncompressed ? AstcRecompression::Uncompressed
@@ -475,10 +477,13 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
                                                               : "BC3, re-compressed on the CPU",
                  std::getenv("EDEN_ASTC"));
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
-        // The GPU decodes ASTC and re-compresses it to BC3 itself: a quarter of the memory of
-        // uncompressed, without the CPU stalls that BC3 used to cost.
+        // The GPU decodes ASTC and re-compresses it itself: a quarter of the memory of
+        // uncompressed, without the CPU stalls that BC3 used to cost. To BC7 (in place of BC3,
+        // same size): BC3 has one colour line per 4x4 block, and textures packing separate masks
+        // into R, G and B came out blocky in it (#56). EDEN_ASTC=bc3-gpu keeps BC3.
         effective = AstcRecompression::Bc3;
-        LOG_INFO(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto; {} MiB of video "
+        bc7 = true;
+        LOG_INFO(Common, "ASTC textures: BC7, re-compressed on the GPU (Auto; {} MiB of video "
                          "memory may be used)",
                  memory_limit_bytes >> 20);
     } else if (setting == AstcRecompression::Auto) {
@@ -506,7 +511,13 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
         LOG_INFO(Common, "ASTC textures: {} (set by the user)",
                  CanonicalizeEnum(setting));
     }
+    astc_bc7.store(bc7, std::memory_order_relaxed);
     effective_astc_recompression.store(effective, std::memory_order_relaxed);
+}
+
+bool AstcRecompressesToBc7() {
+    EffectiveAstcRecompression(); // Resolves it if no renderer has yet
+    return astc_bc7.load(std::memory_order_relaxed);
 }
 
 AstcRecompression EffectiveAstcRecompression() {
