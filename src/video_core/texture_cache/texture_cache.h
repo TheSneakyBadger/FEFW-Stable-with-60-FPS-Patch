@@ -282,6 +282,16 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // drawn once, it isn't drawn again, so freed while a shop menu covered the screen for a
         // minute it came back black. Render targets of earlier scenes, drawn every frame they
         // were used, still go after 30 s unused.
+        // Fortune's Eden: and the 30 s and 5 minute walks keep every GPU-drawn image the current
+        // scene has used, whatever its size: they are for what earlier scenes left behind (the
+        // loading screen sweep frees most of it). With only the rule below, the sky still went
+        // black after a minute in a Dagsion shop on the reporter's PC (#64), while turning the
+        // 30 s walk off (EDEN_TC_OLD_GPU_AGE=0) fixed it. In the hard mode they still go.
+        if (evict_old_gpu && keeps_gpu_contents && !aggressive_mode &&
+            image.last_used_frame >= scene_start_frame) {
+            ++num_iterations;
+            return false;
+        }
         static constexpr u64 DRAWN_ONCE_READ_FRAMES = 600;
         static constexpr u64 DRAWN_ONCE_MAX_BYTES = 16_MiB;
         if (keeps_gpu_contents && !aggressive_mode &&
@@ -507,6 +517,7 @@ void TextureCache<P>::TickFrame() {
                 LOG_INFO(HW_GPU, "Loading screen: {} MiB of map data read over {} frames",
                          scene_load.bytes >> 20, scene_load.last_frame - scene_load.start_frame);
                 scene_sweep_below = scene_load.start_frame;
+                scene_start_frame = scene_load.start_frame;
                 scene_sweep_is_age = false;
                 const u32 freed = RunGarbageCollector();
                 if (freed != 0) {

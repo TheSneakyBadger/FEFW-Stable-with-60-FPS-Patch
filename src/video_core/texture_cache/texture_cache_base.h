@@ -668,6 +668,9 @@ private:
     std::array<u64, 120> scene_read_ring{};
     u64 scene_read_window = 0;
     u64 scene_sweep_below = 0;
+    /// Frame the current scene's loading screen began (0 before the first): GPU-drawn images
+    /// used since are kept by the 30 s and 5 minute walks (#64).
+    u64 scene_start_frame = 0;
     /// What the sweep is for, for the log: a loading screen, or images unused for 5 minutes.
     bool scene_sweep_is_age = false;
     u64 collect_quiet_until = 0;     ///< No cleanup pass before this frame unless over the limit
