@@ -43,7 +43,9 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     auto* header = new QHBoxLayout;
     auto* title = new QLabel(tr("<b>HD Rumble</b>"));
     hd_enabled = new QCheckBox(tr("Enabled"));
-    hd_enabled->setToolTip(tr("Off: the controllers use the emulator's standard rumble."));
+    hd_enabled->setToolTip(tr("Experimental (also on the main window). Off: the controllers use "
+                              "the emulator's standard rumble. Switching it on or off takes effect "
+                              "for controllers connected after that, or after a restart."));
     header->addWidget(title);
     header->addStretch();
     header->addWidget(hd_enabled);

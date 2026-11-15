@@ -481,15 +481,45 @@ if (ENABLE_RENHDRUM AND RENHDRUM_DOWNLOAD AND WIN32 AND NOT ARCHITECTURE_x86_64)
     message(WARNING "RENHDRUM_DOWNLOAD: the prebuilt renhdrum.dll is x64 only; skipped for this architecture")
 endif()
 if (ENABLE_RENHDRUM AND RENHDRUM_DOWNLOAD AND WIN32 AND ARCHITECTURE_x86_64)
-    set(RENHDRUM_VERSION 0.2.1)
-    set(RENHDRUM_DLL "${CMAKE_BINARY_DIR}/renhdrum/${RENHDRUM_VERSION}/renhdrum.dll")
+    # Fortune's Eden: 0.4.0 (renhdrum_set_nx2_mode, the Switch 2 rumble Mode Fortune's Weave
+    # sends). The DLL is checked against the release's SHA256SUMS.txt.
+    set(RENHDRUM_VERSION 0.4.0)
+    set(RENHDRUM_DIR "${CMAKE_BINARY_DIR}/renhdrum/${RENHDRUM_VERSION}")
+    set(RENHDRUM_DLL "${RENHDRUM_DIR}/renhdrum.dll")
+    set(RENHDRUM_URL "https://github.com/trzz1214/RenHDrum/releases/download/v${RENHDRUM_VERSION}")
     if (NOT EXISTS "${RENHDRUM_DLL}")
-        file(DOWNLOAD
-            "https://github.com/trzz1214/RenHDrum/releases/download/v${RENHDRUM_VERSION}/renhdrum.dll"
-            "${RENHDRUM_DLL}"
-            EXPECTED_HASH SHA256=35bce3b64a851405ead5484a51d36e51d7ed654f9f5295bd9abce61fdc4e69f1
-            SHOW_PROGRESS)
+        file(DOWNLOAD "${RENHDRUM_URL}/SHA256SUMS.txt" "${RENHDRUM_DIR}/SHA256SUMS.txt"
+             STATUS sums_status)
+        list(GET sums_status 0 sums_code)
+        set(renhdrum_hash "")
+        if (sums_code EQUAL 0)
+            file(STRINGS "${RENHDRUM_DIR}/SHA256SUMS.txt" sums_lines REGEX "renhdrum\\.dll")
+            foreach (line IN LISTS sums_lines)
+                if (line MATCHES "^([0-9a-fA-F]+)[ \t]+\\*?renhdrum\\.dll$")
+                    set(renhdrum_hash "${CMAKE_MATCH_1}")
+                endif()
+            endforeach()
+        endif()
+        if (renhdrum_hash)
+            file(DOWNLOAD "${RENHDRUM_URL}/renhdrum.dll" "${RENHDRUM_DLL}"
+                 EXPECTED_HASH SHA256=${renhdrum_hash} SHOW_PROGRESS)
+        else()
+            message(WARNING "RENHDRUM_DOWNLOAD: no SHA-256 for renhdrum.dll ${RENHDRUM_VERSION}; not downloaded (standard rumble only)")
+        endif()
     endif()
+    if (EXISTS "${RENHDRUM_DLL}")
+        file(SHA256 "${RENHDRUM_DLL}" renhdrum_dll_hash)
+        message(STATUS "RenHDrum ${RENHDRUM_VERSION}: renhdrum.dll SHA-256 ${renhdrum_dll_hash}")
+        add_custom_command(TARGET yuzu POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RENHDRUM_DLL}" "$<TARGET_FILE_DIR:yuzu>"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:yuzu>/licenses/renhdrum"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/externals/renhdrum/LICENSE-MIT"
+                "${PROJECT_SOURCE_DIR}/externals/renhdrum/LICENSE-APACHE"
+                "$<TARGET_FILE_DIR:yuzu>/licenses/renhdrum"
+            VERBATIM)
+    endif()
+endif()
     add_custom_command(TARGET yuzu POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RENHDRUM_DLL}" "$<TARGET_FILE_DIR:yuzu>"
         VERBATIM)

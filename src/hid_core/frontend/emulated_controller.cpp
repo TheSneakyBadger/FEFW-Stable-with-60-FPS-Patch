@@ -1268,7 +1268,9 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
         return false;
     }
 
-    if (!Settings::values.enable_accurate_vibrations.GetValue()) {
+    // RenHDrum paces short pulses itself; dropping them here loses clicks
+    if (!Settings::values.enable_accurate_vibrations.GetValue() &&
+        !Settings::values.hd_rumble_enabled.GetValue()) {
         using std::chrono::duration_cast;
         using std::chrono::milliseconds;
         using std::chrono::steady_clock;
