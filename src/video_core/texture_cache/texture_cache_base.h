@@ -165,6 +165,7 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
 
 public:
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
+    ~TextureCache();
 
     /// Notify the cache that a new frame has been queued
     void TickFrame();
