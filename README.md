@@ -23,13 +23,15 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw/releases/tag/1.12).
 
-## What's new in v1.7
+## What's new in v1.7.1
 
-- **HD Rumble (experimental, off by default).** Tick **HD Rumble** on the launch screen and the game's detailed vibration plays on your controller through [RenHDrum](https://github.com/trzz1214/RenHDrum): HD Rumble on a Switch Pro Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the Steam Controller (2026). Windows only for now.
-- **Lips render properly** ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)). The game's ASTC textures are re-compressed to BC7 instead of BC3 on the graphics card: the same video memory, and more accurate everywhere.
+- **Mouse mode has its own page in Settings** (*Configure → Mouse mode*): sensitivity, whether the scroll wheel zooms battle maps, and the controls used in mouse mode. The wheel now only zooms on battle maps instead of walking you around elsewhere, and WASD works in mouse mode with a controller set up.
+- **Dagsion's sky no longer turns black after time in menus** ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)), **stutters no longer build up over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and **textures the game rewrites no longer come back wrong** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
+- **Kompas9's ultrawide v1.2:** the Stats page radar charts sit inside the 16:9 area.
 
 ### Recent releases
 
+- **v1.7:** HD Rumble (experimental, off by default) through [RenHDrum](https://github.com/trzz1214/RenHDrum), on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), Windows only; and lips render properly ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)), with ASTC textures re-compressed to BC7 instead of BC3.
 - **v1.6.8.9:** no more broken textures or flashes after a few minutes in the same place ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
 - **v1.6.8.8:** NVIDIA DLSS frame generation no longer drags busy battles below 60 FPS; performance no longer drops map after map ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)); and the Discord Rich Presence setting is now in *Configure → General → Discord*.
 - **v1.6.8.7:** AMD FSR 3.1 frame generation no longer crashes after a few minutes ([#52](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/52)) and NVIDIA DLSS frame generation no longer crashes when the window changes; AMD FSR 4 works at 2x resolution and above ([#53](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/53)); menus, the map and teleports run at normal speed at 60 FPS again ([#51](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/51)); pausing no longer fast-forwards cutscenes ([#54](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/54)); games in very deep folders load ([#48](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/48)); and optional Discord Rich Presence.
@@ -51,7 +53,7 @@ Every version is in the [changelog](CHANGELOG.md).
 |---|---|
 | 🎮 **Launch screen** | The game's card with **Play** and the main settings beside it: 60 FPS, Ultrawide, HDR, HD Rumble, upscaler, quality and frame generation |
 | ✨ **Upscalers** | AMD FSR 3.1 (default, any card), AMD FSR 4 (Radeon), NVIDIA DLSS (GeForce RTX), with quality modes from Native/DLAA to Performance |
-| 🖱️ **Mouse mode** | Your PC mouse as the game's Joy-Con mouse cursor, with its own controls and sensitivity |
+| 🖱️ **Mouse mode** | Your PC mouse as the game's Joy-Con mouse cursor, with its own Settings page, controls and sensitivity, and the scroll wheel zooming battle maps |
 | 🖥️ **Ultrawide** | Optional 21:9 (3440x1440) with the HUD and menus kept at 16:9, using [Kompas9](https://github.com/Kompas9/Switch-Game-Patches)'s patch (game version 1.1.0) |
 | 🌈 **HDR** | The game's own Switch 2 HDR mode, with its brightness options |
 | 📳 **HD Rumble** | Experimental, off by default: the game's detailed vibration on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), through [RenHDrum](https://github.com/trzz1214/RenHDrum). Windows only |
@@ -199,7 +201,7 @@ Fortune's Eden stands on a lot of other people's work. Thank you to all of them:
 
 - **[Eden](https://eden-emu.dev)** and the yuzu project before it: the emulator itself.
 - **[Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe)** (eden-ns2-fe) and **[xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw)**: the Switch 2 and Fortune's Weave support this build starts from.
-- **[Djihads80's Eglantine](https://github.com/Djihads80/Eglantine)**: the NUP loader, the AMD fix and NVIDIA DLSS support (Duck912, arisqz), the AMD FSR 3.1 upscaler (Duck912), and fixes by Felipe Lima (failed pipeline draws), Zarigis (graphics memory writes), zortos293 (alpha-test pipelines), and Zortos and Kaj (accurate waits on AMD and Intel CPUs).
+- **[Djihads80's Eglantine](https://github.com/Djihads80/Eglantine)**: the NUP loader, the AMD fix and NVIDIA DLSS support (Duck912, arisqz), the AMD FSR 3.1 upscaler (Duck912), and fixes by Felipe Lima (failed pipeline draws), Zarigis (graphics memory writes), kraibse (textures rewritten by the game), zortos293 (alpha-test pipelines), and Zortos and Kaj (accurate waits on AMD and Intel CPUs).
 - **Franseven**: shader and Vulkan fixes ported from Eden-NS2.
 - **PokeDinner** (Wael3rd, kraibse, Takoroka): shader reuse and shutdown fixes.
 - **[Kompas9](https://github.com/Kompas9/Switch-Game-Patches)**: the ultrawide 21:9 patch (MIT, `licenses\ultrawide-kompas9`).

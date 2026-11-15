@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.7.1
+
+A Mouse mode page in Settings, a scroll wheel that only zooms where it should, and fixes for a black sky, long-session stutters and textures the game rewrites.
+
+#### 🖱️ Mouse mode
+
+- **Its own page in Settings.** *Configure → Mouse mode* has the mouse sensitivity, a **Mouse wheel zooms on battle maps** box, and a **Mouse controls** tab where you set the keys and buttons used while mouse mode is on. The Controls page now always shows your normal controls.
+- **The scroll wheel only zooms on battle maps.** It used to push the left stick, which zooms on battle maps but walked you forwards and backwards everywhere else. Outside battle maps it now does nothing.
+- **WASD works in mouse mode.** With a controller set up, the mouse set of controls had no keyboard keys, so WASD did nothing. Turning mouse mode on now gives it the default keyboard controls once (WASD moves), if it has none.
+
+#### 🖥️ Ultrawide
+
+- **Kompas9's ultrawide v1.2:** the radar charts on the unit Stats page now sit inside the centred 16:9 area.
+
+#### 🔧 Fixes
+
+- **Dagsion's sky no longer turns black after time in menus** ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)). The sky is drawn once and then kept in use; while a shop or other menu covered the screen for a minute, graphics memory cleanup freed it. Anything drawn in the current scene is now kept until the next loading screen.
+- **No more stutters building up over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). When there was nothing to clean up, the graphics memory cleanup still ran every frame, and each run got slower as the session went on (on a 12 GB card, from 37 ms a minute to 940 ms a minute after 18 minutes). It now waits half a second after a run that found nothing.
+- **Textures the game rewrites no longer come back wrong** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)). When the game rewrote a texture after the graphics card had drawn into it, an older drawn copy could win over the new data. Whichever was written last now wins. Ported from Eglantine (kraibse).
+
+Everything else is as in [v1.7](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7).
+
 ## v1.7
 
 HD Rumble for your controller (experimental), and lips that render properly.
