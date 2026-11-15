@@ -25,6 +25,7 @@
 #include "yuzu/configuration/configure_hotkeys.h"
 #include "yuzu/configuration/configure_input.h"
 #include "yuzu/configuration/configure_input_player.h"
+#include "yuzu/configuration/configure_mouse_mode.h"
 #include "yuzu/configuration/configure_network.h"
 #include "yuzu/configuration/configure_performance.h"
 #include "yuzu/configuration/configure_profile_manager.h"
@@ -60,6 +61,7 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
           nullptr, *builder, this)},
       hotkeys_tab{std::make_unique<ConfigureHotkeys>(system_.HIDCore(), this)},
       input_tab{std::make_unique<ConfigureInput>(system_, this)},
+      mouse_tab{std::make_unique<ConfigureMouseMode>(this)},
       network_tab{std::make_unique<ConfigureNetwork>(system_, this)},
       profile_tab{std::make_unique<ConfigureProfileManager>(system_, this)},
       system_tab{std::make_unique<ConfigureSystem>(system_, nullptr, *builder, this)},
@@ -134,6 +136,7 @@ void ConfigureDialog::ApplyConfiguration() {
     profile_tab->ApplyConfiguration();
     filesystem_tab->ApplyConfiguration();
     input_tab->ApplyConfiguration();
+    mouse_tab->ApplyConfiguration();
     hotkeys_tab->ApplyConfiguration(registry);
     cpu_tab->ApplyConfiguration();
     graphics_tab->ApplyConfiguration();
@@ -195,13 +198,14 @@ void ConfigureDialog::PopulateSelectionList() {
 #ifdef USE_DISCORD_PRESENCE
     general_tabs.push_back(web_tab.get());
 #endif
-    const std::array<std::pair<QString, QList<QWidget*>>, 7> items{
+    const std::array<std::pair<QString, QList<QWidget*>>, 8> items{
         {{tr("General"), general_tabs},
          {tr("System"), {system_tab.get(), profile_tab.get()}},
          {tr("Graphics"), {graphics_tab.get()}},
          {tr("Performance"), {performance_tab.get()}},
          {tr("Audio"), {audio_tab.get()}},
          {tr("Controls"), input_tab->GetSubTabs()},
+         {tr("Mouse mode"), {mouse_tab.get(), input_tab->GetMouseControlsTab()}},
          {tr("Advanced"),
           {graphics_advanced_tab.get(), filesystem_tab.get(), debug_tab_tab.get()}}},
     };
@@ -239,8 +243,16 @@ void ConfigureDialog::UpdateVisibleTabs() {
 
     const auto tabs = qvariant_cast<QList<QWidget*>>(items[0]->data(Qt::UserRole));
 
+    // Fortune's Eden: Player 1's tab is on both the Controls and the Mouse mode page; it shows
+    // the normal controls on the first and the mouse controls on the second.
+    const bool mouse_page = tabs.contains(static_cast<QWidget*>(mouse_tab.get()));
+    if (mouse_page || tabs.contains(input_tab->GetMouseControlsTab())) {
+        input_tab->ShowMouseControls(mouse_page);
+    }
+
     for (auto* const tab : tabs) {
         LOG_DEBUG(Frontend, "{}", tab->accessibleName().toStdString());
-        ui->tabWidget->addTab(tab, tab->accessibleName());
+        const bool mouse_controls = mouse_page && tab == input_tab->GetMouseControlsTab();
+        ui->tabWidget->addTab(tab, mouse_controls ? tr("Mouse controls") : tab->accessibleName());
     }
 }

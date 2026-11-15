@@ -52,6 +52,13 @@ public:
 
     QList<QWidget*> GetSubTabs() const;
 
+    /// Fortune's Eden: Player 1's tab, shown on the Mouse mode page as the mouse controls.
+    QWidget* GetMouseControlsTab() const;
+
+    /// Fortune's Eden: shows Player 1's mouse controls (Mouse mode page) or normal controls
+    /// (Controls page) for editing.
+    void ShowMouseControls(bool mouse);
+
 private:
     void changeEvent(QEvent* event) override;
     void RetranslateUI();
@@ -89,6 +96,7 @@ private:
     // Fortune's Eden: which of Player 1's two sets of controls (normal or mouse) is shown.
     QComboBox* control_set_combo = nullptr;
     bool showing_mouse_set = false;
+    bool wanted_mouse_set = false; // The set the page on screen asks for
     bool control_sets_finished = false;
 
     Core::System& system;

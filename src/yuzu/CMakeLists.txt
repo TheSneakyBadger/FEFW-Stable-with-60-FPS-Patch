@@ -89,6 +89,8 @@ add_executable(yuzu
     configuration/configure_hotkeys.h
     configuration/configure_hotkeys.ui
     configuration/configure_input.cpp
+    configuration/configure_mouse_mode.cpp
+    configuration/configure_mouse_mode.h
     configuration/configure_input.h
     configuration/configure_input.ui
     configuration/configure_input_advanced.cpp
