@@ -106,6 +106,12 @@ struct ImageBase {
     VAddr cpu_addr_end = 0;
 
     u64 modification_tick = 0;
+    /// Tick of the latest CPU write: an upload of that data is as new as the write, not newer.
+    u64 cpu_modification_tick = 0;
+    /// Fortune's Eden: frames of the last GPU write and the last use (see the cleanup's
+    /// drawn-once rule in RunGarbageCollector).
+    u64 last_gpu_write_frame = 0;
+    u64 last_used_frame = 0;
     size_t lru_index = SIZE_MAX;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};

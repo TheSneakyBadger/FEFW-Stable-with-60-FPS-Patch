@@ -27,6 +27,7 @@ private:
     FileSys::VirtualFile backend;
     /// Sorted, merged byte ranges of the RomFS's per-scene map files (empty: not tracked).
     std::shared_ptr<const std::vector<std::pair<u64, u64>>> map_ranges;
+    std::shared_ptr<const std::vector<std::pair<u64, u64>>> battle_ranges;
 
     Result Read(
         OutBuffer<BufferAttr_HipcMapAlias | BufferAttr_HipcMapTransferAllowsNonSecure> out_bytes,

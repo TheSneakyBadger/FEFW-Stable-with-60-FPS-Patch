@@ -475,6 +475,8 @@ struct Values {
                                                         Specialization::Scalar,
                                                         true,
                                                         true};
+    // Mouse mode: the wheel zooms battle maps (holds the left stick up or down for a moment).
+    Setting<bool> fefw_mouse_wheel_zoom{linkage, true, "fefw_mouse_wheel_zoom", Category::Controls};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",
