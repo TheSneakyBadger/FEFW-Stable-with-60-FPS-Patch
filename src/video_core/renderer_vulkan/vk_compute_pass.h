@@ -170,9 +170,17 @@ public:
     void Encode(VkImageView source, u32 width, u32 height, u32 layers, bool bc3, VkBuffer buffer,
                 VkDeviceSize buffer_offset, VkDeviceSize buffer_size, VkDeviceSize out_offset);
 
+    /// Whether it encodes BC7: asked for BC7, it falls back to BC1/BC3 when the driver doesn't
+    /// build the BC7 converter in time (#65).
+    bool IsBc7() const noexcept {
+        return bc7;
+    }
+
 private:
     Scheduler& scheduler;
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
+    bool bc7;
+    vk::ShaderModule encoder_module;
 };
 
 class BlockLinearUnswizzle3DPass final : public ComputePass {

@@ -13,6 +13,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1151,7 +1152,8 @@ void UpdateRescalingInfo();
 /// CPU would re-compress them) uncompressed where the emulator may use about 15 GB of video memory
 /// (memory_limit_bytes, 0 when unknown, which picks BC3) below 1.5x resolution (and at 1x with the
 /// ultrawide patch), BC3 otherwise. Logs the choice.
-void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode = false);
+void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode = false,
+                              std::string_view gpu_driver = {});
 
 /// Whether ASTC may be re-compressed to BC1/BC3 on the GPU (Vulkan, ASTC decoding on the GPU).
 /// EDEN_GPU_BCN_TRANSCODE=0 turns it off, for comparisons.
@@ -1178,6 +1180,14 @@ AstcRecompression EffectiveAstcRecompression();
 /// Whether ASTC textures the effective setting makes BC3 are made BC7 instead (same size): when
 /// they are re-compressed on the GPU (Auto). Decided with EffectiveAstcRecompression.
 bool AstcRecompressesToBc7();
+
+/// Called once the game has drawn its first frames with BC7, or stopped normally: the next start
+/// keeps it.
+void MarkAstcBc7Working(bool log = true);
+
+/// The BC7 converter couldn't be built: ASTC textures go to BC3 from now on (this start, and the
+/// later ones until Fortune's Eden is updated). Called before any texture is made.
+void TurnOffAstcBc7();
 
 // Restore the global state of all applicable settings in the Values struct
 void RestoreGlobalState(bool is_powered_on);
