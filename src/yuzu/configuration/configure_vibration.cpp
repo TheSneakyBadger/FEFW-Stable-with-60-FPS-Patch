@@ -59,7 +59,12 @@ ConfigureVibration::ConfigureVibration(QWidget* parent, Core::HID::HIDCore& hid_
         }
     });
     ui->verticalLayout->addWidget(hd_rumble_button);
+#ifdef _WIN32
     hd_rumble_button->setVisible(InputCommon::IsRenHDrumBuilt());
+#else
+    // Fortune's Eden ships renhdrum.dll for Windows only
+    hd_rumble_button->setVisible(false);
+#endif
 
     RetranslateUI();
 }

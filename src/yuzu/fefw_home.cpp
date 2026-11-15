@@ -269,8 +269,13 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         column->addWidget(paper_white);
         buttons->addLayout(column);
     }
+#ifdef _WIN32
     buttons->addSpacing(6);
     buttons->addLayout(captioned(tr("Experimental"), hd_rumble_box));
+#else
+    // RenHDrum ships for Windows only (renhdrum.dll); other builds keep the standard rumble.
+    hd_rumble_box->hide();
+#endif
     buttons->addSpacing(10);
     buttons->addLayout(captioned(tr("Upscaler"), upscaler_box));
     buttons->addLayout(captioned(tr("Upscaler quality"), quality_box));
