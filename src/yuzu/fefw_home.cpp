@@ -217,8 +217,9 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     hd_rumble_box->setObjectName(QStringLiteral("fefwHome60"));
     hd_rumble_box->setCursor(Qt::PointingHandCursor);
     hd_rumble_box->setToolTip(
-        tr("Experimental: RenHDrum's HD Rumble for the Switch Pro Controller and Joy-Con (and "
-           "haptics for DualSense, rumble for Xbox controllers), closer to a real Switch. Off: "
+        tr("Experimental: RenHDrum's HD Rumble for the Switch Pro Controller and Joy-Con, with "
+           "haptics for DualSense, rumble for Xbox controllers and the grips of the Steam "
+           "Controller (2026), closer to a real Switch. Off: "
            "the standard rumble. Takes effect for controllers connected after it is changed, "
            "or after restarting Fortune's Eden. Its options are in Settings > Controls > "
            "Vibration > HD Rumble."));
