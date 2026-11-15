@@ -155,12 +155,14 @@ private:
     MemoryAllocator& memory_allocator;
 };
 
-/// Compresses an RGBA8 image level to BC1 or BC3 blocks in a buffer (bc_encoder.comp).
+/// Compresses an RGBA8 image level to BC1 or BC3 blocks (bc_encoder.comp), or with bc7 to BC7
+/// blocks (bc7_encoder.comp, `bc3` then ignored), in a buffer.
 class BcEncoderPass final : public ComputePass {
 public:
     explicit BcEncoderPass(const Device& device_, Scheduler& scheduler_,
                            DescriptorPool& descriptor_pool_,
-                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_);
+                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                           bool bc7 = false);
     ~BcEncoderPass();
 
     /// Encodes every layer of one level (`source` is its RGBA8 storage view) into `buffer`,

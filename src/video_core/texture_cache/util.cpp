@@ -957,6 +957,8 @@ void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8
             // BC3 uses 1 byte per texel
             const auto compress = recompression_setting == Settings::AstcRecompression::Bc1
                                       ? Tegra::Texture::BCN::CompressBC1
+                                  : Settings::AstcRecompressesToBc7()
+                                      ? Tegra::Texture::BCN::CompressBC7
                                       : Tegra::Texture::BCN::CompressBC3;
             const auto bpp_div = recompression_setting == Settings::AstcRecompression::Bc1 ? 2 : 1;
 
