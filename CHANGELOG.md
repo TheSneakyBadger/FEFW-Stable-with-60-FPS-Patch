@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.8.9
+
+A fix for broken textures and flashes that v1.6.8.8 brought in.
+
+#### 🔧 Fixes
+
+- **No more broken textures or flashes after a few minutes in the same place** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)). v1.6.8.8 cleared out graphics data unused for 5 minutes, and some of what it cleared had been drawn by the game itself. It came back wrong: broken textures when selecting units, texture errors on the world map and in caves, dungeon floors flashing blue, or a bright white flash. That clean-up is gone. Graphics memory is still freed at every loading screen, so the #55 fix stays.
+
+Everything else is as in [v1.6.8.8](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.8).
+
 ## v1.6.8.8
 
 Steady frame generation in busy battles, smooth play map after map, and the Discord setting you can actually reach.
