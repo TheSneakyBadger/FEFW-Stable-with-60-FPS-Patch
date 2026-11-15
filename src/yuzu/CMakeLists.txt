@@ -520,7 +520,3 @@ if (ENABLE_RENHDRUM AND RENHDRUM_DOWNLOAD AND WIN32 AND ARCHITECTURE_x86_64)
             VERBATIM)
     endif()
 endif()
-    add_custom_command(TARGET yuzu POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RENHDRUM_DLL}" "$<TARGET_FILE_DIR:yuzu>"
-        VERBATIM)
-endif()
