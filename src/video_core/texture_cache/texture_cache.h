@@ -503,20 +503,6 @@ void TextureCache<P>::TickFrame() {
             scene_load.active = false;
         }
     }
-    // And whatever no load caught: every 30 s, images unused for 5 minutes go, as after a
-    // loading screen, however much video memory is free. On a 16 GB card the usual cleanup never
-    // got past its minimum level, so earlier maps' textures stayed all session (#55).
-    {
-        static constexpr u64 AGE_FRAMES = 5 * 60 * 60;
-        if (frame_tick % 1800 == 0 && frame_tick > AGE_FRAMES && !scene_load.active) {
-            scene_sweep_below = frame_tick - AGE_FRAMES;
-            scene_sweep_is_age = true;
-            const u32 freed = RunGarbageCollector();
-            if (freed != 0) {
-                collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
-            }
-        }
-    }
     if (total_used_memory > minimum_memory &&
         (frame_tick >= collect_quiet_until || total_used_memory >= critical_memory)) {
         const u32 freed = RunGarbageCollector();
