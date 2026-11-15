@@ -2,7 +2,7 @@
 
 ## v1.7.1
 
-A Mouse mode page in Settings, a scroll wheel that only zooms where it should, and fixes for a black sky, long-session stutters and textures the game rewrites.
+A fix for v1.7 not starting on some AMD cards, a Mouse mode page in Settings, a scroll wheel that only zooms where it should, and fixes for a black sky, long-session stutters and textures the game rewrites.
 
 #### 🖱️ Mouse mode
 
@@ -16,6 +16,7 @@ A Mouse mode page in Settings, a scroll wheel that only zooms where it should, a
 
 #### 🔧 Fixes
 
+- **No more hang at game start on some AMD cards** ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)). v1.7 converts textures to BC7 with a converter the graphics driver builds as the game starts, and on some AMD drivers that build never finished. If it isn't ready within 10 seconds, Fortune's Eden now uses BC3 (as v1.6.8.9 did) and the game starts; it remembers that, and tries BC7 again after a driver or Fortune's Eden update.
 - **Dagsion's sky no longer turns black after time in menus** ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)). The sky is drawn once and then kept in use; while a shop or other menu covered the screen for a minute, graphics memory cleanup freed it. Anything drawn in the current scene is now kept until the next loading screen.
 - **No more stutters building up over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). When there was nothing to clean up, the graphics memory cleanup still ran every frame, and each run got slower as the session went on (on a 12 GB card, from 37 ms a minute to 940 ms a minute after 18 minutes). It now waits half a second after a run that found nothing.
 - **Textures the game rewrites no longer come back wrong** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)). When the game rewrote a texture after the graphics card had drawn into it, an older drawn copy could win over the new data. Whichever was written last now wins. Ported from Eglantine (kraibse).

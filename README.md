@@ -26,6 +26,7 @@ It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns
 ## What's new in v1.7.1
 
 - **Mouse mode has its own page in Settings** (*Configure → Mouse mode*): sensitivity, whether the scroll wheel zooms battle maps, and the controls used in mouse mode. The wheel now only zooms on battle maps instead of walking you around elsewhere, and WASD works in mouse mode with a controller set up.
+- **No more hang at game start on some AMD cards** ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)): if the graphics driver can't build the BC7 texture converter within 10 seconds, textures go to BC3 and the game starts.
 - **Dagsion's sky no longer turns black after time in menus** ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)), **stutters no longer build up over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and **textures the game rewrites no longer come back wrong** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
 - **Kompas9's ultrawide v1.2:** the Stats page radar charts sit inside the 16:9 area.
 
