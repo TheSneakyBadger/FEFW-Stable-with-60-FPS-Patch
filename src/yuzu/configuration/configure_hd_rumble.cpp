@@ -35,9 +35,10 @@ QLabel* MakeNote(const QString& text) {
 
 ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("HD Rumble"));
-    setMinimumSize(640, 460);
+    setMinimumSize(460, 200);
 
     auto* root = new QVBoxLayout(this);
+    root->setSpacing(10);
 
     // Header: master switch
     auto* header = new QHBoxLayout;
@@ -60,6 +61,52 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
         root->addWidget(missing);
     }
 
+    // Supported controllers, the one attached right now marked "(connected)". DualSense and Xbox
+    // have their own switch; the Switch controllers follow the master switch.
+    const int connected = InputCommon::GetRenHDrumConnectedKind();
+    {
+        const auto row = [&](int kind, const QString& name, const QString& note,
+                             QCheckBox** box) {
+            const QString text = connected == kind ? tr("%1 (connected)").arg(name) : name;
+            auto* card = new QGroupBox;
+            auto* col = new QVBoxLayout(card);
+            col->setSpacing(4);
+            if (box) {
+                *box = new QCheckBox(text);
+                col->addWidget(*box);
+            } else {
+                auto* label = new QLabel(text);
+                label->setStyleSheet(QStringLiteral("font-weight: bold;"));
+                col->addWidget(label);
+            }
+            // Readable text in the theme's own colour, indented under the name / check box
+            auto* label = new QLabel(note);
+            label->setWordWrap(true);
+            label->setContentsMargins(box ? 26 : 0, 0, 0, 0);
+            col->addWidget(label);
+            root->addWidget(card);
+        };
+        row(0, tr("Switch Pro Controller / Joy-Con"),
+            tr("HD Rumble with full detail, wired (USB) or Bluetooth. Follows the switch above."),
+            nullptr);
+        row(1, tr("DualSense / DualSense Edge"),
+            tr("Haptic voice coils, wired (USB) or Bluetooth. Off: the standard rumble."),
+            &ds_simple);
+        row(2, tr("Xbox and Xbox-style controllers"),
+            tr("RenHDrum's Xbox rumble. Off: the emulator's standard rumble."), &xbox_simple);
+        row(3, tr("Steam Controller (2026): grips, experimental"),
+            tr("Both grip motors play HD Rumble. Follows the switch above."), nullptr);
+    }
+
+    // Tuning widgets: all still built, but shown only when hd_rumble_advanced is set by hand in
+    // qt-config.ini. Otherwise the driver ignores these settings (built-in defaults).
+    advanced = Settings::values.hd_rumble_advanced.GetValue();
+    auto* advanced_box = new QWidget;
+    auto* adv = new QVBoxLayout(advanced_box);
+    adv->setContentsMargins(0, 0, 0, 0);
+    advanced_box->setVisible(advanced);
+    root->addWidget(advanced_box, 1);
+
     // Intensity: all controllers. Saved per game when the game has its own value.
     auto* gain_row = new QHBoxLayout;
     gain_slider = new QSlider(Qt::Horizontal);
@@ -73,7 +120,7 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     gain_row->addWidget(gain_slider, 1);
     gain_row->addWidget(gain);
     gain_row->addWidget(new QLabel(QStringLiteral("%")));
-    root->addLayout(gain_row);
+    adv->addLayout(gain_row);
 
     auto* boost_row = new QHBoxLayout;
     boost_slider = new QSlider(Qt::Horizontal);
@@ -89,9 +136,9 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     boost_row->addWidget(boost_slider, 1);
     boost_row->addWidget(boost);
     boost_row->addWidget(new QLabel(QStringLiteral("%")));
-    root->addLayout(boost_row);
+    adv->addLayout(boost_row);
     const bool per_game = !Settings::values.hd_rumble_gain.UsingGlobal();
-    root->addWidget(MakeNote(
+    adv->addWidget(MakeNote(
         per_game ? tr("Intensity: this game has its own value, and changes here apply to it.")
                  : tr("Intensity multiplies the game's rumble. Some Switch 2 games (Ocarina of "
                       "Time) send very weak values that the Joy-Con 2 still plays strongly: "
@@ -110,7 +157,6 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     pages->addWidget(CreateXboxPage());
     connect(page_list, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
     // Open on the page of the controller in use, marked as connected
-    const int connected = InputCommon::GetRenHDrumConnectedKind();
     if (connected >= 0 && connected < page_list->count()) {
         auto* item = page_list->item(connected);
         item->setText(tr("%1 (connected)").arg(item->text()));
@@ -118,9 +164,9 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     page_list->setCurrentRow(connected >= 0 ? connected : 0);
     body->addWidget(page_list);
     body->addWidget(pages, 1);
-    root->addLayout(body, 1);
+    adv->addLayout(body, 1);
 
-    root->addWidget(MakeNote(
+    adv->addWidget(MakeNote(
         tr("Changes reach connected controllers on their next vibration. To feel them now, open "
            "the Vibration settings and hold a button on the controller.")));
 
@@ -133,6 +179,7 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, this,
             &ConfigureHdRumble::RestoreDefaults);
+    buttons->button(QDialogButtonBox::RestoreDefaults)->setVisible(advanced);
     footer->addWidget(credit);
     footer->addStretch();
     footer->addWidget(buttons);
@@ -146,6 +193,11 @@ ConfigureHdRumble::ConfigureHdRumble(QWidget* parent) : QDialog(parent) {
     connect(envelope_5ms, &QCheckBox::toggled, this, &ConfigureHdRumble::UpdateEnabledState);
 
     LoadConfiguration();
+    // The two per-controller switches in the simple view mirror the ones in the (hidden) pages
+    ds_simple->setChecked(ds_enabled->isChecked());
+    xbox_simple->setChecked(xbox_enabled->isChecked());
+    connect(ds_simple, &QCheckBox::toggled, ds_enabled, &QCheckBox::setChecked);
+    connect(xbox_simple, &QCheckBox::toggled, xbox_enabled, &QCheckBox::setChecked);
 }
 
 ConfigureHdRumble::~ConfigureHdRumble() = default;
@@ -178,12 +230,18 @@ QWidget* ConfigureHdRumble::CreateSwitchPage() {
     bt_level->addItem(tr("1 - Stable (60 ms)"), 1);
     bt_level->addItem(tr("2 - Balanced (45 ms)"), 2);
     bt_level->addItem(tr("3 - Quality (35 ms)"), 3);
+    bt_level->addItem(tr("4 - Compatible (32 ms)"), 4);
     bt_level->setToolTip(tr("Lower levels send less often, which keeps input lag down on a busy "
                             "Bluetooth link."));
     bt_after_input = new QCheckBox(tr("Send right after an input report"));
-    bt_fast = new QCheckBox(tr("5 ms envelope while the link is idle"));
+    bt_fast = new QCheckBox(tr("Detailed Bluetooth rumble (5 ms)"));
+    bt_fast->setToolTip(
+        tr("Most detailed. When off, or when SDL cannot do it, Compatible mode is used."));
     bt_crisp_notes = new QCheckBox(tr("Crisp notes"));
-    bt->addRow(tr("Level"), bt_level);
+    auto* bt_level_label = new QLabel(tr("Level"));
+    bt->addRow(bt_level_label, bt_level);
+    bt_level_label->setVisible(false);
+    bt_level->setVisible(false);
     bt->addRow(bt_after_input);
     bt->addRow(bt_fast);
     bt->addRow(bt_crisp_notes);
@@ -338,7 +396,7 @@ void ConfigureHdRumble::LoadConfiguration() {
     envelope_5ms->setChecked(s.hd_rumble_envelope_5ms.GetValue());
     frequency_in_packet->setChecked(s.hd_rumble_frequency_in_packet.GetValue());
     crisp_notes->setChecked(s.hd_rumble_crisp_notes.GetValue());
-    bt_level->setCurrentIndex(std::clamp(s.hd_rumble_bluetooth_level.GetValue(), 1, 3) - 1);
+    bt_level->setCurrentIndex(std::clamp(s.hd_rumble_bluetooth_level.GetValue(), 1, 4) - 1);
     bt_after_input->setChecked(s.hd_rumble_bt_after_input.GetValue());
     bt_fast->setChecked(s.hd_rumble_bt_fast.GetValue());
     bt_crisp_notes->setChecked(s.hd_rumble_bt_crisp_notes.GetValue());
@@ -363,7 +421,7 @@ void ConfigureHdRumble::RestoreDefaults() {
     envelope_5ms->setChecked(true);
     frequency_in_packet->setChecked(true);
     crisp_notes->setChecked(true);
-    bt_level->setCurrentIndex(2);
+    bt_level->setCurrentIndex(3);
     bt_after_input->setChecked(true);
     bt_fast->setChecked(true);
     bt_crisp_notes->setChecked(true);
@@ -383,6 +441,8 @@ void ConfigureHdRumble::UpdateEnabledState() {
     const bool on = hd_enabled->isChecked();
     pages->setEnabled(on);
     page_list->setEnabled(on);
+    ds_simple->setEnabled(on);
+    xbox_simple->setEnabled(on);
     // The extra wired cards only run on top of the 5 ms envelope
     frequency_in_packet->setEnabled(envelope_5ms->isChecked());
     crisp_notes->setEnabled(envelope_5ms->isChecked());
@@ -405,6 +465,11 @@ void ConfigureHdRumble::ApplyConfiguration() {
     auto& s = Settings::values;
     const bool on = hd_enabled->isChecked();
     s.hd_rumble_enabled.SetValue(on);
+    s.dualsense_haptics_enabled.SetValue(ds_enabled->isChecked());
+    s.xbox_rumble_enabled.SetValue(xbox_enabled->isChecked());
+    if (!advanced) {
+        return; // tuning values are not shown, leave them as they are
+    }
     s.hd_rumble_gain.SetValue(gain->value());
     s.hd_rumble_low_boost.SetValue(boost->value());
     s.hd_rumble_usb_interval_ms.SetValue(usb_interval->value());
