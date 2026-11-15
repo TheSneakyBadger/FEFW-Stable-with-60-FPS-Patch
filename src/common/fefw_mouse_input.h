@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <mutex>
 
+#include "common/fefw_scene_load.h"
+
 // Fortune's Eden mouse mode: the frontend locks the PC cursor in the middle of the game window and
 // hands over how far the mouse moved (as fractions of the window) and wheel turns (Qt's 120 per
 // notch). The HID service takes them when it builds the Joy-Con mouse samples.
@@ -24,8 +26,8 @@ struct Pending {
 namespace Detail {
 inline std::mutex mutex;
 inline Pending pending;
-// Fortune's Weave zooms with the left stick (up/down), not a wheel: each wheel notch holds the
-// stick up or down for a moment.
+// Fortune's Weave zooms battle maps with the left stick (up/down), not a wheel: each wheel notch
+// holds the stick up or down for a moment, on battle maps only.
 inline std::atomic<std::int64_t> wheel_stick_until_ns{0};
 inline std::atomic<int> wheel_stick_direction{0};
 
@@ -65,9 +67,11 @@ inline void AddWheel(int x, int y) {
     Detail::wheel_stick_until_ns.store(std::min(until + add, now + max_ns));
 }
 
-/// The left stick's Y while a wheel turn is being played back (0 when none): +32767 up.
+/// The left stick's Y while a wheel turn is being played back (0 when none): +32767 up. Only on
+/// battle maps: everywhere else the left stick walks, so the wheel does nothing there.
 inline int WheelStickY() {
-    if (Detail::NowNs() >= Detail::wheel_stick_until_ns.load()) {
+    if (Detail::NowNs() >= Detail::wheel_stick_until_ns.load() ||
+        !Common::FefwSceneLoad::in_battle_map.load(std::memory_order_relaxed)) {
         return 0;
     }
     return Detail::wheel_stick_direction.load() * 32767;

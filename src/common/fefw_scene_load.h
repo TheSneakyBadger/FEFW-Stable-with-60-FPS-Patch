@@ -14,4 +14,8 @@ namespace Common::FefwSceneLoad {
 
 inline std::atomic<u64> map_bytes_read{0};
 
+// Whether the scene on screen is a battle map (its map data, under romfs Map/Btl, is what the game
+// read last). Mouse mode's wheel zooms only there (see FefwMouseInput::WheelStickY).
+inline std::atomic<bool> in_battle_map{false};
+
 } // namespace Common::FefwSceneLoad
