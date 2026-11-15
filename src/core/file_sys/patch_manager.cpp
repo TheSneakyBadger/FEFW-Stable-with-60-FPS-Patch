@@ -558,7 +558,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
     // The built-in ultrawide patch (setting fefw_ultrawide), before any mod folder's patches. It
     // writes fixed bytes, so the same patch also present as a mod folder changes nothing more.
     if (Settings::values.fefw_ultrawide.GetValue() && build_id == FefwUltrawide::MainBuildId) {
-        LOG_INFO(Loader, "    - Applying the built-in ultrawide patch (Kompas9, v1.1)");
+        LOG_INFO(Loader, "    - Applying the built-in ultrawide patch (Kompas9, v1.2)");
         const auto patch = std::make_shared<VectorVfsFile>(
             std::vector<u8>(FefwUltrawide::Ips.begin(), FefwUltrawide::Ips.end()), "ultrawide.ips");
         const auto patched = PatchIPS(std::make_shared<VectorVfsFile>(out), patch);

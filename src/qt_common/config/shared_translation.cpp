@@ -153,7 +153,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, fsr_sharpening_slider, tr("FSR Sharpness:"),
            tr("Determines how sharpened the image will look using FSR's or SGSR's dynamic contrast."));
     INSERT(Settings, fefw_ultrawide, tr("Ultrawide 3440x1440 (21:9) for Fortune's Weave"),
-           tr("Kompas9's ultrawide patch (v1.1, MIT): widens the 3D camera to 3440x1440 and keeps "
+           tr("Kompas9's ultrawide patch (v1.2, MIT): widens the 3D camera to 3440x1440 and keeps "
               "the HUD, menus and movies centred at 16:9, and stretches the picture to the window. "
               "For 21:9 monitors only; play fullscreen.\nOnly for game version 1.1.0. Takes effect "
               "when the game starts."));
