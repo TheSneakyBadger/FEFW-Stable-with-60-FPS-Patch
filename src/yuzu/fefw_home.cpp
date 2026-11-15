@@ -212,6 +212,17 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
                                  "and movies kept at 16:9. For 21:9 monitors only; play "
                                  "fullscreen. Game version 1.1.0 only. Takes effect when the game "
                                  "starts."));
+    // RenHDrum HD Rumble (experimental, off by default; also in Controls > Vibration).
+    hd_rumble_box = new QCheckBox(tr("HD Rumble"), card);
+    hd_rumble_box->setObjectName(QStringLiteral("fefwHome60"));
+    hd_rumble_box->setCursor(Qt::PointingHandCursor);
+    hd_rumble_box->setToolTip(
+        tr("Experimental: RenHDrum's HD Rumble for the Switch Pro Controller and Joy-Con (and "
+           "haptics for DualSense, rumble for Xbox controllers), closer to a real Switch. Off: "
+           "the standard rumble. Takes effect for controllers connected after it is changed, "
+           "or after restarting Fortune's Eden. Its options are in Settings > Controls > "
+           "Vibration > HD Rumble."));
+    hd_rumble_box->setChecked(Settings::values.hd_rumble_enabled.GetValue());
     paper_white = new QSlider(Qt::Horizontal, card);
     paper_white->setRange(80, 500);
     paper_white->setSingleStep(10);
@@ -257,6 +268,8 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
         column->addWidget(paper_white);
         buttons->addLayout(column);
     }
+    buttons->addSpacing(6);
+    buttons->addLayout(captioned(tr("Experimental"), hd_rumble_box));
     buttons->addSpacing(10);
     buttons->addLayout(captioned(tr("Upscaler"), upscaler_box));
     buttons->addLayout(captioned(tr("Upscaler quality"), quality_box));
@@ -354,6 +367,12 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
             emit SettingChanged();
         }
     });
+    connect(hd_rumble_box, &QCheckBox::toggled, this, [this](bool checked) {
+        if (Settings::values.hd_rumble_enabled.GetValue() != checked) {
+            Settings::values.hd_rumble_enabled.SetValue(checked);
+            emit SettingChanged();
+        }
+    });
     connect(paper_white, &QSlider::valueChanged, this, [this](int value) {
         paper_white_label->setText(tr("Paper white: %1 nits").arg(value));
         Settings::values.hdr_paper_white.SetValue(value);
@@ -442,6 +461,8 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker hdr_blocker{hdr_box};
     hdr_box->setChecked(Settings::values.hdr_output.GetValue());
     paper_white->setEnabled(hdr_box->isChecked());
+    const QSignalBlocker hd_rumble_blocker{hd_rumble_box};
+    hd_rumble_box->setChecked(Settings::values.hd_rumble_enabled.GetValue());
     const QSignalBlocker paper_white_blocker{paper_white};
     paper_white->setValue(Settings::values.hdr_paper_white.GetValue());
     paper_white_label->setText(tr("Paper white: %1 nits").arg(paper_white->value()));

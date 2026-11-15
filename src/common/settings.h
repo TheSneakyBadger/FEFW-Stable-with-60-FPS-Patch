@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -895,9 +896,11 @@ struct Values {
                                                        Category::Controls};
 
     // RenHDrum HD Rumble (Switch Pro Controller / Joy-Con) and DualSense haptics. Defaults are
-    // Ryuhdr 0.2.6's recommended mode. Read by the SDL driver on every vibration, so a change in
-    // the HD Rumble dialog applies to connected controllers right away.
-    Setting<bool> hd_rumble_enabled{linkage, true, "hd_rumble_enabled", Category::Controls};
+    // Ryuhdr 0.2.6's recommended mode. Fortune's Eden: experimental and off by default (the
+    // toggle is on the main window). While it is off renhdrum.dll is not loaded and controllers
+    // keep the standard rumble; switching it on takes effect for controllers connected after
+    // that (or after restarting). The other settings are read on every vibration.
+    Setting<bool> hd_rumble_enabled{linkage, false, "hd_rumble_enabled", Category::Controls};
     // Amplitude gain in percent for everything RenHDrum plays. Switchable: some Switch 2 games
     // (Ocarina of Time) send amplitudes below 0.1 that the Joy-Con 2 still plays strongly.
     SwitchableSetting<int> hd_rumble_gain{linkage, 100, "hd_rumble_gain", Category::Controls};
@@ -1085,6 +1088,10 @@ struct Values {
 };
 
 extern Values values;
+
+// Switch 2 rumble Mode last sent by the guest (HID command 214): 2 = Mode 2, else 0. Written by
+// the HID service, read by the RenHDrum pad driver. Not a user setting.
+inline std::atomic<int> nx2_active_mode{0};
 
 constexpr u32 MIN_FRAME_GEN_MULTIPLIER = 2;
 constexpr u32 MAX_FRAME_GEN_MULTIPLIER = 4;

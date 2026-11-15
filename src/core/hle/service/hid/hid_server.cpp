@@ -1050,6 +1050,9 @@ Result IHidServer::SendNativeVibrationValues(
     if (diagnostic_batches++ < 8) LOG_INFO(Service_HID, "Native vibration batch flags={:#x}, aruid={}, handles={}, values={}",
              flags, aruid.pid, vibration_handles.size(), vibration_values.size());
     R_UNLESS(flags == 0 || flags == 2, IPC::ResultNotSupported);
+    // The Switch 2 rumble Mode reaches RenHDrum through the pad driver (RenHDrumPad reads it on
+    // each sample).
+    Settings::nx2_active_mode.store(flags == 2 ? 2 : 0, std::memory_order_relaxed);
     R_RETURN(SendVibrationValues(ClientAppletResourceUserId{aruid.pid}, vibration_handles, vibration_values));
 }
 
