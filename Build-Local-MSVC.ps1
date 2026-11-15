@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.6.8.6 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -433,7 +433,7 @@ Performance, Audio, Controls, Advanced); Game Settings only has the game's add-o
 Pick the resolution so the output matches your screen (1.5X for 4K).
 Only controls need setting: Emulation > Configure > Controls.
 The launch screen has the main ones beside Play: 60 FPS, Ultrawide, HDR (with paper white),
-Upscaler, Upscaler quality, Frame generation, and a button to the Performance page.
+HD Rumble, Upscaler, Upscaler quality, Frame generation, and a button to the Performance page.
 
 Upscaler: Emulation > Configure > Graphics > Upscaler. Takes effect when the game starts.
 - AMD FSR 3.1 (default, any card): replaces the game's own DLSS network, which takes work off
@@ -463,7 +463,33 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   it, then click "Download from NVIDIA" in the panel below the setting (NVIDIA's files aren't
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
+
+HD Rumble (experimental, off by default): tick HD Rumble on the launch screen, then restart
+Fortune's Eden (or reconnect the controller). The game's detailed vibration is played through
+RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switch Pro
+Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
+Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7:
+- HD Rumble (experimental, off by default): see above.
+- Lips render properly (#56, #49), along with other textures that keep separate masks in red,
+  green and blue. The game's ASTC textures are re-compressed on the graphics card to BC7
+  instead of BC3: the same video memory, and more accurate across the board.
+
+New in v1.6.8.9:
+- No more broken textures or flashes after a few minutes in the same place (#60).
+
+New in v1.6.8.8:
+- NVIDIA DLSS frame generation no longer drags busy battles below 60 FPS.
+- Performance no longer drops map after map (#55): textures from the previous map are freed.
+- Discord Rich Presence can be turned on: Configure > General > Discord.
+
+New in v1.6.8.7:
+- 60 FPS mode: menus, the map and teleports run at their normal speed again (#51).
+- Fixed AMD FSR 3.1 frame generation crashes (#52) and NVIDIA DLSS frame generation crashes
+  when the window changes size; AMD FSR 4 works at 2x resolution and above (#53).
+- Pausing (F4) no longer fast-forwards cutscenes (#54); games in very deep folders load (#48).
 
 New in v1.6.8.6:
 - 60 FPS mode: menus, windows and other UI animations, and the letters of spoken text, now

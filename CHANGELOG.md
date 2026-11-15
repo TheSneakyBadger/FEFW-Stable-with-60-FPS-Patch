@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.7
+
+HD Rumble for your controller (experimental), and lips that render properly.
+
+#### 🎮 HD Rumble (experimental)
+
+- **The game's detailed vibration on your controller.** Tick **HD Rumble** on the launch screen (beside HDR), then restart Fortune's Eden or reconnect your controller. Fortune's Weave sends fine-grained vibration, and [RenHDrum](https://github.com/trzz1214/RenHDrum) plays it as HD Rumble on a Switch Pro Controller or Joy-Con, as haptics on a DualSense, as rumble on Xbox controllers, and on the grips of the Steam Controller (2026, experimental). Off by default; with it off, rumble is the same as before. Windows only for now.
+
+#### 🎨 Graphics
+
+- **Lips render properly** ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)). The game's textures are stored as ASTC, which most PC graphics cards can't read, so Fortune's Eden re-compresses them on the graphics card. They used to go to BC3, which can't hold textures that keep separate masks in red, green and blue, such as the lips one. They now go to BC7: the same video memory, and more accurate across the board.
+
+Everything else is as in [v1.6.8.9](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.6.8.9).
+
+RenHDrum is by Three-Dola and contributors (MIT / Apache-2.0); Fortune's Eden uses its Eden integration by samaBR85.
+
 ## v1.6.8.9
 
 A fix for broken textures and flashes that v1.6.8.8 brought in.
