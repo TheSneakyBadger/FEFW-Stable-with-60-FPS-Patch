@@ -8,10 +8,11 @@
 // separate masks into R, G and B (Fortune's Weave's face masks) need that: in BC3 a block holding
 // red, green and black came out blocky (#56).
 //
-// Every block tries mode 6 (one RGBA line, 4-bit indices) first; blocks it doesn't fit well try
-// the multi-group modes, each partition shape scored by how far its groups sit from a line.
-// Endpoints come from each group's principal axis, refined by least squares. Values are encoded
-// as stored (sRGB data stays sRGB, like the BC3 path).
+// Every block tries mode 6 (one RGBA line, 4-bit indices) first. Blocks it doesn't fit well try
+// modes 1, 2 and 3 when opaque (the partition shape picked by grouping the texels by colour) or
+// 4 and 5 otherwise (the channel set apart picked by how well the rest fit a line). Kept cheap:
+// the first test build searched every shape and rotation and slowed loading screens. Values are
+// encoded as stored (sRGB data stays sRGB, like the BC3 path).
 
 #version 460 core
 
@@ -35,8 +36,9 @@ layout (push_constant) uniform PushConstants {
 // BEGIN BC7 CORE
 
 // Blocks whose mode 6 error (sum of squares over the 16 texels' channels) is at most this skip
-// the multi-group modes: a little quality for much less work on smooth blocks.
-const int SKIP_THRESHOLD = 300;
+// the other modes: the search for them is most of the work, and on the dumped textures 95% of
+// blocks stop here with little to gain.
+const int SKIP_THRESHOLD = 1000;
 
 const int WEIGHTS2[4] = int[4](0, 21, 43, 64);
 const int WEIGHTS3[8] = int[8](0, 9, 18, 27, 37, 46, 55, 64);
@@ -76,6 +78,27 @@ const int ANCHORS3B[64] = int[64](
     15, 3, 15, 10, 10, 8, 9, 10, 6, 15, 8, 15, 3, 6, 6, 8,
     15, 3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 3, 15, 15, 8);
 
+// The same shapes as bit masks of the texels in subset 1 (and, for three, subset 2 in the top
+// half), for matching shapes to clusters.
+const uint MASKS2[64] = uint[64](
+    0x0000CCCCu, 0x00008888u, 0x0000EEEEu, 0x0000ECC8u, 0x0000C880u, 0x0000FEECu, 0x0000FEC8u, 0x0000EC80u,
+    0x0000C800u, 0x0000FFECu, 0x0000FE80u, 0x0000E800u, 0x0000FFE8u, 0x0000FF00u, 0x0000FFF0u, 0x0000F000u,
+    0x0000F710u, 0x0000008Eu, 0x00007100u, 0x000008CEu, 0x0000008Cu, 0x00007310u, 0x00003100u, 0x00008CCEu,
+    0x0000088Cu, 0x00003110u, 0x00006666u, 0x0000366Cu, 0x000017E8u, 0x00000FF0u, 0x0000718Eu, 0x0000399Cu,
+    0x0000AAAAu, 0x0000F0F0u, 0x00005A5Au, 0x000033CCu, 0x00003C3Cu, 0x000055AAu, 0x00009696u, 0x0000A55Au,
+    0x000073CEu, 0x000013C8u, 0x0000324Cu, 0x00003BDCu, 0x00006996u, 0x0000C33Cu, 0x00009966u, 0x00000660u,
+    0x00000272u, 0x000004E4u, 0x00004E40u, 0x00002720u, 0x0000C936u, 0x0000936Cu, 0x000039C6u, 0x0000639Cu,
+    0x00009336u, 0x00009CC6u, 0x0000817Eu, 0x0000E718u, 0x0000CCF0u, 0x00000FCCu, 0x00007744u, 0x0000EE22u);
+const uint MASKS3[64] = uint[64](
+    0xF60008CCu, 0x73008CC8u, 0x3310CC80u, 0x00CEEC00u, 0xCC003300u, 0xCC0000CCu, 0x00CCFF00u, 0x3300CCCCu,
+    0xF0000F00u, 0xF0000FF0u, 0xFF0000F0u, 0x88884444u, 0x88886666u, 0xCCCC2222u, 0xEC80136Cu, 0x7310008Cu,
+    0xC80036C8u, 0x310008CEu, 0xCCC03330u, 0x0CCCF000u, 0xEE0000EEu, 0x77008888u, 0xCC0022C0u, 0x33004430u,
+    0x00CC0C22u, 0xFC880344u, 0x06606996u, 0x66009960u, 0xC88C0330u, 0xF9000066u, 0x0CC0C22Cu, 0x73108C00u,
+    0xEC801300u, 0x08CEC400u, 0xEC80004Cu, 0x44442222u, 0x0F0000F0u, 0x49242492u, 0x42942942u, 0x0C30C30Cu,
+    0x03C0C03Cu, 0xFF0000AAu, 0x5500AA00u, 0xCCCC3030u, 0x0C0CC0C0u, 0x66669090u, 0x0FF0A00Au, 0x5550AAA0u,
+    0xF0000AAAu, 0x0E0EE0E0u, 0x88887070u, 0x99906660u, 0xE00E0EE0u, 0x88880770u, 0xF0000666u, 0x99006600u,
+    0xFF000066u, 0xC00C0CC0u, 0xCCCC0330u, 0x90006000u, 0x08088080u, 0xEEEE1010u, 0xFFF0000Au, 0x731008CEu);
+
 /*private*/ int texel[16][4];
 
 struct Mode {
@@ -112,10 +135,15 @@ struct Bits {
 };
 
 void Put(inout Bits b, uint value, int count) {
-    for (int i = 0; i < count; ++i) {
-        b.w[b.pos >> 5] |= ((value >> uint(i)) & 1u) << uint(b.pos & 31);
-        ++b.pos;
+    // Fields are at most 8 bits, so one spans at most two words.
+    const int word = b.pos >> 5;
+    const int bit = b.pos & 31;
+    value &= (1u << uint(count)) - 1u;
+    b.w[word] |= value << uint(bit);
+    if (bit + count > 32) {
+        b.w[word + 1] |= value >> uint(32 - bit);
     }
+    b.pos += count;
 }
 
 int Weight(int ib, int j) {
@@ -153,12 +181,17 @@ int Interpolate(int e0, int e1, int w) {
 // Nearest cb-bit value to v (0-255) with p-bit p appended when pbits is 1.
 int Quantize(float v, int cb, int pbits, int p) {
     const int bits = cb + pbits;
-    const int target = int(round(v));
     const int top = (1 << cb) - 1;
+    if (bits == 8) {
+        // Stored as is (with the p-bit as its lowest bit): no search.
+        const float q = pbits != 0 ? (v - float(p)) * 0.5 : v;
+        return clamp(int(round(q)), 0, top);
+    }
+    const int target = int(round(v));
     const int guess = int(round(v / 255.0 * float(top)));
     int best = 0;
     int best_error = 1 << 30;
-    for (int q = max(0, guess - 2); q <= min(top, guess + 2); ++q) {
+    for (int q = max(0, guess - 1); q <= min(top, guess + 1); ++q) {
         const int x = pbits != 0 ? ((q << 1) | p) : q;
         const int d = Expand(x, bits) - target;
         if (d * d < best_error) {
@@ -186,28 +219,41 @@ void DecodeEndpoints(Mode m, Endpoints e, out int colour[8]) {
 }
 
 // Nearest palette entry for each texel of the subset (other texels keep their index); returns
-// the summed squared error.
+// the summed squared error. The texel's position along the endpoint line gives the entry, and
+// its neighbours are checked as the weights aren't quite even.
 int AssignIndices(Mode m, int colour[8], int shape, int sub, inout int idx[16]) {
-    const int n = 1 << m.ib;
+    const int top = (1 << m.ib) - 1;
     int palette[16][4];
-    for (int j = 0; j < n; ++j) {
+    for (int j = 0; j <= top; ++j) {
         const int w = Weight(m.ib, j);
         for (int c = 0; c < 4; ++c) {
             palette[j][c] = Interpolate(colour[c], colour[4 + c], w);
         }
     }
+    float d[4];
+    float len2 = 0.0;
+    for (int c = 0; c < 4; ++c) {
+        d[c] = float(colour[4 + c] - colour[c]);
+        len2 += d[c] * d[c];
+    }
+    const float scale = len2 > 0.0 ? float(top) / len2 : 0.0;
     int sse = 0;
     for (int i = 0; i < 16; ++i) {
         if (Subset(m.ns, shape, i) != sub) {
             continue;
         }
-        int best = 0;
+        float t = 0.0;
+        for (int c = 0; c < 4; ++c) {
+            t += float(texel[i][c] - colour[c]) * d[c];
+        }
+        const int guess = clamp(int(round(t * scale)), 0, top);
+        int best = guess;
         int best_error = 1 << 30;
-        for (int j = 0; j < n; ++j) {
+        for (int j = max(guess - 1, 0); j <= min(guess + 1, top); ++j) {
             int e = 0;
             for (int c = 0; c < 4; ++c) {
-                const int d = palette[j][c] - texel[i][c];
-                e += d * d;
+                const int diff = palette[j][c] - texel[i][c];
+                e += diff * diff;
             }
             if (e < best_error) {
                 best_error = e;
@@ -220,39 +266,47 @@ int AssignIndices(Mode m, int colour[8], int shape, int sub, inout int idx[16]) 
     return sse;
 }
 
-// The subset's principal axis through its mean, from the lowest to the highest projection.
+// The subset's line: through its mean along the covariance's row for its widest channel (near
+// enough the principal axis, without iterating), from the lowest to the highest projection.
 void FitLine(int ns, int shape, int sub, bool alpha, out float lo[4], out float hi[4]) {
-    float mean[4];
+    const int nc = alpha ? 4 : 3;
+    float sum[4];
+    float prod[10];
     for (int c = 0; c < 4; ++c) {
-        mean[c] = 0.0;
+        sum[c] = 0.0;
+    }
+    for (int c = 0; c < 10; ++c) {
+        prod[c] = 0.0;
     }
     int count = 0;
-    for (int i = 0; i < 16; ++i) {
-        if (Subset(ns, shape, i) == sub) {
-            for (int c = 0; c < 4; ++c) {
-                mean[c] += float(texel[i][c]);
-            }
-            ++count;
-        }
-    }
-    for (int c = 0; c < 4; ++c) {
-        mean[c] /= float(max(count, 1));
-    }
-    const int nc = alpha ? 4 : 3;
-    float cov[4][4];
-    for (int a = 0; a < 4; ++a) {
-        for (int b = 0; b < 4; ++b) {
-            cov[a][b] = 0.0;
-        }
-    }
     for (int i = 0; i < 16; ++i) {
         if (Subset(ns, shape, i) != sub) {
             continue;
         }
-        for (int a = 0; a < nc; ++a) {
-            for (int b = 0; b < nc; ++b) {
-                cov[a][b] += (float(texel[i][a]) - mean[a]) * (float(texel[i][b]) - mean[b]);
+        ++count;
+        int j = 0;
+        for (int a = 0; a < 4; ++a) {
+            const float va = float(texel[i][a]);
+            sum[a] += va;
+            for (int b = a; b < 4; ++b) {
+                prod[j] += va * float(texel[i][b]);
+                ++j;
             }
+        }
+    }
+    const float n = float(max(count, 1));
+    float mean[4];
+    for (int c = 0; c < 4; ++c) {
+        mean[c] = sum[c] / n;
+    }
+    float cov[4][4];
+    int k = 0;
+    for (int a = 0; a < 4; ++a) {
+        for (int b = a; b < 4; ++b) {
+            const float c = a < nc && b < nc ? prod[k] - sum[a] * sum[b] / n : 0.0;
+            cov[a][b] = c;
+            cov[b][a] = c;
+            ++k;
         }
     }
     float axis[4];
@@ -264,23 +318,6 @@ void FitLine(int ns, int shape, int sub, bool alpha, out float lo[4], out float 
     }
     for (int c = 0; c < 4; ++c) {
         axis[c] = c < nc ? cov[major][c] : 0.0;
-    }
-    for (int it = 0; it < 8; ++it) {
-        float t[4];
-        float l = 0.0;
-        for (int a = 0; a < 4; ++a) {
-            t[a] = 0.0;
-            for (int b = 0; b < nc; ++b) {
-                t[a] += cov[a][b] * axis[b];
-            }
-            l = max(l, abs(t[a]));
-        }
-        if (l < 1e-6) {
-            break;
-        }
-        for (int c = 0; c < 4; ++c) {
-            axis[c] = t[c] / l;
-        }
     }
     float len = 0.0;
     for (int c = 0; c < nc; ++c) {
@@ -320,172 +357,283 @@ void FitLine(int ns, int shape, int sub, bool alpha, out float lo[4], out float 
     }
 }
 
-// Quantises the line to the mode, trying its p-bit choices; returns the subset's error.
-int QuantizeSubset(Mode m, float lo[4], float hi[4], int shape, int sub,
-                   out Endpoints best, inout int idx[16]) {
+// How far an endpoint lands from v once quantised with p-bit p (squared, over its channels).
+float PbitError(Mode m, float v[4], int p) {
     const int pb = m.epb + m.spb;
-    const int combos = m.epb != 0 ? 4 : (m.spb != 0 ? 2 : 1);
-    // Opaque texels need p-bits of 1 to keep alpha exactly 255 (no faint see-through).
-    bool opaque = true;
-    if (m.ab != 0) {
-        for (int i = 0; i < 16; ++i) {
+    float e = 0.0;
+    for (int c = 0; c < 4; ++c) {
+        if (c == 3 && m.ab == 0) {
+            continue;
+        }
+        const int bits = c == 3 ? m.ab : m.cb;
+        const int q = Quantize(v[c], bits, pb, p);
+        const float diff = float(Expand((q << 1) | p, bits + pb)) - v[c];
+        e += diff * diff;
+    }
+    return e;
+}
+
+// Quantises the line to the mode, with the p-bits that land the endpoints nearest; returns the
+// subset's error.
+int QuantizeSubset(Mode m, float lo[4], float hi[4], int shape, int sub,
+                   out Endpoints e, inout int idx[16]) {
+    const int pb = m.epb + m.spb;
+    e.p[0] = 0;
+    e.p[1] = 0;
+    if (pb != 0) {
+        // Opaque texels need p-bits of 1 to keep alpha exactly 255 (no faint see-through).
+        bool opaque = m.ab != 0;
+        for (int i = 0; i < 16 && opaque; ++i) {
             if (Subset(m.ns, shape, i) == sub && texel[i][3] != 255) {
                 opaque = false;
             }
         }
-    }
-    int best_error = 1 << 30;
-    int trial[16];
-    for (int i = 0; i < 16; ++i) {
-        trial[i] = idx[i];
-    }
-    for (int k = 0; k < 4; ++k) {
-        if (k >= combos || (m.ab != 0 && opaque && k != combos - 1)) {
-            continue;
-        }
-        Endpoints e;
-        e.p[0] = k & 1;
-        e.p[1] = m.epb != 0 ? (k >> 1) : (k & 1);
-        for (int c = 0; c < 3; ++c) {
-            e.q[c] = Quantize(lo[c], m.cb, pb, e.p[0]);
-            e.q[4 + c] = Quantize(hi[c], m.cb, pb, e.p[1]);
-        }
-        e.q[3] = m.ab != 0 ? Quantize(lo[3], m.ab, pb, e.p[0]) : 0;
-        e.q[7] = m.ab != 0 ? Quantize(hi[3], m.ab, pb, e.p[1]) : 0;
-        int colour[8];
-        DecodeEndpoints(m, e, colour);
-        const int sse = AssignIndices(m, colour, shape, sub, trial);
-        if (sse < best_error) {
-            best_error = sse;
-            best = e;
-            for (int i = 0; i < 16; ++i) {
-                if (Subset(m.ns, shape, i) == sub) {
-                    idx[i] = trial[i];
-                }
-            }
+        if (opaque) {
+            e.p[0] = 1;
+            e.p[1] = 1;
+        } else if (m.epb != 0) {
+            e.p[0] = PbitError(m, lo, 1) < PbitError(m, lo, 0) ? 1 : 0;
+            e.p[1] = PbitError(m, hi, 1) < PbitError(m, hi, 0) ? 1 : 0;
+        } else {
+            const float e0 = PbitError(m, lo, 0) + PbitError(m, hi, 0);
+            const float e1 = PbitError(m, lo, 1) + PbitError(m, hi, 1);
+            e.p[0] = e1 < e0 ? 1 : 0;
+            e.p[1] = e.p[0];
         }
     }
-    return best_error;
-}
-
-// Least-squares endpoints for the subset's current indices.
-bool RefineLine(Mode m, int shape, int sub, int idx[16], out float lo[4], out float hi[4]) {
-    float aa = 0.0;
-    float ab = 0.0;
-    float bb = 0.0;
-    float ax[4];
-    float bx[4];
-    for (int c = 0; c < 4; ++c) {
-        ax[c] = 0.0;
-        bx[c] = 0.0;
+    for (int c = 0; c < 3; ++c) {
+        e.q[c] = Quantize(lo[c], m.cb, pb, e.p[0]);
+        e.q[4 + c] = Quantize(hi[c], m.cb, pb, e.p[1]);
     }
-    for (int i = 0; i < 16; ++i) {
-        if (Subset(m.ns, shape, i) != sub) {
-            continue;
-        }
-        const float w = float(Weight(m.ib, idx[i])) / 64.0;
-        const float a = 1.0 - w;
-        aa += a * a;
-        ab += a * w;
-        bb += w * w;
-        for (int c = 0; c < 4; ++c) {
-            ax[c] += a * float(texel[i][c]);
-            bx[c] += w * float(texel[i][c]);
-        }
-    }
-    const float det = aa * bb - ab * ab;
-    for (int c = 0; c < 4; ++c) {
-        lo[c] = 0.0;
-        hi[c] = 0.0;
-    }
-    if (abs(det) < 1e-6) {
-        return false;
-    }
-    for (int c = 0; c < 4; ++c) {
-        lo[c] = clamp((ax[c] * bb - bx[c] * ab) / det, 0.0, 255.0);
-        hi[c] = clamp((bx[c] * aa - ax[c] * ab) / det, 0.0, 255.0);
-    }
-    if (m.ab == 0) {
-        lo[3] = 255.0;
-        hi[3] = 255.0;
-    }
-    return true;
+    e.q[3] = m.ab != 0 ? Quantize(lo[3], m.ab, pb, e.p[0]) : 0;
+    e.q[7] = m.ab != 0 ? Quantize(hi[3], m.ab, pb, e.p[1]) : 0;
+    int colour[8];
+    DecodeEndpoints(m, e, colour);
+    return AssignIndices(m, colour, shape, sub, idx);
 }
 
 int EncodeSubset(Mode m, int shape, int sub, out Endpoints e, inout int idx[16]) {
     float lo[4];
     float hi[4];
     FitLine(m.ns, shape, sub, m.ab != 0, lo, hi);
-    int sse = QuantizeSubset(m, lo, hi, shape, sub, e, idx);
-    for (int it = 0; it < 2 && sse > 0; ++it) {
-        float lo2[4];
-        float hi2[4];
-        if (!RefineLine(m, shape, sub, idx, lo2, hi2)) {
-            break;
-        }
-        Endpoints e2;
-        int idx2[16];
-        for (int i = 0; i < 16; ++i) {
-            idx2[i] = idx[i];
-        }
-        const int sse2 = QuantizeSubset(m, lo2, hi2, shape, sub, e2, idx2);
-        if (sse2 >= sse) {
-            break;
-        }
-        sse = sse2;
-        e = e2;
-        for (int i = 0; i < 16; ++i) {
-            idx[i] = idx2[i];
-        }
-    }
-    return sse;
+    return QuantizeSubset(m, lo, hi, shape, sub, e, idx);
 }
 
-// How far the subset's texels sit from its principal line (squared), to rank partitions.
-float LineError(int ns, int shape, int sub, bool alpha) {
-    float lo[4];
-    float hi[4];
-    FitLine(ns, shape, sub, alpha, lo, hi);
-    const int nc = alpha ? 4 : 3;
-    float d[4];
-    float l2 = 0.0;
-    for (int c = 0; c < 4; ++c) {
-        d[c] = hi[c] - lo[c];
-        if (c < nc) {
-            l2 += d[c] * d[c];
+// How far texels sit from their principal line (squared), from their count, sums and sums of
+// products: the scatter left over once the variance along the line is taken out.
+float LineScatter(float n, float sum[4], float prod[10], int nc) {
+    if (n < 1.5) {
+        return 0.0;
+    }
+    float cov[4][4];
+    int k = 0;
+    for (int a = 0; a < 4; ++a) {
+        for (int b = a; b < 4; ++b) {
+            const float c = a < nc && b < nc ? prod[k] - sum[a] * sum[b] / n : 0.0;
+            cov[a][b] = c;
+            cov[b][a] = c;
+            ++k;
         }
     }
-    float error = 0.0;
+    float trace = 0.0;
+    int major = 0;
+    for (int c = 0; c < nc; ++c) {
+        trace += cov[c][c];
+        if (cov[c][c] > cov[major][major]) {
+            major = c;
+        }
+    }
+    float axis[4];
+    for (int c = 0; c < 4; ++c) {
+        axis[c] = cov[major][c];
+    }
+    for (int it = 0; it < 3; ++it) {
+        float t[4];
+        float l = 0.0;
+        for (int a = 0; a < 4; ++a) {
+            t[a] = cov[a][0] * axis[0] + cov[a][1] * axis[1] + cov[a][2] * axis[2] +
+                   cov[a][3] * axis[3];
+            l = max(l, abs(t[a]));
+        }
+        if (l < 1e-6) {
+            return 0.0;
+        }
+        for (int c = 0; c < 4; ++c) {
+            axis[c] = t[c] / l;
+        }
+    }
+    float num = 0.0;
+    float den = 0.0;
+    for (int a = 0; a < 4; ++a) {
+        float t = 0.0;
+        for (int b = 0; b < 4; ++b) {
+            t += cov[a][b] * axis[b];
+        }
+        num += axis[a] * t;
+        den += axis[a] * axis[a];
+    }
+    return max(trace - num / den, 0.0);
+}
+
+// The line scatter of one subset of a partition shape.
+float ShapeScatter(int ns, int shape, int sub, int nc) {
+    float n = 0.0;
+    float sum[4];
+    float prod[10];
+    for (int c = 0; c < 4; ++c) {
+        sum[c] = 0.0;
+    }
+    for (int c = 0; c < 10; ++c) {
+        prod[c] = 0.0;
+    }
     for (int i = 0; i < 16; ++i) {
         if (Subset(ns, shape, i) != sub) {
             continue;
         }
-        float v[4];
-        float t = 0.0;
-        for (int c = 0; c < nc; ++c) {
-            v[c] = float(texel[i][c]) - lo[c];
-            t += v[c] * d[c];
-        }
-        t = l2 > 0.0 ? clamp(t / l2, 0.0, 1.0) : 0.0;
-        for (int c = 0; c < nc; ++c) {
-            const float r = v[c] - t * d[c];
-            error += r * r;
+        n += 1.0;
+        int j = 0;
+        for (int a = 0; a < 4; ++a) {
+            const float va = float(texel[i][a]);
+            sum[a] += va;
+            for (int b = a; b < 4; ++b) {
+                prod[j] += va * float(texel[i][b]);
+                ++j;
+            }
         }
     }
-    return error;
+    return LineScatter(n, sum, prod, nc);
 }
 
+float Distance2(int i, float centre[4], int nc) {
+    float d2 = 0.0;
+    for (int c = 0; c < nc; ++c) {
+        const float d = float(texel[i][c]) - centre[c];
+        d2 += d * d;
+    }
+    return d2;
+}
+
+// The partition shape for ns subsets: the texels are split into ns groups by colour (k-means
+// from the ends of the block's line, and for three the texel farthest from both), the shapes
+// that match the groups best are short-listed, and of those the one whose subsets sit nearest
+// their lines wins. Scoring every shape by its lines cost the most of all the encoding.
 int BestPartition(int ns, bool alpha) {
-    int best = 0;
-    float best_error = 1e30;
-    for (int p = 0; p < 64; ++p) {
-        float e = 0.0;
+    const int nc = alpha ? 4 : 3;
+    float lo[4];
+    float hi[4];
+    FitLine(1, 0, 0, alpha, lo, hi);
+    float centre[3][4];
+    for (int c = 0; c < 4; ++c) {
+        centre[0][c] = lo[c];
+        centre[1][c] = hi[c];
+        centre[2][c] = 0.0;
+    }
+    if (ns == 3) {
+        float farthest = -1.0;
+        int pick = 0;
+        for (int i = 0; i < 16; ++i) {
+            const float d = min(Distance2(i, centre[0], nc), Distance2(i, centre[1], nc));
+            if (d > farthest) {
+                farthest = d;
+                pick = i;
+            }
+        }
+        for (int c = 0; c < 4; ++c) {
+            centre[2][c] = float(texel[pick][c]);
+        }
+    }
+    uint group[3];
+    for (int it = 0; it < 3; ++it) {
+        float sum[3][4];
+        float count[3];
+        for (int k = 0; k < 3; ++k) {
+            group[k] = 0u;
+            count[k] = 0.0;
+            for (int c = 0; c < 4; ++c) {
+                sum[k][c] = 0.0;
+            }
+        }
+        for (int i = 0; i < 16; ++i) {
+            int nearest = 0;
+            float nearest_d = Distance2(i, centre[0], nc);
+            for (int k = 1; k < ns; ++k) {
+                const float d = Distance2(i, centre[k], nc);
+                if (d < nearest_d) {
+                    nearest_d = d;
+                    nearest = k;
+                }
+            }
+            group[nearest] |= 1u << uint(i);
+            count[nearest] += 1.0;
+            for (int c = 0; c < 4; ++c) {
+                sum[nearest][c] += float(texel[i][c]);
+            }
+        }
         for (int k = 0; k < ns; ++k) {
-            e += LineError(ns, p, k, alpha);
+            if (count[k] > 0.0) {
+                for (int c = 0; c < 4; ++c) {
+                    centre[k][c] = sum[k][c] / count[k];
+                }
+            }
+        }
+    }
+    // Short-list: the 4 shapes covering the most texels with the groups (in the best order).
+    int list[4];
+    int list_score[4];
+    for (int k = 0; k < 4; ++k) {
+        list[k] = 0;
+        list_score[k] = -1;
+    }
+    for (int p = 0; p < 64; ++p) {
+        uint s[3];
+        if (ns == 2) {
+            s[1] = MASKS2[p];
+            s[0] = ~s[1] & 0xFFFFu;
+            s[2] = 0u;
+        } else {
+            s[1] = MASKS3[p] & 0xFFFFu;
+            s[2] = MASKS3[p] >> 16;
+            s[0] = ~(s[1] | s[2]) & 0xFFFFu;
+        }
+        int score;
+        if (ns == 2) {
+            score = max(bitCount(group[0] & s[0]) + bitCount(group[1] & s[1]),
+                        bitCount(group[0] & s[1]) + bitCount(group[1] & s[0]));
+        } else {
+            score = 0;
+            for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) {
+                    if (b == a) {
+                        continue;
+                    }
+                    const int c = 3 - a - b;
+                    score = max(score, bitCount(group[0] & s[a]) + bitCount(group[1] & s[b]) +
+                                           bitCount(group[2] & s[c]));
+                }
+            }
+        }
+        for (int k = 0; k < 4; ++k) {
+            if (score > list_score[k]) {
+                for (int j = 3; j > k; --j) {
+                    list[j] = list[j - 1];
+                    list_score[j] = list_score[j - 1];
+                }
+                list[k] = p;
+                list_score[k] = score;
+                break;
+            }
+        }
+    }
+    int best = list[0];
+    float best_error = 1e30;
+    for (int k = 0; k < 4; ++k) {
+        float e = 0.0;
+        for (int sub = 0; sub < ns; ++sub) {
+            e += ShapeScatter(ns, list[k], sub, nc);
         }
         if (e < best_error) {
             best_error = e;
-            best = p;
+            best = list[k];
         }
     }
     return best;
@@ -717,6 +865,71 @@ Result EncodeSeparate(int mode, int rotation, int idxsel) {
     return r;
 }
 
+// The rotation (0: alpha, 1-3: R, G or B) whose channel set apart leaves the other three
+// channels nearest a line.
+int BestRotation() {
+    float sum[4];
+    float prod[10];
+    for (int c = 0; c < 4; ++c) {
+        sum[c] = 0.0;
+    }
+    for (int c = 0; c < 10; ++c) {
+        prod[c] = 0.0;
+    }
+    for (int i = 0; i < 16; ++i) {
+        int j = 0;
+        for (int a = 0; a < 4; ++a) {
+            const float va = float(texel[i][a]);
+            sum[a] += va;
+            for (int b = a; b < 4; ++b) {
+                prod[j] += va * float(texel[i][b]);
+                ++j;
+            }
+        }
+    }
+    int best = 0;
+    float best_error = 1e30;
+    for (int rotation = 0; rotation < 4; ++rotation) {
+        const int apart = rotation == 0 ? 3 : rotation - 1;
+        // The other three channels' sums and products, in LineScatter's order.
+        int keep[3];
+        int n = 0;
+        for (int c = 0; c < 4; ++c) {
+            if (c != apart) {
+                keep[n] = c;
+                ++n;
+            }
+        }
+        float sub_sum[4];
+        float sub_prod[10];
+        for (int c = 0; c < 10; ++c) {
+            sub_prod[c] = 0.0;
+        }
+        sub_sum[3] = 0.0;
+        int k = 0;
+        for (int a = 0; a < 4; ++a) {
+            if (a < 3) {
+                sub_sum[a] = sum[keep[a]];
+            }
+            for (int b = a; b < 4; ++b) {
+                if (a < 3 && b < 3) {
+                    const int x = min(keep[a], keep[b]);
+                    const int y = max(keep[a], keep[b]);
+                    // Index of (x, y), x <= y, among the 10 products of 4 channels.
+                    sub_prod[k] = prod[x * 4 - (x * (x - 1)) / 2 + (y - x)];
+                }
+                ++k;
+            }
+        }
+        const float e = LineScatter(16.0, sub_sum, sub_prod, 3);
+        if (e < best_error) {
+            best_error = e;
+            best = rotation;
+        }
+    }
+    return best;
+}
+
 uvec4 EncodeBlock() {
     bool opaque = true;
     for (int i = 0; i < 16; ++i) {
@@ -741,21 +954,18 @@ uvec4 EncodeBlock() {
                 best = r;
             }
         } else {
-            for (int rotation = 0; rotation < 4; ++rotation) {
-                Result r = EncodeSeparate(5, rotation, 0);
+            // Modes 4 and 5 for the channel that, set apart, leaves the other three nearest a
+            // line (alpha, or a mask packed into one of R, G, B).
+            const int rotation = BestRotation();
+            Result r = EncodeSeparate(5, rotation, 0);
+            if (r.sse < best.sse) {
+                best = r;
+            }
+            for (int idxsel = 0; idxsel < 2; ++idxsel) {
+                r = EncodeSeparate(4, rotation, idxsel);
                 if (r.sse < best.sse) {
                     best = r;
                 }
-                for (int idxsel = 0; idxsel < 2; ++idxsel) {
-                    r = EncodeSeparate(4, rotation, idxsel);
-                    if (r.sse < best.sse) {
-                        best = r;
-                    }
-                }
-            }
-            const Result r = EncodeLines(MakeMode(7, 2, 5, 5, 1, 0, 2), BestPartition(2, true));
-            if (r.sse < best.sse) {
-                best = r;
             }
         }
     }
