@@ -190,10 +190,15 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
 
     // Fortune's Eden: Player 1 has normal and mouse controls; turning mouse emulation on or off
     // (the MOUSE button at the bottom of the window) swaps between them.
+    // The Mouse mode page shows the mouse set and the Controls page the normal one; the combo box
+    // below only tracks which is shown and stays hidden.
     showing_mouse_set = Settings::values.mouse_enabled.GetValue();
-    auto* control_set_row = new QHBoxLayout();
-    auto* control_set_label = new QLabel(tr("Player 1 controls:"), this);
-    control_set_combo = new QComboBox(this);
+    wanted_mouse_set = showing_mouse_set;
+    auto* control_set_box = new QWidget(this);
+    auto* control_set_row = new QHBoxLayout(control_set_box);
+    control_set_row->setContentsMargins(0, 0, 0, 0);
+    auto* control_set_label = new QLabel(tr("Player 1 controls:"), control_set_box);
+    control_set_combo = new QComboBox(control_set_box);
     control_set_combo->addItem(tr("Normal controls"));
     control_set_combo->addItem(tr("Mouse controls (used while mouse emulation is on)"));
     control_set_combo->setCurrentIndex(showing_mouse_set ? 1 : 0);
@@ -202,7 +207,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
            "when you turn mouse emulation on (the MOUSE button at the bottom of the window)."));
     control_set_row->addWidget(control_set_label);
     control_set_row->addWidget(control_set_combo, 1);
-    ui->verticalLayout_5->insertLayout(0, control_set_row);
+    ui->verticalLayout_5->insertWidget(0, control_set_box);
+    control_set_box->hide();
     connect(control_set_combo, &QComboBox::currentIndexChanged, this,
             [this](int index) { ShowControlSet(index == 1); });
 }
@@ -264,6 +270,20 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     }
 }
 
+QWidget* ConfigureInput::GetMouseControlsTab() const {
+    return ui->tabPlayer1;
+}
+
+void ConfigureInput::ShowMouseControls(bool mouse) {
+    wanted_mouse_set = mouse;
+    if (control_set_combo == nullptr) {
+        return;
+    }
+    ShowControlSet(mouse);
+    const QSignalBlocker blocker(control_set_combo);
+    control_set_combo->setCurrentIndex(mouse ? 1 : 0);
+}
+
 QList<QWidget*> ConfigureInput::GetSubTabs() const {
     return {
         ui->tabPlayer1, ui->tabPlayer2, ui->tabPlayer3, ui->tabPlayer4,  ui->tabPlayer5,
@@ -301,6 +321,8 @@ void ConfigureInput::ApplyConfiguration() {
             control_set_combo->setCurrentIndex(active_mouse ? 1 : 0);
             player_controllers[0]->LoadConfiguration();
         }
+        // Back to the set the page on screen shows (the dialog stays open after Apply).
+        ShowMouseControls(wanted_mouse_set);
     }
     Settings::values.players.SetGlobal(was_global);
 }

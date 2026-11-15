@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "common/fefw_scene_load.h"
+#include "common/settings.h"
 
 // Fortune's Eden mouse mode: the frontend locks the PC cursor in the middle of the game window and
 // hands over how far the mouse moved (as fractions of the window) and wheel turns (Qt's 120 per
@@ -71,7 +72,8 @@ inline void AddWheel(int x, int y) {
 /// battle maps: everywhere else the left stick walks, so the wheel does nothing there.
 inline int WheelStickY() {
     if (Detail::NowNs() >= Detail::wheel_stick_until_ns.load() ||
-        !Common::FefwSceneLoad::in_battle_map.load(std::memory_order_relaxed)) {
+        !Common::FefwSceneLoad::in_battle_map.load(std::memory_order_relaxed) ||
+        !Settings::values.fefw_mouse_wheel_zoom.GetValue()) {
         return 0;
     }
     return Detail::wheel_stick_direction.load() * 32767;

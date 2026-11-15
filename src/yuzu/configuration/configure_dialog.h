@@ -30,6 +30,7 @@ class ConfigureGraphicsExtensions;
 class ConfigurePerformance;
 class ConfigureHotkeys;
 class ConfigureInput;
+class ConfigureMouseMode;
 class ConfigureProfileManager;
 class ConfigureSystem;
 class ConfigureNetwork;
@@ -97,6 +98,7 @@ private:
     std::unique_ptr<ConfigureGraphics> graphics_tab;
     std::unique_ptr<ConfigureHotkeys> hotkeys_tab;
     std::unique_ptr<ConfigureInput> input_tab;
+    std::unique_ptr<ConfigureMouseMode> mouse_tab;
     std::unique_ptr<ConfigureNetwork> network_tab;
     std::unique_ptr<ConfigureProfileManager> profile_tab;
     std::unique_ptr<ConfigureSystem> system_tab;
