@@ -468,11 +468,12 @@ bool GpuBcnTranscodeAllowed() {
 }
 
 namespace {
-// Fortune's Eden: a start that never got going with BC7 (a driver that hangs or crashes building
+// Fortune's Eden: a start that never got going with BC7 (a driver that crashes or hangs building
 // or running the BC7 converter, #65) is noted in the config folder, and the next starts use BC3
 // on the GPU instead until Fortune's Eden is updated. bc7-start.txt is written when BC7 is
-// chosen and removed once the game has drawn 600 frames with it; found at the next start, it
-// becomes bc7-off.txt, which holds the version it applies to.
+// chosen and removed once the game has drawn 600 frames with it or stops normally; found at the
+// next start, it becomes bc7-off.txt, which holds the version it applies to. A converter the
+// driver doesn't build within 10 s writes bc7-off.txt straight away (TurnOffAstcBc7).
 std::filesystem::path Bc7MarkerPath(const char* name) {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / name;
 }
@@ -519,6 +520,14 @@ void MarkAstcBc7Working(bool log) {
             LOG_INFO(Common, "ASTC textures: BC7 works on this graphics card");
         }
     }
+}
+
+void TurnOffAstcBc7() {
+    astc_bc7.store(false, std::memory_order_relaxed);
+    bc7_start_pending.store(false, std::memory_order_relaxed);
+    std::error_code ec;
+    std::filesystem::remove(Bc7MarkerPath("bc7-start.txt"), ec);
+    std::ofstream{Bc7MarkerPath("bc7-off.txt")} << Common::FefwVersion;
 }
 
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode) {
