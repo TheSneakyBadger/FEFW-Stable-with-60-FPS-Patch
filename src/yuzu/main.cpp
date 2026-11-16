@@ -87,6 +87,14 @@ int main(int argc, char* argv[]) {
     // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one): wait
     // (up to 20 s) for it to have exited first, so this one gets the log and the user folder's
     // files to itself.
+    if (const HANDLE restarting =
+            OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\FortunesEdenRestarting")) {
+        const DWORD result = WaitForSingleObject(restarting, 20000);
+        if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) {
+            ReleaseMutex(restarting);
+        }
+        CloseHandle(restarting);
+    }
     if (const char* const wait_for = std::getenv("FEFW_WAIT_FOR_PID")) {
         const DWORD pid = static_cast<DWORD>(std::strtoul(wait_for, nullptr, 10));
         _putenv("FEFW_WAIT_FOR_PID=");

@@ -245,7 +245,13 @@ struct FileBackend final : public Backend {
         // Existence checks are done within the functions themselves.
         // We don't particularly care if these succeed or not.
         void(FS::RemoveFile(old_filename));
-        void(FS::RenameFile(filename, old_filename));
+        // A log still open in another Fortune's Eden (one closing as this one starts) can't be
+        // moved: wait for it a little (up to 3 s) rather than log nothing.
+        for (int attempt = 0; !FS::RenameFile(filename, old_filename) && FS::Exists(filename) &&
+                              attempt < 30;
+             ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
         file.emplace(filename, FS::FileAccessMode::Write, FS::FileType::TextFile);
     }
     ~FileBackend() noexcept override = default;

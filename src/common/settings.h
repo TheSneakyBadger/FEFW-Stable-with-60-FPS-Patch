@@ -1208,6 +1208,10 @@ void SetActiveFrameGeneration(const char* name);
 /// The refresh rate of the display the game window is on (0: unknown), set by the frontend.
 [[nodiscard]] f32 DisplayRefreshRate();
 void SetDisplayRefreshRate(f32 hz);
+/// While frame generation makes frames and its pacing is on: the time between the game's frames
+/// that fits the display (or the frame rate cap) with the frames made between them, in ns (at
+/// most 1/30 s). 0 otherwise.
+[[nodiscard]] s64 FrameGenerationPeriodNs();
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.

@@ -431,6 +431,27 @@ void SetDisplayRefreshRate(f32 hz) {
     display_refresh_rate.store(hz, std::memory_order_relaxed);
 }
 
+s64 FrameGenerationPeriodNs() {
+    // The frames a second the display can take: a cap set below the refresh rate (the cap would
+    // drop the frames above it), else the refresh rate less 3 (as caps for variable refresh are
+    // set), so the frames always fit.
+    const int cap = values.mfg_frame_cap_fps.GetValue();
+    const f32 refresh = DisplayRefreshRate();
+    const f32 limit = cap > 0 && (refresh <= 0.0f || static_cast<f32>(cap) - 1.0f < refresh - 3.0f)
+                          ? static_cast<f32>(cap) - 1.0f
+                          : refresh - 3.0f;
+    if (values.frame_generation.GetValue() == FrameGeneration::Off ||
+        values.mfg_frame_cap.GetValue() != MfgFrameCap::Display || limit < 30.0f ||
+        ActiveFrameGeneration() == nullptr) {
+        return 0;
+    }
+    const f32 shown = static_cast<f32>(values.mfg_multiplier.GetValue()) + 2.0f;
+    // Never below 30 of the game's frames a second: the 60 FPS mode's game speed follows the
+    // frame rate from 30 to 60, and below 30 the game itself slows down (as on Switch).
+    const f32 period = shown / limit;
+    return static_cast<s64>(1e9f * (period < 1.0f / 30.0f ? period : 1.0f / 30.0f));
+}
+
 bool HdrOutputActive() {
     return hdr_output_active.load(std::memory_order_relaxed);
 }
