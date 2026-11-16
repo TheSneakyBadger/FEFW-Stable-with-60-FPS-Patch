@@ -23,6 +23,7 @@
 #include <QStandardItemModel>
 
 #include "common/fefw_version.h"
+#include "common/logging.h"
 #include "common/settings.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
@@ -32,22 +33,25 @@
 namespace {
 
 /// The game's icon with rounded corners, at the screen's pixel density (size and radius in
-/// logical pixels).
+/// logical pixels). All of it is shown: one that isn't square is fitted in and centred.
 QPixmap Rounded(const QPixmap& source, int size, int radius, qreal pixel_ratio) {
     const int pixels = qRound(size * pixel_ratio);
     QPixmap result(pixels, pixels);
     result.setDevicePixelRatio(pixel_ratio);
     result.fill(Qt::transparent);
+    QPixmap scaled =
+        source.scaled(pixels, pixels, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(pixel_ratio);
+    const QRectF area((pixels - scaled.width()) / 2.0 / pixel_ratio,
+                      (pixels - scaled.height()) / 2.0 / pixel_ratio,
+                      scaled.width() / pixel_ratio, scaled.height() / pixel_ratio);
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     QPainterPath path;
-    path.addRoundedRect(0, 0, size, size, radius, radius);
+    path.addRoundedRect(area, radius, radius);
     painter.setClipPath(path);
-    QPixmap scaled = source.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
-                                   Qt::SmoothTransformation);
-    scaled.setDevicePixelRatio(pixel_ratio);
-    painter.drawPixmap(0, 0, scaled);
+    painter.drawPixmap(area.topLeft(), scaled);
     return result;
 }
 
@@ -619,6 +623,7 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
         picture = item->data(Qt::DecorationRole).value<QPixmap>();
     }
     if (!picture.isNull()) {
+        LOG_INFO(Frontend, "Home screen: game icon {}x{}", picture.width(), picture.height());
         icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
     }
     const QString title = item->data(GameListItemPath::TitleRole).toString();
