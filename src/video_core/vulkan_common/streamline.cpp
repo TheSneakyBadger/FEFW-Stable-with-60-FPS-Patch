@@ -851,17 +851,33 @@ void FrameGenPresentStart(u64 index, bool tagged) {
     if (tagged != fg.on) {
         sl::DLSSGOptions options{};
         options.mode = tagged ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-        options.numFramesToGenerate = 1;
+        // Testing multi frame generation: EDEN_DLSSG_FRAMES=2 or 3 asks for that many generated
+        // frames per game frame (3x, 4x), whatever the card reports it can do; if Streamline
+        // refuses, one (2x).
+        static const u32 frames_wanted = [] {
+            const char* const value = std::getenv("EDEN_DLSSG_FRAMES");
+            const int frames = value ? std::atoi(value) : 1;
+            return static_cast<u32>(std::clamp(frames, 1, 3));
+        }();
+        options.numFramesToGenerate = frames_wanted;
         options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
         const char* const recompose = std::getenv("EDEN_DLSSG_UI_RECOMPOSITION");
         options.enableUserInterfaceRecomposition =
             recompose && recompose[0] == '1' ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-        if (const sl::Result result = fg.set_options(viewport, options);
-            result != sl::Result::eOk) {
+        sl::Result result = fg.set_options(viewport, options);
+        if (result != sl::Result::eOk && options.numFramesToGenerate > 1) {
+            LOG_WARNING(Render_Vulkan,
+                        "Streamline refused {} generated frames per game frame ({}); using 1",
+                        options.numFramesToGenerate, static_cast<int>(result));
+            options.numFramesToGenerate = 1;
+            result = fg.set_options(viewport, options);
+        }
+        if (result != sl::Result::eOk) {
             LOG_ERROR(Render_Vulkan, "Streamline rejected the DLSS frame generation options ({})",
                       static_cast<int>(result));
         } else {
-            LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation {}", tagged ? "on" : "paused");
+            LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation {} ({} generated a frame asked)",
+                     tagged ? "on" : "paused", options.numFramesToGenerate);
         }
         fg.on = tagged;
     }
@@ -884,9 +900,10 @@ void FrameGenPresentEnd(u64 index, bool tagged) {
         if (fg.get_state(sl::ViewportHandle{0u}, state, nullptr) == sl::Result::eOk) {
             LOG_INFO(Render_Vulkan,
                      "NVIDIA DLSS frame generation: status {:#x}, {} frames presented for the "
-                     "last, up to {} generated a frame",
+                     "last, up to {} generated a frame, multi frame generation {}",
                      static_cast<u32>(state.status), state.numFramesActuallyPresented,
-                     state.numFramesToGenerateMax);
+                     state.numFramesToGenerateMax,
+                     state.bIsDynamicMFGSupported == sl::Boolean::eTrue ? "dynamic" : "fixed");
         }
     }
 }
