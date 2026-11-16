@@ -23,15 +23,16 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw/releases/tag/1.12).
 
-## What's new in v1.7.1
+## What's new in v1.7.2
 
-- **Mouse mode has its own page in Settings** (*Configure → Mouse mode*): sensitivity, whether the scroll wheel zooms battle maps, and the controls used in mouse mode. The wheel now only zooms on battle maps instead of walking you around elsewhere, and WASD works in mouse mode with a controller set up.
-- **No more hang at game start on some AMD cards** ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)): if the graphics driver can't build the BC7 texture converter within 10 seconds, textures go to BC3 and the game starts.
-- **Dagsion's sky no longer turns black after time in menus** ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)), **stutters no longer build up over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and **textures the game rewrites no longer come back wrong** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
-- **Kompas9's ultrawide v1.2:** the Stats page radar charts sit inside the 16:9 area.
+- **No more orange blocks and yellow bars on battle maps** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
+- **No more black characters on some graphics cards** ([#69](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/69)): Fortune's Eden checks the graphics card's BC7 textures as the game starts, and uses BC3 if they come out wrong.
+- **Smoother exploring on graphics cards with less than 8 GB** ([#70](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/70)): they use BC3 textures again.
+- **No more blocky textures after one bad start** ([#71](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/71)), **the game no longer starts again after stopping it with F5** ([#67](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/67)), and **sharp game icons** on the home screen and in the game list ([#68](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/68)).
 
 ### Recent releases
 
+- **v1.7.1:** no more hang at game start on some AMD cards ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)); Mouse mode has its own page in Settings, and the scroll wheel only zooms on battle maps; Dagsion's sky no longer turns black after time in menus ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)); stutters no longer build up over long sessions ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)); and Kompas9's ultrawide v1.2.
 - **v1.7:** HD Rumble (experimental, off by default) through [RenHDrum](https://github.com/trzz1214/RenHDrum), on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), Windows only; and lips render properly ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)), with ASTC textures re-compressed to BC7 instead of BC3.
 - **v1.6.8.9:** no more broken textures or flashes after a few minutes in the same place ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
 - **v1.6.8.8:** NVIDIA DLSS frame generation no longer drags busy battles below 60 FPS; performance no longer drops map after map ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)); and the Discord Rich Presence setting is now in *Configure → General → Discord*.

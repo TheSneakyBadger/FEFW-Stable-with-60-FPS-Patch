@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.7.2
+
+Fixes for coloured blocks on battle maps, black characters on some graphics cards, stutters on smaller graphics cards, blocky textures after one bad start, and a game that restarted after stopping it.
+
+#### 🔧 Fixes
+
+- **No more orange blocks and yellow bars on battle maps** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)). With reactive flushing on (the default), the graphics card's data was copied back into the game's memory at the wrong moment and could overwrite something the game had just written there. The cursor and the movement paths were drawn from those lost writes. Writes the game hasn't sent yet are now left alone.
+- **No more black characters on some graphics cards** ([#69](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/69)). As the game starts, the graphics card now converts a few test textures to BC7 and Fortune's Eden checks them. If they come out wrong, it uses BC3 instead.
+- **Smoother exploring on graphics cards with less than 8 GB** ([#70](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/70)). BC7 takes much more work to make than BC3, and on a 4 GB card that made exploring stutter. Those cards now use BC3, as v1.6.8.9 did.
+- **No more blocky textures after one bad start** ([#71](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/71)). v1.7.1 switched to BC3 until the next update after a single start that ended before the game's first frames, even if the game had just crashed or been closed for another reason. It now takes two such starts in a row.
+- **The game no longer starts again after stopping it with F5** ([#67](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/67)). A button still held as the game stopped could press Play on the home screen. Play is now ignored for 1.5 seconds after a stop.
+- **Sharp game icons** ([#68](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/68)) on the home screen and in the game list, on scaled screens too.
+
+Everything else is as in [v1.7.1](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.1).
+
 ## v1.7.1
 
 A fix for v1.7 not starting on some AMD cards, a Mouse mode page in Settings, a scroll wheel that only zooms where it should, and fixes for a black sky, long-session stutters and textures the game rewrites.

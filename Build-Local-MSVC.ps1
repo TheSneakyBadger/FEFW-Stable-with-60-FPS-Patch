@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.1 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.2 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -470,6 +470,14 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.2:
+- No more orange blocks and yellow bars on battle maps (#60).
+- No more black characters on some graphics cards (#69): the graphics card's BC7 textures are
+  checked as the game starts, and BC3 is used if they come out wrong.
+- Smoother exploring on graphics cards with less than 8 GB (#70): they use BC3 textures again.
+- No more blocky textures after one bad start (#71); the game no longer starts again after
+  stopping it with F5 (#67); sharp game icons on the home screen and in the game list (#68).
 
 New in v1.7.1:
 - Mouse mode has its own page in Settings (Configure > Mouse mode): sensitivity, whether the
