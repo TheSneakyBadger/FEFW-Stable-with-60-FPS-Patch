@@ -776,6 +776,9 @@ struct Memory::Impl {
                     }
                 }
             }
+            // Marked first: a copy-back landing before the write is applied skips its page
+            // (VideoCommon::BufferCache::OnHeldWrite, #60).
+            system.GPU().OnHeldWrite(address, size);
             gpu_dirty_managers[core].Collect(address, size);
         });
     }

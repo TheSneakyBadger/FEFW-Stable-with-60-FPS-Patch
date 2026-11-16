@@ -35,6 +35,7 @@ BufferCache<P>::BufferCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, R
     // Ensure the first slot is used for the null buffer
     void(slot_buffers.insert(runtime, NullBufferParams{}));
     gpu_modified_ranges.Clear();
+    held_write_marks = std::make_unique<std::atomic<u32>[]>(page_table.size());
     // Asked ~850,000 times a second in Fortune's Weave's crowds (IsRegionGpuModified), 87% of the
     // time about memory the GPU never wrote: a bit per 4 KiB page answers those without walking the
     // range tree. Exact: a page is unmarked only after a lookup finds it empty.
@@ -824,12 +825,31 @@ void BufferCache<P>::PopAsyncBuffers() {
         const DAddr device_addr = static_cast<DAddr>(copy.src_offset);
         const u64 dst_offset = copy.dst_offset - base_offset;
         const u8* read_mapped_memory = base + dst_offset;
+        // Fortune's Eden: pages with a guest CPU write still held for the next command list are
+        // skipped, and stay GPU-modified (copied back later): copied over, the CPU's newer data
+        // was lost, and the held write then sent the GPU's older copy back to the GPU. With
+        // reactive flushing on, what the CPU reads is copied back at each fence, and Fortune's
+        // Weave's cursor and movement paths were drawn from lost writes as yellow bars and
+        // orange blocks across the battle map (#60).
+        const auto for_each_unheld = [&](DAddr start, DAddr end, auto&& func) {
+            while (start < end) {
+                const DAddr page_end =
+                    (std::min)(end, Common::AlignUp(start + 1, CACHING_PAGESIZE));
+                if (!HasHeldWrite(start, page_end - start)) {
+                    func(start, page_end);
+                }
+                start = page_end;
+            }
+        };
         async_downloads.ForEachInRange(device_addr, copy.size, [&](DAddr start, DAddr end, s32) {
-            device_memory.WriteBlockUnsafe(start, &read_mapped_memory[start - device_addr],
-                                           end - start);
+            for_each_unheld(start, end, [&](DAddr from, DAddr to) {
+                device_memory.WriteBlockUnsafe(from, &read_mapped_memory[from - device_addr],
+                                               to - from);
+            });
         });
         async_downloads.Subtract(device_addr, copy.size, [&](DAddr start, DAddr end) {
-            gpu_modified_ranges.Subtract(start, end - start);
+            for_each_unheld(start, end,
+                            [&](DAddr from, DAddr to) { gpu_modified_ranges.Subtract(from, to - from); });
         });
     }
     async_buffers_death_ring.emplace_back(*async_buffer);
@@ -848,6 +868,63 @@ void BufferCache<P>::NoteCpuRead(DAddr addr, size_t size) {
     if (covered < size) {
         cpu_read_ranges.Add(addr, size);
     }
+}
+
+template <class P>
+void BufferCache<P>::OnHeldWrite(DAddr addr, u64 size) noexcept {
+    if (size == 0) {
+        return;
+    }
+    const u32 interval = held_write_interval.load(std::memory_order_acquire);
+    const u64 page_end = Common::DivCeil(addr + size, CACHING_PAGESIZE);
+    for (u64 page = addr >> CACHING_PAGEBITS; page < page_end && page < page_table.size();
+         ++page) {
+        std::atomic<u32>& mark = held_write_marks[page];
+        if (mark.load(std::memory_order_relaxed) != interval) {
+            mark.store(interval, std::memory_order_release);
+        }
+    }
+}
+
+template <class P>
+void BufferCache<P>::HeldWritesApplied(std::span<const std::pair<DAddr, u64>> writes) {
+    // A write held in interval N is gathered in the batch applied at the end of N, or the next
+    // (it was collected after that batch was gathered): its mark goes once the batch after
+    // interval N is applied, among the pages of these two batches.
+    const u32 interval = held_write_interval.load(std::memory_order_acquire);
+    held_pages_this_batch.clear();
+    for (const auto& [addr, size] : writes) {
+        if (size == 0) {
+            continue;
+        }
+        const u64 page_end = Common::DivCeil(addr + size, CACHING_PAGESIZE);
+        for (u64 page = addr >> CACHING_PAGEBITS; page < page_end && page < page_table.size();
+             ++page) {
+            if (held_pages_this_batch.empty() || held_pages_this_batch.back() != page) {
+                held_pages_this_batch.push_back(page);
+            }
+        }
+    }
+    const auto clear = [&](u64 page) {
+        std::atomic<u32>& mark = held_write_marks[page];
+        u32 value = mark.load(std::memory_order_acquire);
+        if (value != 0 && value != interval) {
+            // Not if a newer write marked it meanwhile.
+            mark.compare_exchange_strong(value, 0, std::memory_order_acq_rel);
+        }
+    };
+    for (const u64 page : held_pages_last_batch) {
+        clear(page);
+    }
+    for (const u64 page : held_pages_this_batch) {
+        clear(page);
+    }
+    held_pages_last_batch.swap(held_pages_this_batch);
+    u32 next = interval + 1;
+    if (next == 0) {
+        next = 1;
+    }
+    held_write_interval.store(next, std::memory_order_release);
 }
 
 template <class P>
