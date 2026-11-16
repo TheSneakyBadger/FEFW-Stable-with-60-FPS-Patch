@@ -346,6 +346,9 @@ QString PathText(const std::filesystem::path& path) {
     return QString::fromStdWString(path.wstring());
 }
 
+
+} // Anonymous namespace
+
 /// Whether the MFG Unlocker Fortune's Eden downloads is in place.
 bool HasMfgUnlocker() {
     QFile file(PathText(Streamline::MfgUnlockerPath()));
@@ -356,8 +359,6 @@ bool HasMfgUnlocker() {
     hash.addData(&file);
     return hash.result().toHex() == QByteArray(Streamline::MfgUnlockerSha256);
 }
-
-} // Anonymous namespace
 
 NvidiaDlssPanel::NvidiaDlssPanel(QWidget* parent, bool frame_generation_)
     : QWidget(parent), frame_generation{frame_generation_} {
@@ -683,17 +684,16 @@ void NvidiaDlssPanel::Download() {
                                       "starts."));
 }
 
-void NvidiaDlssPanel::DownloadMfgUnlocker() {
+bool DownloadMfgUnlocker(QWidget* parent) {
     const std::filesystem::path target = Streamline::MfgUnlockerPath();
-    const auto fail = [this](const std::string& error) {
+    const auto fail = [parent](const std::string& error) {
         LOG_ERROR(Frontend, "MFG Unlocker download failed: {}", error);
-        QMessageBox::warning(this, Tr("MFG Unlocker"),
+        QMessageBox::warning(parent, Tr("MFG Unlocker"),
                              Tr("Could not download the MFG Unlocker: %1")
                                  .arg(QString::fromStdString(error)));
-        Refresh();
     };
 
-    QDialog dialog(this);
+    QDialog dialog(parent);
     dialog.setWindowTitle(Tr("Download the MFG Unlocker"));
     QVBoxLayout* layout = new QVBoxLayout(&dialog);
     QLabel* intro = new QLabel(
@@ -722,10 +722,10 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
     layout->addWidget(licence_text, 1);
     layout->addWidget(buttons);
     if (dialog.exec() != QDialog::Accepted) {
-        return;
+        return false;
     }
 
-    QProgressDialog progress(Tr("Downloading the MFG Unlocker..."), Tr("Cancel"), 0, 1000, this);
+    QProgressDialog progress(Tr("Downloading the MFG Unlocker..."), Tr("Cancel"), 0, 1000, parent);
     progress.setWindowTitle(Tr("MFG Unlocker"));
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
@@ -735,13 +735,13 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
     if (!zip.Open()) {
         progress.close();
         fail(zip.error);
-        return;
+        return false;
     }
     const auto [name, entry] = zip.FindEnding("MFGUnlocker.dll");
     if (!entry) {
         progress.close();
         fail("MFGUnlocker.dll is not in the release");
-        return;
+        return false;
     }
     const u64 total = entry->compressed;
     const std::optional<std::string> contents = zip.Read(*entry, [&](u64 received) {
@@ -754,7 +754,7 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
         if (!zip.canceled) {
             fail(zip.error);
         }
-        return;
+        return false;
     }
     const QByteArray digest =
         QCryptographicHash::hash(QByteArray::fromRawData(contents->data(),
@@ -764,7 +764,7 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
     if (digest != QByteArray(Streamline::MfgUnlockerSha256)) {
         progress.close();
         fail("the download isn't the expected release (checksum)");
-        return;
+        return false;
     }
     std::error_code ec;
     std::filesystem::create_directories(target.parent_path(), ec);
@@ -776,7 +776,7 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
         if (!file) {
             progress.close();
             fail("could not write " + Common::FS::PathToUTF8String(partial));
-            return;
+            return false;
         }
     }
     std::filesystem::rename(partial, target, ec);
@@ -784,17 +784,22 @@ void NvidiaDlssPanel::DownloadMfgUnlocker() {
         std::filesystem::remove(partial, ec);
         progress.close();
         fail("could not save " + Common::FS::PathToUTF8String(target));
-        return;
+        return false;
     }
     LOG_INFO(Frontend, "Downloaded the MFG Unlocker {} to {}", MFG_VERSION,
              Common::FS::PathToUTF8String(target));
     progress.setValue(1000);
     progress.close();
-    Refresh();
     QMessageBox::information(
-        this, Tr("MFG Unlocker"),
+        parent, Tr("MFG Unlocker"),
         Tr("The MFG Unlocker is ready. Choose 3x or 4x for NVIDIA DLSS multi frame generation; it "
            "is used the next time a game starts."));
+    return true;
+}
+
+void NvidiaDlssPanel::DownloadMfgUnlocker() {
+    ::DownloadMfgUnlocker(this);
+    Refresh();
 }
 
 #endif

@@ -59,6 +59,12 @@ public:
         /// NVIDIA's frame generation makes the frame: only the UI-less frame and the UI's
         /// coverage are made (see LastDlssImages); the output is unused.
         bool dlss;
+        /// Multi frame generation: more frames, made after the first. With n frames in all, frame
+        /// k (the first is 0) is made (k + 1) / (n + 1) of the way from the previous game frame
+        /// to this one.
+        std::array<VkImage, 2> more_output_images{};
+        std::array<VkImageView, 2> more_output_views{};
+        u32 more_outputs{};
     };
 
     explicit Fsr3FrameGenerator(const Device& device, Scheduler& scheduler,

@@ -56,6 +56,8 @@ protected:
 private:
     void BuildGamePage(QWidget* page);
     void BuildSetupPage(QWidget* page);
+    /// NVIDIA DLSS at 3x or 4x without the MFG Unlocker: offers to download it.
+    void OfferMfgUnlocker();
 
     QStackedWidget* pages{};
     QWidget* game_page{};

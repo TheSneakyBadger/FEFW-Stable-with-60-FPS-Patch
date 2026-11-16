@@ -125,18 +125,18 @@ void computeDisocclusionMask(FfxInt32x2 iPxPos)
     VectorFieldEntry gameMv;
     LoadInpaintedGameFieldMv(fDepthUv, gameMv);
 
-    const FfxFloat32 fDepthClipInterpolatedToPrevious   = 1.0f - ComputeDepthClip(0, fDepthUv + gameMv.fMotionVector, fDilatedDepth);
-    const FfxFloat32 fDepthClipInterpolatedToCurrent    = 1.0f - ComputeDepthClip(1, fDepthUv - gameMv.fMotionVector, fDilatedDepth);
+    const FfxFloat32 fDepthClipInterpolatedToPrevious   = 1.0f - ComputeDepthClip(0, fDepthUv + FFX_FI_TO_PREVIOUS(gameMv.fMotionVector), fDilatedDepth);
+    const FfxFloat32 fDepthClipInterpolatedToCurrent    = 1.0f - ComputeDepthClip(1, fDepthUv - FFX_FI_TO_CURRENT(gameMv.fMotionVector), fDilatedDepth);
     FfxFloat32x2 fDisocclusionMask = FfxFloat32x2(fDepthClipInterpolatedToPrevious, fDepthClipInterpolatedToCurrent);
 
     fDisocclusionMask = FfxFloat32x2(FFX_GREATER_THAN_EQUAL(fDisocclusionMask, ffxBroadcast2(FFX_FRAMEINTERPOLATION_EPSILON)));
 
     // Avoid false disocclusion if primary game vector pointer outside screen area
     const FfxFloat32x2 fSrcMotionVector   = gameMv.fMotionVector * 2.0f;
-    const FfxInt32x2   iSamplePosPrevious = FfxInt32x2((fDepthUv + fSrcMotionVector) * RenderSize());
+    const FfxInt32x2   iSamplePosPrevious = FfxInt32x2((fDepthUv + FFX_FI_TO_PREVIOUS(fSrcMotionVector)) * RenderSize());
     fDisocclusionMask.x = ffxSaturate(fDisocclusionMask.x + FfxFloat32(!IsOnScreen(iSamplePosPrevious, RenderSize())));
 
-    const FfxInt32x2 iSamplePosCurrent = FfxInt32x2((fDepthUv - fSrcMotionVector) * RenderSize());
+    const FfxInt32x2 iSamplePosCurrent = FfxInt32x2((fDepthUv - FFX_FI_TO_CURRENT(fSrcMotionVector)) * RenderSize());
     fDisocclusionMask.y = ffxSaturate(fDisocclusionMask.y + FfxFloat32(!IsOnScreen(iSamplePosCurrent, RenderSize())));
 
     StoreDisocclusionMask(iPxPos, fDisocclusionMask);

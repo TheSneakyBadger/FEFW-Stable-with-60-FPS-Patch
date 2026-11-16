@@ -76,6 +76,14 @@
         return cbFI.fJitter;
     }
 
+    // Fortune's Eden (multi frame generation): where between the previous frame (0) and the
+    // current one (1) the frame is made, as float bits in _pad1; 0 bits: halfway, as the SDK.
+    #define FFX_FRAMEINTERPOLATION_HAS_INTERPOLATION_TIME 1
+    FfxFloat32 InterpolationTime()
+    {
+        return cbFI._pad1 == 0 ? 0.5f : intBitsToFloat(cbFI._pad1);
+    }
+
     FfxInt32x2 InterpolationRectBase()
     {
         return cbFI.interpolationRectBase;

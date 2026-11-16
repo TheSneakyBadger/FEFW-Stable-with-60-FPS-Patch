@@ -420,10 +420,11 @@ struct Values {
     // run. Only in the 3D scenes, where the game evaluates DLSS. Takes effect when a game starts.
     SwitchableSetting<FrameGeneration, true> frame_generation{
         linkage, FrameGeneration::Off, "frame_generation", Category::Renderer};
-    // NVIDIA DLSS multi frame generation: 2x (one frame made between each two of the game's), 3x
-    // or 4x. NVIDIA allows 3x and 4x on GeForce RTX 50 cards; on others DLSS makes one, unless a
-    // tool such as the community MFG Unlocker lifts the limit. Takes effect when a game starts.
-    SwitchableSetting<DlssMfg, true> dlss_mfg{linkage, DlssMfg::X2, "dlss_mfg",
+    // Multi frame generation: 2x (one frame made between each two of the game's), 3x or 4x. AMD
+    // FSR 3.1: any card. NVIDIA DLSS: NVIDIA allows 3x and 4x on GeForce RTX 50 cards; on others
+    // it makes one, unless the community MFG Unlocker lifts the limit. Takes effect when a game
+    // starts.
+    SwitchableSetting<MfgMultiplier, true> mfg_multiplier{linkage, MfgMultiplier::X2, "mfg_multiplier",
                                               Category::Renderer};
     // The most frames DLSS frame generation said it could make for each of the game's, the last
     // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.

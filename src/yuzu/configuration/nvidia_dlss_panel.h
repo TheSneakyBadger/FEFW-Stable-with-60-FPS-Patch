@@ -13,6 +13,13 @@
 class QLabel;
 class QPushButton;
 
+/// Whether the community MFG Unlocker (for NVIDIA DLSS 3x and 4x on GeForce RTX 40 and older) is
+/// in place, and the release Fortune's Eden downloads.
+[[nodiscard]] bool HasMfgUnlocker();
+
+/// Asks, then downloads the MFG Unlocker into the Streamline folder. True when it is in place.
+bool DownloadMfgUnlocker(QWidget* parent);
+
 class NvidiaDlssPanel : public QWidget {
 public:
     /// frame_generation: the files DLSS frame generation needs, else those of DLSS upscaling.

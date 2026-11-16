@@ -49,7 +49,7 @@ void computeOpticalFlowFieldMvs(FfxUInt32x2 dtID, FfxFloat32x2 fOpticalFlowVecto
 
         const FfxUInt32x2 packedVectorPrimary = PackVectorFieldEntries(true, uHighPriorityFactor, uLowPriorityFactor, fMotionVectorHalf);
 
-        BilinearSamplingData bilinearInfo = GetBilinearSamplingData(fUv + fMotionVectorHalf, GetOpticalFlowSize2());
+        BilinearSamplingData bilinearInfo = GetBilinearSamplingData(fUv + FFX_FI_TO_CURRENT(fMotionVectorHalf), GetOpticalFlowSize2());
         for (FfxInt32 iSampleIndex = 0; iSampleIndex < 4; iSampleIndex++)
         {
             const FfxInt32x2 iOffset = bilinearInfo.iOffsets[iSampleIndex];
