@@ -1,0 +1,3 @@
+3e8a9c4cfb8da8d0bcb1d7fd2500fd9f68eaaef885a8bf8db33012b2201c283f  FEFW-Stable-60FPS-Portable.zip
+5c4f1a1ea2203498426e972146f3a5277c81d88d40757ae7078f5e81475e150a  Fortunes-Eden-linux-x86_64.tar.gz
+56eee39a85df0f278f7be9aad0f0db5f9c04f74e532b15f7c6bdd45972e30098  Fortunes-Eden-x86_64.AppImage
