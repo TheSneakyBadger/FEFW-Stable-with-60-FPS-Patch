@@ -229,6 +229,12 @@ public:
     std::optional<ASTCDecoderPass> astc_decoder_pass;
     std::optional<BcEncoderPass> bc_encoder_pass;
 
+    /// Before the first image: has the GPU convert a few test blocks to BC7 and checks them
+    /// against the CPU's conversion of the same blocks. Switches to BC3 when they come out wrong
+    /// (black characters on an RTX 5080, #69). Once per boot of the renderer.
+    void CheckBc7Encoder();
+    bool bc7_checked{};
+
     /// ASTC decoded on the GPU and re-compressed to BC1/BC3 there (accelerate_astc=Gpu with BC1 or
     /// BC3 recompression): decode into a temporary RGBA8 image, encode into a buffer, copy.
     void TranscodeAstcToBcn(Image& image, const StagingBufferRef& map,
