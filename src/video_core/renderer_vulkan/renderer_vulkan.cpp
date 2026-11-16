@@ -315,6 +315,16 @@ bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) 
     // Normally under 1 chunk on average, single spikes to ~16; a backlog grows to 50-300.
     constexpr size_t LARGE = 24;
     constexpr size_t CLEARED = 4;
+    // A hold is short: frame generation comes back once the backlog has been clear for
+    // clear_needed game frames (10, or up to 30 when it was held again soon after), not after
+    // seconds. If the backlog hasn't cleared within 30 game frames with frame generation off, it
+    // isn't what's behind it (the game itself is busy): frame generation comes back on and isn't
+    // held again for 15 s, rather than staying off for nothing. (Holds used to grow to 4 s each
+    // and kept coming back every 10-20 s in busy places.)
+    constexpr u32 CLEAR_FIRST = 10;
+    constexpr u32 CLEAR_MAX = 30;
+    constexpr u32 NOT_HELPING = 30;
+    constexpr auto REST = std::chrono::seconds{15};
     FrameGenBackoff& b = fg_backoff;
     const size_t queued = scheduler.QueuedChunks();
     if (b.held) {
@@ -322,18 +332,34 @@ bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) 
         ++b.held_frames;
         b.held_peak = (std::max)(b.held_peak, queued);
         b.clear_frames = queued <= CLEARED ? b.clear_frames + 1 : 0;
-        if (b.clear_frames < b.clear_needed) {
+        const bool cleared = b.clear_frames >= b.clear_needed;
+        // Still behind after NOT_HELPING game frames (or never clear for long enough in 2 s).
+        const bool not_helping =
+            b.held_frames >= NOT_HELPING && (b.clear_frames == 0 || b.held_frames >= 120);
+        if (!cleared && !not_helping) {
             return true;
         }
         if (b.logged < 30) {
             ++b.logged;
-            LOG_INFO(Render_Vulkan,
-                     "Frame generation back on: the backlog cleared after {} game frames (up to "
-                     "{} chunks)",
-                     b.held_frames, b.held_peak);
+            if (cleared) {
+                LOG_INFO(Render_Vulkan,
+                         "Frame generation back on: the backlog cleared after {} game frames (up "
+                         "to {} chunks)",
+                         b.held_frames, b.held_peak);
+            } else {
+                LOG_INFO(Render_Vulkan,
+                         "Frame generation back on: the backlog stayed ({} chunks) without it for "
+                         "{} game frames, so the game itself is busy; not held again for 15 s",
+                         queued, b.held_frames);
+            }
         }
         b.held = false;
         b.resumed_at = now;
+        b.rest_until.reset();
+        if (not_helping) {
+            b.rest_until = now + REST;
+            b.clear_needed = CLEAR_FIRST;
+        }
         b.backlog.fill(0);
         b.backlog_count = 0;
         return false;
@@ -342,17 +368,20 @@ bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) 
     b.backlog_count = b.backlog_count + large - b.backlog[b.backlog_at];
     b.backlog[b.backlog_at] = large;
     b.backlog_at = (b.backlog_at + 1) % static_cast<u32>(b.backlog.size());
+    if (b.rest_until && now < *b.rest_until) {
+        return false;
+    }
     if (b.backlog_count < 4) {
         // A while without a backlog: the next hold ends as soon as it has cleared.
-        if (b.resumed_at && now - *b.resumed_at > std::chrono::seconds{30}) {
-            b.clear_needed = 15;
+        if (b.resumed_at && now - *b.resumed_at > std::chrono::seconds{10}) {
+            b.clear_needed = CLEAR_FIRST;
             b.resumed_at.reset();
         }
         return false;
     }
-    // Back again soon after: wait longer before coming back on (up to 4 s clear).
-    if (b.resumed_at && now - *b.resumed_at < std::chrono::seconds{3}) {
-        b.clear_needed = (std::min)(b.clear_needed * 2, 240U);
+    // Back again soon after: wait a little longer before coming back on.
+    if (b.resumed_at && now - *b.resumed_at < std::chrono::seconds{2}) {
+        b.clear_needed = (std::min)(b.clear_needed * 2, CLEAR_MAX);
     }
     b.held = true;
     b.clear_frames = 0;
