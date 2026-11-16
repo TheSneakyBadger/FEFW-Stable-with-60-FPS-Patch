@@ -2127,6 +2127,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             // generation (the MFG Unlocker) read their settings half-written and fell back to 2x.
             qputenv("FEFW_WAIT_FOR_PID",
                     QByteArray::number(static_cast<qulonglong>(QCoreApplication::applicationPid())));
+#ifdef _WIN32
+            // Held by this one until it has exited (never closed: the system releases it then),
+            // and waited for by the new one, whatever environment it gets.
+            void(CreateMutexW(nullptr, TRUE, L"Local\\FortunesEdenRestarting"));
+#endif
             QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
         });
         close();
