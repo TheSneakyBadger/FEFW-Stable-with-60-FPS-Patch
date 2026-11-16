@@ -155,6 +155,7 @@ const char* const HomeStyle =
     "#fefwHomeText { font-size: 12pt; color: #c9c7cf; background: transparent; }"
     "#fefwHomeStatus { font-size: 9pt; color: #e0b04a; background: transparent; }"
     "#fefwHomeIcon { background: transparent; }"
+    "#fefwHomeTitleBlock { background: transparent; }"
     "#fefwHomeSection { font-size: 8pt; font-weight: bold; color: #a7a5ae; background: transparent; }"
     "#fefwHomeCaption { font-size: 8pt; color: #a7a5ae; background: transparent; }"
     "#fefwHomeCheck { color: #ece8f3; background: transparent; }"
@@ -185,6 +186,7 @@ void MakeBigButton(QPushButton* button, int point_size, int extra_height) {
 /// read). Returns the widget holding both.
 QWidget* AddTitle(QBoxLayout* layout, QWidget* outer, int title_points, Qt::Alignment align) {
     QWidget* const parent = new QWidget(outer);
+    parent->setObjectName(QStringLiteral("fefwHomeTitleBlock"));
     QVBoxLayout* const block = new QVBoxLayout(parent);
     block->setContentsMargins(0, 0, 0, 0);
     block->setSpacing(layout->spacing());
