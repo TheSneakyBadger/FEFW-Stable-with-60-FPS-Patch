@@ -28,9 +28,12 @@
 
 namespace {
 
-/// The game's icon with rounded corners.
-QPixmap Rounded(const QPixmap& source, int size, int radius) {
-    QPixmap result(size, size);
+/// The game's icon with rounded corners, at the screen's pixel density (size and radius in
+/// logical pixels).
+QPixmap Rounded(const QPixmap& source, int size, int radius, qreal pixel_ratio) {
+    const int pixels = qRound(size * pixel_ratio);
+    QPixmap result(pixels, pixels);
+    result.setDevicePixelRatio(pixel_ratio);
     result.fill(Qt::transparent);
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing);
@@ -38,8 +41,10 @@ QPixmap Rounded(const QPixmap& source, int size, int radius) {
     QPainterPath path;
     path.addRoundedRect(0, 0, size, size, radius, radius);
     painter.setClipPath(path);
-    painter.drawPixmap(0, 0, source.scaled(size, size, Qt::KeepAspectRatioByExpanding,
-                                           Qt::SmoothTransformation));
+    QPixmap scaled = source.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
+                                   Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(pixel_ratio);
+    painter.drawPixmap(0, 0, scaled);
     return result;
 }
 
@@ -408,9 +413,14 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     }
     game_path = item->data(GameListItemPath::FullPathRole).toString();
 
-    const QPixmap picture = item->data(Qt::DecorationRole).value<QPixmap>();
+    // The icon at its own size (256 px for most games), not the list's 64 px one: scaled up to
+    // 144 px, and more on scaled screens, that was blurry (#68).
+    QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
+    if (picture.isNull()) {
+        picture = item->data(Qt::DecorationRole).value<QPixmap>();
+    }
     if (!picture.isNull()) {
-        icon_label->setPixmap(Rounded(picture, 144, 18));
+        icon_label->setPixmap(Rounded(picture, 144, 18, icon_label->devicePixelRatioF()));
     }
     const QString title = item->data(GameListItemPath::TitleRole).toString();
     if (!title.isEmpty()) {
