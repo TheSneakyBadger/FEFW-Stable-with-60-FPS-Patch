@@ -500,10 +500,12 @@ Picture CutLabel(const Picture& base, std::string_view text, float height_share,
             float sum = 0.0f;
             for (int my = std::max(0, static_cast<int>(my0));
                  my < std::min<int>(it->height, static_cast<int>(std::ceil(my1))); ++my) {
-                const float wy = std::min<float>(my + 1, my1) - std::max<float>(my, my0);
+                const float wy = std::min(static_cast<float>(my + 1), my1) -
+                                 std::max(static_cast<float>(my), my0);
                 for (int mx = std::max(0, static_cast<int>(mx0));
                      mx < std::min<int>(it->width, static_cast<int>(std::ceil(mx1))); ++mx) {
-                    const float wx = std::min<float>(mx + 1, mx1) - std::max<float>(mx, mx0);
+                    const float wx = std::min(static_cast<float>(mx + 1), mx1) -
+                                     std::max(static_cast<float>(mx), mx0);
                     sum += wx * wy * labels[it->offset + my * it->width + mx] / 255.0f;
                 }
             }
