@@ -3913,6 +3913,55 @@ u64 TextureCacheRuntime::TranscodeMemoryCap() const {
     return std::clamp<u64>(local / 64, u64{64} << 20, u64{256} << 20);
 }
 
+u64 TextureCacheRuntime::TranscodeMemoryLimit() {
+    // A burst of new textures (a new area, a new part of a battle) waited for the GPU every few
+    // textures at the cap, and each wait stalled the frame: up to 150 waits in frames of
+    // 0.1-0.7 s on a 12 GB card with 5 GB free. While the driver reports video memory to spare,
+    // the burst may use some of it (what's free less a reserve of a sixth of the budget, at
+    // least 1 GiB; at most 1 GiB more than the cap). Cards without much to spare (most 8 GB and
+    // smaller ones in busy scenes) keep the cap and wait as before.
+    const u64 cap = TranscodeMemoryCap();
+    if (!device.CanReportMemoryUsage()) {
+        return cap;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (transcode_limit != 0 && now - transcode_limit_time < std::chrono::milliseconds{250}) {
+        return transcode_limit;
+    }
+    transcode_limit_time = now;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    const VkPhysicalDeviceMemoryProperties2 properties =
+        device.GetPhysical().GetMemoryProperties(&budget);
+    u64 total_budget = 0;
+    u64 headroom = 0;
+    for (u32 heap = 0; heap < properties.memoryProperties.memoryHeapCount; ++heap) {
+        if ((properties.memoryProperties.memoryHeaps[heap].flags &
+             VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) {
+            continue;
+        }
+        total_budget += budget.heapBudget[heap];
+        if (budget.heapBudget[heap] > budget.heapUsage[heap]) {
+            headroom += budget.heapBudget[heap] - budget.heapUsage[heap];
+        }
+    }
+    const u64 reserve = (std::max)(u64{1} << 30, total_budget / 6);
+    const u64 spare = headroom > reserve ? headroom - reserve : 0;
+    // The decode images already made are in the driver's usage: the limit is what they use now
+    // plus what's spare.
+    const u64 in_use = pending_transcode_bytes + free_transcode_bytes;
+    transcode_limit = std::clamp<u64>(in_use + spare, cap, cap + (u64{1} << 30));
+    static u32 logged = 0;
+    if (transcode_limit > cap && logged < 5) {
+        ++logged;
+        LOG_INFO(Render_Vulkan,
+                 "ASTC re-compression: up to {} MiB of decode images in flight while video memory "
+                 "is spare ({} MiB free of {} MiB; cap {} MiB)",
+                 transcode_limit >> 20, headroom >> 20, total_budget >> 20, cap >> 20);
+    }
+    return transcode_limit;
+}
+
 void TextureCacheRuntime::RecycleTranscodes(bool wait_for_oldest) {
     // A decode image the GPU is done with goes back to the free list for the next texture of its
     // shape (up to the cap), or is destroyed.
@@ -3962,7 +4011,10 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         // free the idle decode images, then wait for the oldest decodes to finish and reuse or
         // free theirs.
         const u64 cap = TranscodeMemoryCap();
-        while (pending_transcode_bytes + free_transcode_bytes + bytes > cap) {
+        const u64 limit = pending_transcode_bytes + free_transcode_bytes + bytes > cap
+                              ? (std::max)(cap, TranscodeMemoryLimit())
+                              : cap;
+        while (pending_transcode_bytes + free_transcode_bytes + bytes > limit) {
             if (free_transcode_bytes > 0) {
                 free_transcodes.clear();
                 free_transcode_bytes = 0;
@@ -3984,7 +4036,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                 LOG_INFO(Render_Vulkan,
                          "ASTC re-compression waited for the GPU: {} MiB of decode images in "
                          "flight, limit {} MiB",
-                         pending_transcode_bytes >> 20, cap >> 20);
+                         pending_transcode_bytes >> 20, limit >> 20);
             }
             RecycleTranscodes(true);
             if (find_reusable() != free_transcodes.end()) {

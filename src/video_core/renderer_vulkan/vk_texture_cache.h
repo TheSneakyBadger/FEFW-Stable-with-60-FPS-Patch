@@ -258,6 +258,11 @@ public:
     u64 diagnostics_frame = 0;
     /// Video memory the decode images in flight, and the free ones, may each use.
     [[nodiscard]] u64 TranscodeMemoryCap() const;
+    /// What the decode images in flight may use in a burst: the cap, or more while the driver
+    /// reports video memory to spare (rechecked every 250 ms), up to 1 GiB more.
+    [[nodiscard]] u64 TranscodeMemoryLimit();
+    u64 transcode_limit = 0;
+    std::chrono::steady_clock::time_point transcode_limit_time{};
     /// Moves decode images the GPU is done with to the free list (waiting for the oldest first
     /// when asked), freeing those over the cap.
     void RecycleTranscodes(bool wait_for_oldest);
