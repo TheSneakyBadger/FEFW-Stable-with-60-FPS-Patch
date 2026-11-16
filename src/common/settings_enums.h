@@ -144,6 +144,8 @@ ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
 ENUM(FrameGeneration, Off, AmdFsr3, NvidiaDlss);
 // Fortune's Weave's screen-space reflections: as the game sets them (32 rays), 8 rays, or off.
 ENUM(FefwReflections, Full, Reduced, Off);
+// The button icons Fortune's Weave shows: its own (Nintendo Switch), Xbox's or PlayStation's.
+ENUM(FefwButtonIcons, Switch, Xbox, PlayStation);
 // How much sound is queued ahead of the audio device (issue #29: crackling).
 ENUM(AudioBuffer, Low, Medium, High);
 ENUM(RendererBackend, OpenGL_GLSL, Vulkan, Null, OpenGL_GLASM, OpenGL_SPIRV);

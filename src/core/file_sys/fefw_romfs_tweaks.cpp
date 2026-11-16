@@ -16,6 +16,7 @@
 
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/file_sys/fefw_button_icons.h"
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/vfs/vfs_vector.h"
 
@@ -347,7 +348,7 @@ bool Any() {
     return Settings::values.fefw_reflections.GetValue() != Settings::FefwReflections::Full ||
            Settings::values.fefw_no_ambient_occlusion.GetValue() ||
            Settings::values.fefw_reduced_crowd_detail.GetValue() ||
-           Settings::values.fefw_reduced_scenery_detail.GetValue();
+           Settings::values.fefw_reduced_scenery_detail.GetValue() || FefwButtonIcons::Active();
 }
 
 VirtualDir Build(const VirtualDir& romfs) {
@@ -356,10 +357,6 @@ VirtualDir Build(const VirtualDir& romfs) {
     }
     const auto graphics = romfs->GetSubdirectory("Graphics");
     const auto settings = graphics ? graphics->GetSubdirectory("Settings") : nullptr;
-    if (settings == nullptr) {
-        LOG_WARNING(Loader, "Fortune's Weave graphics settings not found in the RomFS; not changed");
-        return nullptr;
-    }
     Node root;
     Changes changes;
     size_t files = 0;
@@ -381,20 +378,32 @@ VirtualDir Build(const VirtualDir& romfs) {
                            Settings::values.fefw_no_ambient_occlusion.GetValue();
     const bool lod = Settings::values.fefw_reduced_crowd_detail.GetValue() ||
                      Settings::values.fefw_reduced_scenery_detail.GetValue();
-    Walk(settings, {"Graphics", "Settings"},
-         [&](const VirtualFile& file, const std::vector<std::string>& path) {
-             const auto name = file->GetName();
-             const bool is_set = set_files && name.ends_with(".set");
-             const bool is_lod = lod && name == "lodPresets.lod";
-             if (!is_set && !is_lod) {
-                 return;
-             }
-             auto bytes = file->ReadAllBytes();
-             const bool changed = is_set ? PatchSet(bytes, changes) : PatchLod(bytes, changes);
-             if (changed) {
-                 add(path, std::move(bytes), name);
-             }
-         });
+    // Xbox or PlayStation button icons: the game's button fonts (fefw_button_icons.cpp).
+    FefwButtonIcons::Build(romfs, [&](const std::vector<std::string>& path, std::vector<u8> bytes,
+                                      const std::string& name) {
+        add(path, std::move(bytes), name);
+    });
+    const bool graphics_tweaks = set_files || lod;
+    if (graphics_tweaks && settings == nullptr) {
+        LOG_WARNING(Loader, "Fortune's Weave graphics settings not found in the RomFS; not changed");
+    }
+    if (graphics_tweaks && settings != nullptr) {
+        Walk(settings, {"Graphics", "Settings"},
+             [&](const VirtualFile& file, const std::vector<std::string>& path) {
+                 const auto name = file->GetName();
+                 const bool is_set = set_files && name.ends_with(".set");
+                 const bool is_lod = lod && name == "lodPresets.lod";
+                 if (!is_set && !is_lod) {
+                     return;
+                 }
+                 auto bytes = file->ReadAllBytes();
+                 const bool changed =
+                     is_set ? PatchSet(bytes, changes) : PatchLod(bytes, changes);
+                 if (changed) {
+                     add(path, std::move(bytes), name);
+                 }
+             });
+    }
     LOG_INFO(Loader,
              "Fortune's Weave graphics settings: {} files changed (reflections off in {}, 8 rays "
              "in {}, ambient occlusion off in {}, {} crowd detail thresholds, {} scenery detail "

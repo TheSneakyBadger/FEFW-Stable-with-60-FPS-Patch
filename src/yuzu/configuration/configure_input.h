@@ -98,6 +98,8 @@ private:
     bool showing_mouse_set = false;
     bool wanted_mouse_set = false; // The set the page on screen asks for
     bool control_sets_finished = false;
+    // Fortune's Eden: the button icons shown in Fortune's Weave (Switch, Xbox or PlayStation).
+    QComboBox* button_icons_combo = nullptr;
 
     Core::System& system;
 };

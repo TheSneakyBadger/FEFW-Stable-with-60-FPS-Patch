@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <string>
 #include <memory>
 #include <optional>
 
@@ -20,6 +22,7 @@
 
 #include "common/common_types.h"
 #include "common/settings_enums.h"
+#include "core/file_sys/fefw_button_icons.h"
 #include "frontend_common/content_manager.h"
 #include "input_common/drivers/tas_input.h"
 #include "qt_common/config/qt_config.h"
@@ -568,6 +571,18 @@ private:
 
     // Whether emulation is currently running in yuzu.
     bool emulation_running = false;
+    // What the game's button icons were drawn with as it started (Fortune's Eden's Xbox and
+    // PlayStation icons), and the last change the player was told about.
+    struct FefwIcons {
+        Settings::FefwButtonIcons icons{};
+        std::string keys;
+        std::array<FileSys::FefwButtonIcons::Face, 4> faces{};
+        bool operator==(const FefwIcons&) const = default;
+    };
+    FefwIcons FefwIconsState();
+    void CheckFefwButtonIcons();
+    FefwIcons fefw_icons_at_boot;
+    FefwIcons fefw_icons_noticed;
     // The path to the game currently running
     QString current_game_path;
     // Whether a user was set on the command line (skips UserSelector if it's forced to show up)

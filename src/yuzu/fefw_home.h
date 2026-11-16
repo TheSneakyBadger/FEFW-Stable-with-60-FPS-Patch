@@ -3,23 +3,26 @@
 
 #pragma once
 
+#include <QImage>
 #include <QPixmap>
 #include <QString>
 #include <QWidget>
 
 #include "common/common_types.h"
 
+class QAction;
 class QCheckBox;
 class QComboBox;
 class QSlider;
 class QLabel;
 class QPushButton;
+class QStackedWidget;
 class QStandardItemModel;
 
-/// Fortune's Eden's launch screen: a card above the game list with Fire Emblem: Fortune's
-/// Weave's icon, title and version, the upscaler in use and Play (with the 60 FPS mode beside it)
-/// / Game Settings / Settings / Check for Updates. Shown and hidden with the game list (it holds the list), and only while
-/// the game is in the list.
+/// Fortune's Eden's home screen, in place of the game list (Fortune's Weave is the only game it is
+/// for): the game's icon and title on the left, and Play with the settings people look for most on
+/// the right. Until the game is found, a page that asks for the game's folder. The game list stays
+/// (hidden) for finding the game; this screen is shown and hidden with it.
 class FefwHome : public QWidget {
     Q_OBJECT
 
@@ -28,9 +31,9 @@ public:
 
     explicit FefwHome(QWidget* list, QWidget* parent = nullptr);
 
-    /// Looks for Fortune's Weave in the game list's model and shows or hides the card.
+    /// Looks for Fortune's Weave in the game list's model: the game's page, or the folder page.
     void Refresh(const QStandardItemModel& model);
-    /// Re-reads the card's settings (after the settings change).
+    /// Re-reads the settings shown (after the settings change).
     void UpdateStatusLine();
 
 signals:
@@ -38,17 +41,33 @@ signals:
     void GameSettingsRequested(u64 title_id, const QString& path);
     void SettingsRequested();
     void UpdateCheckRequested();
-    /// A setting on the card changed (60 FPS, upscaler, quality, frame generation): it is
+    /// A setting on the home screen changed (60 FPS, upscaler, quality, frame generation): it is
     /// already set; save it.
     void SettingChanged();
     void PerformanceSettingsRequested();
+    void AddGameFolderRequested();
+    void InstallRequested();
+    void OpenSaveFolderRequested(u64 title_id, const QString& path);
+    void OpenModsFolderRequested(u64 title_id, const QString& path);
 
 protected:
     bool eventFilter(QObject* object, QEvent* event) override;
 
 private:
-    QWidget* card{};
+    void BuildGamePage(QWidget* page);
+    void BuildSetupPage(QWidget* page);
+
+    QStackedWidget* pages{};
+    QWidget* game_page{};
+    QWidget* setup_page{};
+    QLabel* setup_text{};
+    QAction* open_saves{};
+    QAction* open_mods{};
     QLabel* icon_label{};
+    QWidget* title_block{};
+    QLabel* logo_label{};
+    QImage logo;
+    QString logo_path;
     QLabel* title_label{};
     QLabel* version_label{};
     QLabel* status_label{};
@@ -57,6 +76,7 @@ private:
     QComboBox* upscaler_box{};
     QComboBox* quality_box{};
     QComboBox* frame_gen_box{};
+    QComboBox* button_icons_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
     QCheckBox* hd_rumble_box{};

@@ -160,6 +160,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 
 #include "core/file_sys/card_image.h"
 #include "core/file_sys/common_funcs.h"
+#include "core/file_sys/fefw_button_icons.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/savedata_factory.h"
 
@@ -173,6 +174,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "input_common/drivers/virtual_amiibo.h"
+#include "input_common/main.h"
 
 // Video Core //
 #include "video_core/gpu.h"
@@ -328,6 +330,55 @@ __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
 #endif
+
+
+namespace {
+/// The keys that switch mouse mode, for the game's SL + SR icons.
+std::string FefwMouseModeKeys(HotkeyRegistry& hotkeys) {
+    return hotkeys.GetKeySequence("Main Window", "Toggle Mouse Mode")
+        .toString(QKeySequence::PortableText)
+        .toStdString();
+}
+
+/// Which controller button Player 1 has the game's A, B, X and Y on, for its button icons.
+std::array<FileSys::FefwButtonIcons::Face, 4> FefwFaceButtons(
+    const InputCommon::InputSubsystem& input) {
+    using FileSys::FefwButtonIcons::Face;
+    std::array<Face, 4> faces{Face::East, Face::South, Face::North, Face::West};
+    const auto& players = Settings::values.players.GetValue();
+    const auto& player = !players[0].connected && players[8].connected ? players[8] : players[0];
+    // The controller's own mapping: A on the right, B at the bottom, X on top, Y on the left.
+    // Each of Player 1's A, B, X and Y that is one of those four buttons shows that place.
+    const Common::ParamPackage device{player.buttons[Settings::NativeButton::A]};
+    if (device.Get("engine", "") == "sdl" && device.Has("guid")) {
+        const auto mapping = input.GetButtonMappingForDevice(device);
+        const auto same = [](const Common::ParamPackage& p, const Common::ParamPackage& q) {
+            for (const char* key : {"engine", "guid", "port", "button", "hat", "direction", "axis"}) {
+                if (p.Has(key) != q.Has(key) || p.Get(key, "") != q.Get(key, "")) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        constexpr std::array<std::pair<Settings::NativeButton::Values, Face>, 4> places{{
+            {Settings::NativeButton::A, Face::East},
+            {Settings::NativeButton::B, Face::South},
+            {Settings::NativeButton::X, Face::North},
+            {Settings::NativeButton::Y, Face::West},
+        }};
+        for (size_t i = 0; i < faces.size(); ++i) {
+            const Common::ParamPackage bound{player.buttons[i]};
+            for (const auto& [button, face] : places) {
+                const auto it = mapping.find(button);
+                if (it != mapping.end() && same(bound, it->second)) {
+                    faces[i] = face;
+                }
+            }
+        }
+    }
+    return faces;
+}
+} // Anonymous namespace
 
 constexpr int default_mouse_hide_timeout = 2500;
 constexpr int default_input_update_timeout = 1;
@@ -1013,8 +1064,10 @@ void MainWindow::InitializeWidgets() {
     firmware_label->setFocusPolicy(Qt::NoFocus);
     statusBar()->addPermanentWidget(firmware_label);
 
-    statusBar()->addPermanentWidget(multiplayer_state->GetStatusText(), 0);
-    statusBar()->addPermanentWidget(multiplayer_state->GetStatusIcon(), 0);
+    // Fortune's Eden has no multiplayer: no Multiplayer menu, and no room status ("Not
+    // Connected. Click here to find a room!") in the status bar. Its labels stay hidden inside
+    // multiplayer_state.
+    ui->menu_Multiplayer->menuAction()->setVisible(false);
 
     tas_label = new QLabel();
     tas_label->setObjectName(QStringLiteral("TASlabel"));
@@ -1577,6 +1630,17 @@ void MainWindow::ConnectWidgetEvents() {
     connect(fefw_home, &FefwHome::SettingChanged, this, [this] { config->SaveAllValues(); });
     connect(fefw_home, &FefwHome::PerformanceSettingsRequested, this,
             [this] { OnConfigurePage(tr("Performance")); });
+    connect(fefw_home, &FefwHome::AddGameFolderRequested, this,
+            &MainWindow::OnGameListAddDirectory);
+    connect(fefw_home, &FefwHome::InstallRequested, this, &MainWindow::OnMenuInstallToNAND);
+    connect(fefw_home, &FefwHome::OpenSaveFolderRequested, this,
+            [this](u64 title_id, const QString& path) {
+                OnGameListOpenFolder(title_id, GameListOpenTarget::SaveData, path.toStdString());
+            });
+    connect(fefw_home, &FefwHome::OpenModsFolderRequested, this,
+            [this](u64 title_id, const QString& path) {
+                OnGameListOpenFolder(title_id, GameListOpenTarget::ModData, path.toStdString());
+            });
     connect(game_list, &GameList::SaveConfig, this, &MainWindow::OnSaveConfig);
 
     connect(game_list, &GameList::OpenPerGameGeneralRequested, this,
@@ -2020,6 +2084,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
+    // The game's button icons are drawn as it starts: what they show, and what it was.
+    fefw_icons_at_boot = FefwIconsState();
+    fefw_icons_noticed = fefw_icons_at_boot;
+    FileSys::FefwButtonIcons::SetMouseModeKeys(fefw_icons_at_boot.keys);
+    FileSys::FefwButtonIcons::SetFaceButtons(fefw_icons_at_boot.faces);
 
 #ifdef EGLANTINE_STREAMLINE
     // NVIDIA's Streamline can't be set up again once its frame generation has run in this process
@@ -2331,11 +2400,9 @@ void MainWindow::OnEmulationStopped() {
     render_window->hide();
     loading_screen->hide();
     loading_screen->Clear();
-    if (game_list->IsEmpty()) {
-        game_list_placeholder->show();
-    } else {
-        game_list->show();
-    }
+    // The home screen (with the game list hidden inside it) also covers an empty list: it asks
+    // for the game's folder.
+    game_list->show();
     game_list->SetFilterFocus();
     tas_label->clear();
     input_subsystem->GetTas()->Stop();
@@ -2993,8 +3060,11 @@ void MainWindow::OnGameListAddDirectory() {
 void MainWindow::OnGameListShowList(bool show) {
     if (emulation_running && ui->action_Single_Window_Mode->isChecked())
         return;
-    game_list->setVisible(show);
-    game_list_placeholder->setVisible(!show);
+    // The home screen asks for the game's folder itself, so the empty list's placeholder isn't
+    // shown.
+    static_cast<void>(show);
+    game_list->setVisible(true);
+    game_list_placeholder->setVisible(false);
 };
 
 void MainWindow::OnGameListOpenPerGameProperties(const std::string& file) {
@@ -3803,6 +3873,7 @@ void MainWindow::OnConfigurePage(const QString& page) {
 
     config->SaveAllValues();
     fefw_home->UpdateStatusLine();
+    CheckFefwButtonIcons();
 
     if (emulation_running) {
         render_window->installEventFilter(render_window);
@@ -4004,6 +4075,38 @@ void MainWindow::OnToggleGraphicsAPI() {
     UpdateAPIText();
 }
 
+MainWindow::FefwIcons MainWindow::FefwIconsState() {
+    FefwIcons state;
+    state.icons = Settings::values.fefw_button_icons.GetValue();
+    state.keys = FefwMouseModeKeys(hotkey_registry);
+    state.faces = FefwFaceButtons(*input_subsystem);
+    return state;
+}
+
+void MainWindow::CheckFefwButtonIcons() {
+    if (!emulation_running) {
+        return;
+    }
+    // The game drew its button icons as it started and keeps them: a change to the icons, the
+    // face buttons or the mouse-mode keys shows next time it starts. Said once for each change.
+    const FefwIcons now = FefwIconsState();
+    const auto shown = [](const FefwIcons& state) {
+        return state.icons == Settings::FefwButtonIcons::Switch
+                   ? FefwIcons{state.icons, {}, {}}
+                   : state;
+    };
+    const FefwIcons was = shown(fefw_icons_at_boot), is = shown(now);
+    if (is == was || is == shown(fefw_icons_noticed)) {
+        fefw_icons_noticed = now;
+        return;
+    }
+    fefw_icons_noticed = now;
+    QMessageBox::information(
+        this, tr("Button icons"),
+        tr("The game's button icons will update next time you start the game. Your controls "
+           "have changed already."));
+}
+
 void MainWindow::OnConfigurePerGame() {
     const u64 title_id = QtCommon::system->GetApplicationProcessProgramID();
     OpenPerGameConfiguration(title_id, current_game_path.toStdString());
@@ -4040,6 +4143,7 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
     if (!is_powered_on) {
         config->SaveAllValues();
     }
+    CheckFefwButtonIcons();
 }
 
 void MainWindow::OnLoadAmiibo() {

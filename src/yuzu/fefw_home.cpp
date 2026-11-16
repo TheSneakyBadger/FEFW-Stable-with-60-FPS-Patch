@@ -3,24 +3,44 @@
 
 #include "yuzu/fefw_home.h"
 
+#include <algorithm>
+#include <string>
+#include <string_view>
+
+#include <fmt/format.h>
+
 #include <QBoxLayout>
+#include <QGridLayout>
+#include <QMenu>
+#include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QFrame>
 #include <QSlider>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 
 #include "common/fefw_version.h"
+#include "common/logging.h"
 #include "common/settings.h"
+#include "core/core.h"
+#include "core/file_sys/fefw_title_logo.h"
+#include "core/file_sys/romfs.h"
+#include "core/file_sys/vfs/vfs.h"
+#include "core/file_sys/vfs/vfs_real.h"
+#include "core/loader/loader.h"
+#include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #endif
@@ -29,22 +49,25 @@
 namespace {
 
 /// The game's icon with rounded corners, at the screen's pixel density (size and radius in
-/// logical pixels).
+/// logical pixels). All of it is shown: one that isn't square is fitted in and centred.
 QPixmap Rounded(const QPixmap& source, int size, int radius, qreal pixel_ratio) {
     const int pixels = qRound(size * pixel_ratio);
     QPixmap result(pixels, pixels);
     result.setDevicePixelRatio(pixel_ratio);
     result.fill(Qt::transparent);
+    QPixmap scaled =
+        source.scaled(pixels, pixels, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(pixel_ratio);
+    const QRectF area((pixels - scaled.width()) / 2.0 / pixel_ratio,
+                      (pixels - scaled.height()) / 2.0 / pixel_ratio,
+                      scaled.width() / pixel_ratio, scaled.height() / pixel_ratio);
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     QPainterPath path;
-    path.addRoundedRect(0, 0, size, size, radius, radius);
+    path.addRoundedRect(area, radius, radius);
     painter.setClipPath(path);
-    QPixmap scaled = source.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
-                                   Qt::SmoothTransformation);
-    scaled.setDevicePixelRatio(pixel_ratio);
-    painter.drawPixmap(0, 0, scaled);
+    painter.drawPixmap(area.topLeft(), scaled);
     return result;
 }
 
@@ -118,65 +141,260 @@ QStandardItem* FindGame(QStandardItem* parent, u64 program_id) {
 
 } // Anonymous namespace
 
+namespace {
+
+constexpr int IconSize = 180;
+constexpr int LogoWidth = 400;
+
+const char* const HomeStyle =
+    "#fefwHome { background: #141418; }"
+    "#fefwHomeScroll, #fefwHomeContent { background: transparent; }"
+    "#fefwHomePanel { background: #1b1b21; border: 1px solid #2a2a33; border-radius: 14px; }"
+    "#fefwHomeDivider { background: #2a2a33; border: none; }"
+    "#fefwHomeMoreButton::menu-indicator { image: none; width: 0px; }"
+    "#fefwHomeSetup { background: #141418; }"
+    "#fefwHomeKicker { color: #d9a63a; background: transparent; }"
+    "#fefwHomeTitle { color: #f3efe6; background: transparent; }"
+    "#fefwHomeVersion { font-size: 10pt; color: #a7a5ae; background: transparent; }"
+    "#fefwHomeText { font-size: 12pt; color: #c9c7cf; background: transparent; }"
+    "#fefwHomeStatus { font-size: 9pt; color: #e0b04a; background: transparent; }"
+    "#fefwHomeIcon { background: transparent; }"
+    "#fefwHomeTitleBlock { background: transparent; }"
+    "#fefwHomeSection { font-size: 8pt; font-weight: bold; color: #a7a5ae; background: transparent; }"
+    "#fefwHomeCaption { font-size: 8pt; color: #a7a5ae; background: transparent; }"
+    "#fefwHomeCheck { color: #ece8f3; background: transparent; }"
+    "#fefwHomePlay { padding: 4px 28px;"
+    " color: #1b1824; background-color: #e0b04a; border: 1px solid #e0b04a; border-radius: 12px; }"
+    "#fefwHomePlay:hover { background-color: #f0c463; }"
+    "#fefwHomePlay:pressed { background-color: #c39232; }"
+    "#fefwHomeMore { color: #b9b7c0; background: transparent; border: none; }"
+    "#fefwHomeMore:hover { color: #ece8f3; }";
+
+/// The big gold button (Play, or Choose game folder), its font set on the button and its height in
+/// its own style sheet: Qt sizes a button from its own font, so a bigger style sheet font overflowed
+/// it at Windows display scaling, and the theme's "QPushButton { min-height: 13px }" replaces a
+/// setMinimumHeight() when the style sheet is applied.
+void MakeBigButton(QPushButton* button, int point_size, int extra_height) {
+    button->setObjectName(QStringLiteral("fefwHomePlay"));
+    QFont font = button->font();
+    font.setPointSize(point_size);
+    font.setBold(true);
+    button->setFont(font);
+    const int text_height = QFontMetrics(font).height();
+    button->setStyleSheet(QStringLiteral("min-height: %1px;").arg(text_height + extra_height));
+    button->setMinimumHeight(text_height + extra_height + 10);
+    button->setCursor(Qt::PointingHandCursor);
+}
+
+/// "FIRE EMBLEM" above "Fortune's Weave", in a serif display font (until the game's own logo is
+/// read). Returns the widget holding both.
+QWidget* AddTitle(QBoxLayout* layout, QWidget* outer, int title_points, Qt::Alignment align) {
+    QWidget* const parent = new QWidget(outer);
+    parent->setObjectName(QStringLiteral("fefwHomeTitleBlock"));
+    QVBoxLayout* const block = new QVBoxLayout(parent);
+    block->setContentsMargins(0, 0, 0, 0);
+    block->setSpacing(layout->spacing());
+    QLabel* const kicker = new QLabel(QObject::tr("FIRE EMBLEM"), parent);
+    kicker->setObjectName(QStringLiteral("fefwHomeKicker"));
+    QFont kicker_font = kicker->font();
+    kicker_font.setFamilies({QStringLiteral("Georgia"), QStringLiteral("Cambria"),
+                             QStringLiteral("Times New Roman"), QStringLiteral("serif")});
+    kicker_font.setPointSize(title_points * 2 / 5);
+    kicker_font.setLetterSpacing(QFont::AbsoluteSpacing, 3);
+    kicker->setFont(kicker_font);
+    QLabel* const title = new QLabel(QObject::tr("Fortune's Weave"), parent);
+    title->setObjectName(QStringLiteral("fefwHomeTitle"));
+    QFont title_font = kicker_font;
+    title_font.setLetterSpacing(QFont::AbsoluteSpacing, 0);
+    title_font.setPointSize(title_points);
+    title_font.setBold(true);
+    title->setFont(title_font);
+    kicker->setAlignment(align);
+    title->setAlignment(align);
+    block->addWidget(kicker);
+    block->addWidget(title);
+    layout->addWidget(parent);
+    return parent;
+}
+
+/// The game's language code for its logo texture.
+std::string_view LogoLanguage() {
+    switch (Settings::values.language_index.GetValue()) {
+    case Settings::Language::Japanese:
+        return "JPja";
+    case Settings::Language::Korean:
+        return "KRko";
+    case Settings::Language::Chinese:
+    case Settings::Language::ChineseSimplified:
+        return "CNzh";
+    case Settings::Language::Taiwanese:
+    case Settings::Language::ChineseTraditional:
+        return "TWzh";
+    default:
+        return "USen";
+    }
+}
+
+/// Fortune's Weave's title logo from the player's copy of the game (base game romfs), cropped to
+/// its drawing; null when it can't be read.
+QImage ReadLogo(const QString& path) {
+    const auto file =
+        QtCommon::vfs->OpenFile(path.toStdString(), FileSys::OpenMode::Read);
+    if (file == nullptr) {
+        return {};
+    }
+    const auto loader = Loader::GetLoader(*QtCommon::system, file);
+    FileSys::VirtualFile romfs_file;
+    if (loader == nullptr || loader->ReadRomFS(romfs_file) != Loader::ResultStatus::Success ||
+        romfs_file == nullptr) {
+        return {};
+    }
+    const auto logo =
+        FileSys::FefwTitleLogo::Read(FileSys::ExtractRomFS(romfs_file), LogoLanguage());
+    if (!logo) {
+        return {};
+    }
+    const QImage image(logo->rgba.data(), static_cast<int>(logo->width),
+                       static_cast<int>(logo->height), static_cast<int>(logo->width) * 4,
+                       QImage::Format_RGBA8888);
+    // Crop the clear margin around the lettering.
+    int left = image.width(), top = image.height(), right = -1, bottom = -1;
+    for (int y = 0; y < image.height(); ++y) {
+        const auto* line = reinterpret_cast<const uchar*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (line[x * 4 + 3] > 8) {
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+    }
+    if (right < left || bottom < top) {
+        return {};
+    }
+    return image.copy(left, top, right - left + 1, bottom - top + 1);
+}
+
+} // Anonymous namespace
+
 FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("fefwHome"));
+    setAttribute(Qt::WA_StyledBackground, true);
+    setStyleSheet(QString::fromLatin1(HomeStyle));
 
-    card = new QWidget(this);
-    card->setObjectName(QStringLiteral("fefwHomeCard"));
-    card->setAttribute(Qt::WA_StyledBackground, true);
-    card->setStyleSheet(QStringLiteral(
-        "#fefwHomeCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2a2236,"
-        " stop:0.55 #1f1a2b, stop:1 #2b2416); border: 1px solid #3a3448; border-radius: 14px; }"
-        "#fefwHomeTitle { font-size: 22pt; font-weight: bold; color: #ece8f3; background: transparent; }"
-        "#fefwHomeVersion { font-size: 10pt; color: #a79fb8; background: transparent; }"
-        "#fefwHomeStatus { font-size: 10pt; color: #e0b04a; background: transparent; }"
-        "#fefwHomeIcon { background: transparent; }"
-        "#fefwHomePlay { padding: 4px 28px;"
-        " color: #1b1824; background-color: #e0b04a; border: 1px solid #e0b04a; border-radius: 9px; }"
-        "#fefwHomePlay:hover { background-color: #f0c463; }"
-        "#fefwHomePlay:pressed { background-color: #c39232; }"
-        "#fefwHome60 { color: #ece8f3; background: transparent; }"
-        "#fefwHomeCaption { font-size: 8pt; color: #a79fb8; background: transparent; }"));
+    pages = new QStackedWidget(this);
+    game_page = new QWidget(pages);
+    setup_page = new QWidget(pages);
+    BuildGamePage(game_page);
+    BuildSetupPage(setup_page);
+    pages->addWidget(game_page);
+    pages->addWidget(setup_page);
+    pages->setCurrentWidget(setup_page);
 
-    icon_label = new QLabel(card);
+    // The game list still finds the game (and its icon, title and play time), but isn't shown:
+    // Fortune's Weave is the only game Fortune's Eden is for. It sits in a hidden holder rather
+    // than being hidden itself, so the main window can still show and hide it (and this screen
+    // with it) as before.
+    QWidget* const list_holder = new QWidget(this);
+    QVBoxLayout* const holder_layout = new QVBoxLayout(list_holder);
+    holder_layout->setContentsMargins(0, 0, 0, 0);
+    holder_layout->addWidget(list);
+    list_holder->hide();
+
+    QVBoxLayout* const layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(pages, 1);
+    layout->addWidget(list_holder);
+
+    list->installEventFilter(this);
+    setVisible(list->isVisibleTo(parent));
+}
+
+void FefwHome::BuildGamePage(QWidget* page) {
+    // One centred column: the game's icon, its title logo and version, Play, then a panel with
+    // the settings people look for most and the other pages. It scrolls when the window is short.
+    QScrollArea* const scroll = new QScrollArea(page);
+    scroll->setObjectName(QStringLiteral("fefwHomeScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    QWidget* const content = new QWidget(scroll);
+    content->setObjectName(QStringLiteral("fefwHomeContent"));
+    scroll->setWidget(content);
+    scroll->viewport()->setAutoFillBackground(false);
+
+    icon_label = new QLabel(content);
     icon_label->setObjectName(QStringLiteral("fefwHomeIcon"));
-    icon_label->setFixedSize(144, 144);
-
-    title_label = new QLabel(tr("Fire Emblem: Fortune's Weave"), card);
-    title_label->setObjectName(QStringLiteral("fefwHomeTitle"));
-    version_label = new QLabel(card);
+    icon_label->setFixedSize(IconSize, IconSize);
+    title_label = new QLabel(content); // The game list's title, for the tooltip only
+    title_label->hide();
+    version_label = new QLabel(content);
     version_label->setObjectName(QStringLiteral("fefwHomeVersion"));
-    status_label = new QLabel(card);
-    status_label->setObjectName(QStringLiteral("fefwHomeStatus"));
+    version_label->setAlignment(Qt::AlignHCenter);
+    version_label->setWordWrap(true);
+    logo_label = new QLabel(content);
+    logo_label->setObjectName(QStringLiteral("fefwHomeIcon"));
+    logo_label->setAlignment(Qt::AlignCenter);
+    logo_label->hide();
 
-    play_button = new QPushButton(tr("Play"), card);
-    play_button->setObjectName(QStringLiteral("fefwHomePlay"));
+    QFrame* const right = new QFrame(content); // the settings panel
+    right->setObjectName(QStringLiteral("fefwHomePanel"));
+    right->setMaximumWidth(900);
+
+    play_button = new QPushButton(tr("Play"), content);
     play_button->setIcon(PlayIcon());
-    play_button->setIconSize(QSize(14, 14));
-    // The font is set on the button, not in the style sheet: Qt sizes a button from its own
-    // font, so a bigger style sheet font overflowed the bottom of it at Windows display scaling.
-    QFont play_font = play_button->font();
-    play_font.setPointSize(12);
-    play_font.setBold(true);
-    play_button->setFont(play_font);
-    // The theme's "QPushButton { min-height: 13px }" replaces a setMinimumHeight() when the style
-    // sheet is applied, so the height goes in the button's own style sheet: the text's full
-    // height (descenders included) plus room above and below, in the padding's logical pixels.
-    const int play_text_height = QFontMetrics(play_font).height();
-    play_button->setStyleSheet(
-        QStringLiteral("min-height: %1px;").arg(play_text_height + 8));
-    play_button->setMinimumHeight(play_text_height + 18);
-    play_button->setCursor(Qt::PointingHandCursor);
-    // The 60 FPS mode, beside Play (it takes effect when the game starts).
-    sixty_fps = new QCheckBox(tr("60 FPS"), card);
-    sixty_fps->setObjectName(QStringLiteral("fefwHome60"));
-    sixty_fps->setCursor(Qt::PointingHandCursor);
+    play_button->setIconSize(QSize(16, 16));
+    MakeBigButton(play_button, 15, 22);
+    play_button->setFixedWidth(280);
+
+    const auto caption = [right](const QString& name) {
+        QLabel* const label = new QLabel(name, right);
+        label->setObjectName(QStringLiteral("fefwHomeCaption"));
+        return label;
+    };
+    const auto check = [right](const QString& name) {
+        QCheckBox* const box = new QCheckBox(name, right);
+        box->setObjectName(QStringLiteral("fefwHomeCheck"));
+        box->setCursor(Qt::PointingHandCursor);
+        return box;
+    };
+
+    sixty_fps = check(tr("60 FPS"));
     sixty_fps->setToolTip(tr("Fortune's Weave runs at up to 60 FPS instead of 30 (game version "
                              "1.1.0). Takes effect when the game starts."));
     sixty_fps->setChecked(Settings::values.fefw_60fps.GetValue());
-    // The settings people most often look for, beside Play: the upscaler, its quality and
-    // frame generation (all take effect when the game starts), and the Performance page.
-    upscaler_box = new QComboBox(card);
+    ultrawide_box = check(tr("Ultrawide"));
+    ultrawide_box->setToolTip(tr("Kompas9's ultrawide patch: 3440x1440 (21:9), with the HUD, menus "
+                                 "and movies kept at 16:9. For 21:9 monitors only; play "
+                                 "fullscreen. Game version 1.1.0 only. Takes effect when the game "
+                                 "starts."));
+    hdr_box = check(tr("HDR"));
+    hdr_box->setToolTip(tr("HDR10 output when Windows HDR is on: the game sends its own HDR "
+                           "picture. Takes effect when the game starts."));
+    // RenHDrum HD Rumble (experimental, off by default; also in Controls > Vibration).
+    hd_rumble_box = check(tr("HD Rumble"));
+    hd_rumble_box->setToolTip(
+        tr("Experimental: RenHDrum's HD Rumble for the Switch Pro Controller and Joy-Con, with "
+           "haptics for DualSense, rumble for Xbox controllers and the grips of the Steam "
+           "Controller (2026), closer to a real Switch. Off: "
+           "the standard rumble. Takes effect for controllers connected after it is changed, "
+           "or after restarting Fortune's Eden. Its options are in Settings > Controls > "
+           "Vibration > HD Rumble."));
+    hd_rumble_box->setChecked(Settings::values.hd_rumble_enabled.GetValue());
+    paper_white = new QSlider(Qt::Horizontal, right);
+    paper_white->setRange(80, 500);
+    paper_white->setSingleStep(10);
+    paper_white->setPageStep(50);
+    paper_white->setCursor(Qt::PointingHandCursor);
+    paper_white->setToolTip(tr("How bright the game's white (menus, text, daylight) is in HDR, "
+                               "in nits. 250 suits most HDR monitors; lower it if the picture "
+                               "looks too bright. Takes effect when the game starts."));
+    paper_white_label = caption(QString{});
+    paper_white_label->setMinimumWidth(140);
+
+    upscaler_box = new QComboBox(right);
     for (const Settings::Upscaler upscaler :
          {Settings::Upscaler::Fsr3, Settings::Upscaler::NvidiaDlss, Settings::Upscaler::Fsr4,
           Settings::Upscaler::GameDlss}) {
@@ -185,12 +403,12 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     upscaler_box->setToolTip(tr("What upscales the game's 3D scene: AMD FSR 3.1 (any card), "
                                 "NVIDIA DLSS (GeForce RTX), AMD FSR 4 (Radeon RX 7000/9000) or "
                                 "the game's own DLSS. Takes effect when the game starts."));
-    quality_box = new QComboBox(card);
+    quality_box = new QComboBox(right);
     quality_box->setToolTip(tr("How big the 3D scene is drawn before it is upscaled: Native "
                                "(DLAA with NVIDIA DLSS) is the sharpest and heaviest, Performance "
                                "the lightest. Applies at 1X resolution. Takes effect when the "
                                "game starts."));
-    frame_gen_box = new QComboBox(card);
+    frame_gen_box = new QComboBox(right);
     frame_gen_box->addItem(tr("Off"), static_cast<int>(Settings::FrameGeneration::Off));
     frame_gen_box->addItem(tr("AMD FSR 3.1"), static_cast<int>(Settings::FrameGeneration::AmdFsr3));
     frame_gen_box->addItem(tr("NVIDIA DLSS"),
@@ -200,128 +418,133 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
            "Needs a display faster than the game's frame rate. AMD FSR 3.1: any card. NVIDIA "
            "DLSS: GeForce RTX 40 and 50, with NVIDIA Streamline's DLLs in the user folder's "
            "streamline folder. Takes effect when the game starts. Experimental."));
-    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box}) {
+    button_icons_box = new QComboBox(right);
+    button_icons_box->addItem(tr("Nintendo Switch"),
+                              static_cast<int>(Settings::FefwButtonIcons::Switch));
+    button_icons_box->addItem(tr("Xbox"), static_cast<int>(Settings::FefwButtonIcons::Xbox));
+    button_icons_box->addItem(tr("PlayStation"),
+                              static_cast<int>(Settings::FefwButtonIcons::PlayStation));
+    button_icons_box->setToolTip(
+        tr("The button icons the game shows. Each shows the controller button Player 1 has it "
+           "on, so they follow your mapping. Also in Settings > Controls. Takes effect when the "
+           "game starts."));
+    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setCursor(Qt::PointingHandCursor);
-        box->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     }
-    // HDR output and its paper white (also in the Graphics settings).
-    hdr_box = new QCheckBox(tr("HDR"), card);
-    hdr_box->setObjectName(QStringLiteral("fefwHome60"));
-    hdr_box->setCursor(Qt::PointingHandCursor);
-    hdr_box->setToolTip(tr("HDR10 output when Windows HDR is on: the game sends its own HDR "
-                           "picture. Takes effect when the game starts."));
-    ultrawide_box = new QCheckBox(tr("Ultrawide"), card);
-    ultrawide_box->setObjectName(QStringLiteral("fefwHome60"));
-    ultrawide_box->setCursor(Qt::PointingHandCursor);
-    ultrawide_box->setToolTip(tr("Kompas9's ultrawide patch: 3440x1440 (21:9), with the HUD, menus "
-                                 "and movies kept at 16:9. For 21:9 monitors only; play "
-                                 "fullscreen. Game version 1.1.0 only. Takes effect when the game "
-                                 "starts."));
-    // RenHDrum HD Rumble (experimental, off by default; also in Controls > Vibration).
-    hd_rumble_box = new QCheckBox(tr("HD Rumble"), card);
-    hd_rumble_box->setObjectName(QStringLiteral("fefwHome60"));
-    hd_rumble_box->setCursor(Qt::PointingHandCursor);
-    hd_rumble_box->setToolTip(
-        tr("Experimental: RenHDrum's HD Rumble for the Switch Pro Controller and Joy-Con, with "
-           "haptics for DualSense, rumble for Xbox controllers and the grips of the Steam "
-           "Controller (2026), closer to a real Switch. Off: "
-           "the standard rumble. Takes effect for controllers connected after it is changed, "
-           "or after restarting Fortune's Eden. Its options are in Settings > Controls > "
-           "Vibration > HD Rumble."));
-    hd_rumble_box->setChecked(Settings::values.hd_rumble_enabled.GetValue());
-    paper_white = new QSlider(Qt::Horizontal, card);
-    paper_white->setRange(80, 500);
-    paper_white->setSingleStep(10);
-    paper_white->setPageStep(50);
-    paper_white->setMinimumWidth(130);
-    paper_white->setCursor(Qt::PointingHandCursor);
-    paper_white->setToolTip(tr("How bright the game's white (menus, text, daylight) is in HDR, "
-                               "in nits. 250 suits most HDR monitors; lower it if the picture "
-                               "looks too bright. Takes effect when the game starts."));
-    paper_white_label = new QLabel(card);
-    paper_white_label->setObjectName(QStringLiteral("fefwHomeCaption"));
-    QPushButton* const performance = new QPushButton(tr("Performance Settings"), card);
-    QPushButton* const game_settings = new QPushButton(tr("Game Settings"), card);
-    QPushButton* const settings = new QPushButton(tr("Settings"), card);
-    QPushButton* const updates = new QPushButton(tr("Check for Updates"), card);
+    status_label = new QLabel(right);
+    status_label->setObjectName(QStringLiteral("fefwHomeStatus"));
+    status_label->setWordWrap(true);
+
+    QPushButton* const performance = new QPushButton(tr("Performance Settings"), right);
+    QPushButton* const game_settings = new QPushButton(tr("Game Settings"), right);
+    QPushButton* const settings = new QPushButton(tr("Settings"), right);
+    QPushButton* const updates = new QPushButton(tr("Check for Updates"), right);
     for (QPushButton* const button : {performance, game_settings, settings, updates}) {
         button->setCursor(Qt::PointingHandCursor);
+        button->setMinimumHeight(34);
     }
-    // A small caption above each drop-down.
-    const auto captioned = [this](const QString& caption, QWidget* widget) {
-        QLabel* const label = new QLabel(caption, card);
-        label->setObjectName(QStringLiteral("fefwHomeCaption"));
+    // What the game list's right-click menu was used for, now in one menu.
+    QPushButton* const more = new QPushButton(QStringLiteral("\u22EF"), right);
+    more->setObjectName(QStringLiteral("fefwHomeMoreButton"));
+    more->setToolTip(tr("Game folder, saves, mods and updates"));
+    more->setCursor(Qt::PointingHandCursor);
+    more->setMinimumSize(44, 34);
+    QMenu* const more_menu = new QMenu(more);
+    QAction* const add_folder = more_menu->addAction(tr("Add a game folder..."));
+    open_saves = more_menu->addAction(tr("Open the save folder"));
+    open_mods = more_menu->addAction(tr("Open the mods folder"));
+    QAction* const install = more_menu->addAction(tr("Install an update or DLC..."));
+    more->setMenu(more_menu);
+
+    // A caption above a control.
+    const auto labelled = [&caption](const QString& name, QWidget* widget) {
         QVBoxLayout* const column = new QVBoxLayout;
-        column->setSpacing(2);
-        column->addWidget(label);
+        column->setSpacing(4);
+        column->addWidget(caption(name));
         column->addWidget(widget);
         return column;
     };
 
-    QHBoxLayout* const buttons = new QHBoxLayout;
-    buttons->setSpacing(8);
-    buttons->addWidget(play_button, 0, Qt::AlignBottom);
-    buttons->addSpacing(4);
-    buttons->addWidget(sixty_fps, 0, Qt::AlignBottom);
-    buttons->addSpacing(6);
-    buttons->addWidget(ultrawide_box, 0, Qt::AlignBottom);
-    buttons->addSpacing(6);
-    buttons->addWidget(hdr_box, 0, Qt::AlignBottom);
+    // First row: the switches and the HDR brightness.
+    QHBoxLayout* const switches = new QHBoxLayout;
+    switches->setSpacing(22);
+    switches->addWidget(sixty_fps);
+    switches->addWidget(ultrawide_box);
+    switches->addWidget(hdr_box);
     {
         QVBoxLayout* const column = new QVBoxLayout;
-        column->setSpacing(2);
+        column->setSpacing(4);
         column->addWidget(paper_white_label);
         column->addWidget(paper_white);
-        buttons->addLayout(column);
+        paper_white->setMinimumWidth(150);
+        switches->addLayout(column);
     }
 #ifdef _WIN32
-    buttons->addSpacing(6);
-    buttons->addLayout(captioned(tr("Experimental"), hd_rumble_box));
+    switches->addLayout(labelled(tr("Experimental"), hd_rumble_box));
 #else
     // RenHDrum ships for Windows only (renhdrum.dll); other builds keep the standard rumble.
     hd_rumble_box->hide();
 #endif
-    buttons->addSpacing(10);
-    buttons->addLayout(captioned(tr("Upscaler"), upscaler_box));
-    buttons->addLayout(captioned(tr("Upscaler quality"), quality_box));
-    buttons->addLayout(captioned(tr("Frame generation"), frame_gen_box));
+    switches->addStretch();
+
+    // Second row: upscaling, frame generation and the button icons.
+    QHBoxLayout* const choices = new QHBoxLayout;
+    choices->setSpacing(14);
+    choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
+    choices->addLayout(labelled(tr("Upscaler quality"), quality_box));
+    choices->addLayout(labelled(tr("Frame generation"), frame_gen_box));
+    choices->addLayout(labelled(tr("Button icons"), button_icons_box));
+    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
+        box->setMinimumWidth(150);
+    }
+    choices->addStretch();
+
+    QFrame* const divider = new QFrame(right);
+    divider->setObjectName(QStringLiteral("fefwHomeDivider"));
+    divider->setFixedHeight(1);
+
+    QHBoxLayout* const buttons = new QHBoxLayout;
+    buttons->setSpacing(8);
+    buttons->addWidget(performance);
+    buttons->addWidget(game_settings);
+    buttons->addWidget(settings);
+    buttons->addWidget(updates);
     buttons->addStretch();
+    buttons->addWidget(more);
 
-    QHBoxLayout* const more = new QHBoxLayout;
-    more->setSpacing(8);
-    more->addWidget(performance);
-    more->addWidget(game_settings);
-    more->addWidget(settings);
-    more->addWidget(updates);
-    more->addStretch();
+    QVBoxLayout* const panel_layout = new QVBoxLayout(right);
+    panel_layout->setContentsMargins(22, 18, 22, 18);
+    panel_layout->setSpacing(14);
+    panel_layout->addLayout(switches);
+    panel_layout->addLayout(choices);
+    panel_layout->addWidget(status_label);
+    panel_layout->addWidget(divider);
+    panel_layout->addLayout(buttons);
 
-    QVBoxLayout* const text = new QVBoxLayout;
-    text->setSpacing(4);
-    text->addStretch();
-    text->addWidget(title_label);
-    text->addWidget(version_label);
-    text->addWidget(status_label);
-    text->addSpacing(10);
-    text->addLayout(buttons);
-    text->addSpacing(4);
-    text->addLayout(more);
-    text->addStretch();
+    QVBoxLayout* const column = new QVBoxLayout(content);
+    column->setContentsMargins(32, 24, 32, 24);
+    column->setSpacing(0);
+    column->addStretch(1);
+    column->addWidget(icon_label, 0, Qt::AlignHCenter);
+    column->addSpacing(18);
+    title_block = AddTitle(column, content, 34, Qt::AlignHCenter);
+    column->addWidget(logo_label, 0, Qt::AlignHCenter);
+    column->addSpacing(10);
+    column->addWidget(version_label);
+    column->addSpacing(18);
+    column->addWidget(play_button, 0, Qt::AlignHCenter);
+    column->addSpacing(18);
+    QHBoxLayout* const centre = new QHBoxLayout;
+    centre->addStretch(1);
+    centre->addWidget(right, 100);
+    centre->addStretch(1);
+    column->addLayout(centre);
+    column->addStretch(1);
 
-    QHBoxLayout* const card_layout = new QHBoxLayout(card);
-    card_layout->setContentsMargins(20, 18, 20, 18);
-    card_layout->setSpacing(22);
-    card_layout->addWidget(icon_label, 0, Qt::AlignVCenter);
-    card_layout->addLayout(text, 1);
-
-    QVBoxLayout* const layout = new QVBoxLayout(this);
-    layout->setContentsMargins(10, 10, 10, 0);
-    layout->setSpacing(10);
-    layout->addWidget(card);
-    layout->addWidget(list, 1);
-
-    card->hide();
-    list->installEventFilter(this);
-    setVisible(list->isVisibleTo(parent));
+    QHBoxLayout* const layout = new QHBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(scroll);
 
     connect(play_button, &QPushButton::clicked, this, [this] {
         if (!game_path.isEmpty()) {
@@ -364,6 +587,14 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
             emit SettingChanged();
         }
     });
+    connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto icons =
+            static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.fefw_button_icons.GetValue() != icons) {
+            Settings::values.fefw_button_icons.SetValue(icons);
+            emit SettingChanged();
+        }
+    });
     connect(performance, &QPushButton::clicked, this, &FefwHome::PerformanceSettingsRequested);
     connect(ultrawide_box, &QCheckBox::toggled, this, [this](bool checked) {
         if (Settings::values.fefw_ultrawide.GetValue() != checked) {
@@ -391,11 +622,78 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
     connect(paper_white, &QSlider::sliderReleased, this, &FefwHome::SettingChanged);
     connect(settings, &QPushButton::clicked, this, &FefwHome::SettingsRequested);
     connect(updates, &QPushButton::clicked, this, &FefwHome::UpdateCheckRequested);
+    connect(add_folder, &QAction::triggered, this, &FefwHome::AddGameFolderRequested);
+    connect(install, &QAction::triggered, this, &FefwHome::InstallRequested);
+    connect(open_saves, &QAction::triggered, this, [this] {
+        if (!game_path.isEmpty()) {
+            emit OpenSaveFolderRequested(TitleId, game_path);
+        }
+    });
+    connect(open_mods, &QAction::triggered, this, [this] {
+        if (!game_path.isEmpty()) {
+            emit OpenModsFolderRequested(TitleId, game_path);
+        }
+    });
+}
+
+void FefwHome::BuildSetupPage(QWidget* page) {
+    page->setObjectName(QStringLiteral("fefwHomeSetup"));
+    page->setAttribute(Qt::WA_StyledBackground, true);
+
+    setup_text = new QLabel(tr("Looking for Fortune's Weave..."), page);
+    setup_text->setObjectName(QStringLiteral("fefwHomeText"));
+    setup_text->setWordWrap(true);
+    setup_text->setAlignment(Qt::AlignCenter);
+    setup_text->setMaximumWidth(640);
+
+    QPushButton* const choose = new QPushButton(tr("Choose game folder"), page);
+    MakeBigButton(choose, 13, 18);
+    QPushButton* const install = new QPushButton(tr("Install update or DLC"), page);
+    QPushButton* const settings = new QPushButton(tr("Settings"), page);
+    QPushButton* const updates = new QPushButton(tr("Check for Updates"), page);
+    for (QPushButton* const button : {install, settings, updates}) {
+        button->setCursor(Qt::PointingHandCursor);
+        button->setMinimumHeight(34);
+    }
+
+    QVBoxLayout* const column = new QVBoxLayout;
+    column->setSpacing(6);
+    AddTitle(column, page, 40, Qt::AlignHCenter);
+    column->addSpacing(18);
+    column->addWidget(setup_text, 0, Qt::AlignHCenter);
+    column->addSpacing(18);
+    {
+        QHBoxLayout* const row = new QHBoxLayout;
+        row->setSpacing(10);
+        row->addStretch();
+        row->addWidget(choose);
+        row->addWidget(install, 0, Qt::AlignVCenter);
+        row->addStretch();
+        column->addLayout(row);
+    }
+
+    QHBoxLayout* const bottom = new QHBoxLayout;
+    bottom->setSpacing(8);
+    bottom->addStretch();
+    bottom->addWidget(settings);
+    bottom->addWidget(updates);
+    bottom->addStretch();
+
+    QVBoxLayout* const layout = new QVBoxLayout(page);
+    layout->setContentsMargins(48, 32, 48, 24);
+    layout->addStretch(2);
+    layout->addLayout(column);
+    layout->addStretch(3);
+    layout->addLayout(bottom);
+
+    connect(choose, &QPushButton::clicked, this, &FefwHome::AddGameFolderRequested);
+    connect(install, &QPushButton::clicked, this, &FefwHome::InstallRequested);
+    connect(settings, &QPushButton::clicked, this, &FefwHome::SettingsRequested);
+    connect(updates, &QPushButton::clicked, this, &FefwHome::UpdateCheckRequested);
 }
 
 bool FefwHome::eventFilter(QObject* object, QEvent* event) {
-    // The main window shows and hides the game list (a game starting, the empty-list placeholder):
-    // the card and the margins go with it.
+    // The main window shows and hides the game list (a game starting): this screen goes with it.
     if (event->type() == QEvent::ShowToParent) {
         show();
     } else if (event->type() == QEvent::HideToParent) {
@@ -408,23 +706,52 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     QStandardItem* const item = FindGame(model.invisibleRootItem(), TitleId);
     if (!item) {
         game_path.clear();
-        card->hide();
+        setup_text->setText(
+            tr("Fortune's Eden couldn't find the game yet. Choose the folder that holds your copy "
+               "of Fortune's Weave (an .nsp or .xci file, or the extracted game), then install "
+               "its update if you have it."));
+        pages->setCurrentWidget(setup_page);
         return;
     }
     game_path = item->data(GameListItemPath::FullPathRole).toString();
 
-    // The icon at its own size (256 px for most games), not the list's 64 px one: scaled up to
-    // 144 px, and more on scaled screens, that was blurry (#68).
-    QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
-    if (picture.isNull()) {
-        picture = item->data(Qt::DecorationRole).value<QPixmap>();
+    // The game's icon at its own size (256 px), at the screen's pixel density (#68), with the
+    // game's own title logo under it in place of the written title (read once). The game list
+    // puts a small stand-in there when it can't read the icon: then the logo alone.
+    const QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
+    const bool has_icon = !picture.isNull() && std::min(picture.width(), picture.height()) >= 128;
+    if (has_icon) {
+        // The icon's top rows hold the bottom edge of lettering Nintendo's crop cut through:
+        // trimmed (and the sides a little, to stay square).
+        const int top = picture.height() * 10 / 256;
+        const int side = top / 2;
+        const QPixmap trimmed =
+            picture.copy(side, top, picture.width() - 2 * side, picture.height() - top);
+        icon_label->setPixmap(Rounded(trimmed, IconSize, 30, icon_label->devicePixelRatioF()));
+    } else if (!picture.isNull()) {
+        icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
     }
-    if (!picture.isNull()) {
-        icon_label->setPixmap(Rounded(picture, 144, 18, icon_label->devicePixelRatioF()));
+    if (logo_path != game_path) {
+        logo_path = game_path;
+        logo = ReadLogo(game_path);
+        LOG_INFO(Frontend, "Home screen: title logo {}",
+                 logo.isNull() ? std::string{"not found, showing the written title"}
+                               : fmt::format("{}x{}", logo.width(), logo.height()));
+        if (!logo.isNull()) {
+            const qreal ratio = logo_label->devicePixelRatioF();
+            QPixmap pixmap = QPixmap::fromImage(
+                logo.scaledToWidth(qRound(LogoWidth * ratio), Qt::SmoothTransformation));
+            pixmap.setDevicePixelRatio(ratio);
+            logo_label->setPixmap(pixmap);
+        }
     }
+    logo_label->setVisible(!logo.isNull());
+    title_block->setVisible(logo.isNull());
+    icon_label->setVisible(has_icon || logo.isNull());
     const QString title = item->data(GameListItemPath::TitleRole).toString();
     if (!title.isEmpty()) {
         title_label->setText(title);
+        icon_label->setToolTip(title);
     }
     // The list's tooltip holds the play time and the game's update version, one per line.
     const QStringList lines = item->data(Qt::ToolTipRole).toString().split(QLatin1Char('\n'));
@@ -432,7 +759,7 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
                                .arg(lines.value(1), lines.value(0),
                                     QString::fromUtf8(Common::FefwTitle)));
     UpdateStatusLine();
-    card->show();
+    pages->setCurrentWidget(game_page);
 }
 
 void FefwHome::UpdateStatusLine() {
@@ -453,6 +780,7 @@ void FefwHome::UpdateStatusLine() {
     }
 #endif
     status_label->setText(notes.join(QLatin1Char('\n')));
+    status_label->setVisible(!notes.isEmpty());
     status_label->setVisible(!status_label->text().isEmpty());
 
     const QSignalBlocker sixty_blocker{sixty_fps};
@@ -482,6 +810,9 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker paper_white_blocker{paper_white};
     paper_white->setValue(Settings::values.hdr_paper_white.GetValue());
     paper_white_label->setText(tr("Paper white: %1 nits").arg(paper_white->value()));
+    const QSignalBlocker button_icons_blocker{button_icons_box};
+    button_icons_box->setCurrentIndex(button_icons_box->findData(
+        static_cast<int>(Settings::values.fefw_button_icons.GetValue())));
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
