@@ -34,6 +34,9 @@ constexpr u32 ButtonZL = 0xE0E6;
 constexpr u32 ButtonZR = 0xE0E7;
 constexpr u32 ButtonPlus = 0xE0EF;
 constexpr u32 ButtonMinus = 0xE0F0;
+// The Joy-Con's SL and SR: the game's mouse-mode switch (SL + SR), Ctrl + Enter in Fortune's Eden.
+constexpr u32 ButtonSL = 0xE0E8;
+constexpr u32 ButtonSR = 0xE0E9;
 // The game's direction buttons (four round buttons, one filled) and the font's own d-pads.
 constexpr std::array<std::pair<u32, u32>, 6> DpadCopies{{
     {0xE0AD, 0xE0D1}, // Up
@@ -523,7 +526,7 @@ float Segment(float px, float py, float ax, float ay, float bx, float by) {
     return std::hypot(px - ax - k * dx, py - ay - k * dy);
 }
 
-enum class Symbol { Circle, Cross, Triangle, Square, Menu, View, Create };
+enum class Symbol { Circle, Cross, Triangle, Square, Menu, View, Create, Enter };
 
 /// Cuts a symbol out of a round button: its distance field, anti-aliased by a pixel.
 Picture CutSymbol(const Picture& base, Symbol symbol) {
@@ -589,6 +592,17 @@ Picture CutSymbol(const Picture& base, Symbol symbol) {
                 d = std::min({stem, head, base_line, side_l, side_r});
                 break;
             }
+            case Symbol::Enter: {
+                // The return arrow: down the right, along the bottom, an arrowhead on the left.
+                const float th = r * 0.13f;
+                const float down = Segment(X, Y, r * 0.38f, -r * 0.40f, r * 0.38f, r * 0.12f);
+                const float along = Segment(X, Y, r * 0.38f, r * 0.12f, -r * 0.30f, r * 0.12f);
+                const float head =
+                    std::min(Segment(X, Y, -r * 0.42f, r * 0.12f, -r * 0.16f, -r * 0.14f),
+                             Segment(X, Y, -r * 0.42f, r * 0.12f, -r * 0.16f, r * 0.38f));
+                d = std::min({down, along, head}) - th / 2;
+                break;
+            }
             }
             const float cover = std::clamp(0.5f - d, 0.0f, 1.0f);
             out.At(x, y) *= 1.0f - cover;
@@ -634,6 +648,11 @@ bool Redraw(std::vector<u8>& bytes, Settings::FefwButtonIcons icons) {
     font.Put(ButtonZR, CutLabel(zr, xbox ? "RT" : "R2", 0.40f, 0.70f, 0.06f));
     font.Put(ButtonPlus, CutSymbol(plus, Symbol::Menu));
     font.Put(ButtonMinus, CutSymbol(minus, xbox ? Symbol::View : Symbol::Create));
+    // SL + SR (switching mouse mode) as Fortune's Eden's Ctrl + Enter.
+    if (font.Has(ButtonSL) && font.Has(ButtonSR)) {
+        font.Put(ButtonSL, CutLabel(Solid(font.Get(ButtonSL)), "Ctrl", 0.40f, 0.80f));
+        font.Put(ButtonSR, CutSymbol(Solid(font.Get(ButtonSR)), Symbol::Enter));
+    }
     for (const auto& [to, from] : DpadCopies) {
         if (font.Has(to) && font.Has(from)) {
             font.Put(to, font.Get(from));
