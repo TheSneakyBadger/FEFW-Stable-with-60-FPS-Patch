@@ -226,11 +226,14 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "frame rate cap: above it, frames are dropped and it stutters. Takes effect when a "
               "game starts. Experimental."));
     INSERT(Settings, dlss_mfg_max_seen, QString(), QString());
-    INSERT(Settings, mfg_frame_cap_fps, tr("Frame rate cap with frame generation (0: refresh rate):"),
-           tr("If you cap the frame rate below your display's refresh rate (in the NVIDIA app or "
-              "Control Panel, or the MFG Unlocker's menu), enter that cap here, so the pacing "
-              "keeps frame generation's frames under it (a 158 cap at 3x: the game at about 52 "
-              "FPS). 0: your display's refresh rate."));
+    INSERT(Settings, mfg_frame_cap_fps,
+           tr("Your frame rate cap, if you have one (0: none):"),
+           tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, "
+              "RTSS or the MFG Unlocker's menu), set this to the same number, so frame "
+              "generation's pacing stays just under your cap (with a 158 cap at 3x, the game runs "
+              "at about 52 FPS). If you don't have a cap, leave it at 0: Fortune's Eden then caps "
+              "to your display's refresh rate itself, and you don't need one. A cap of your own "
+              "below the refresh rate with this at 0 makes it stutter."));
     INSERT(Settings, mfg_frame_cap, tr("Frame generation pacing:"),
            tr("Display refresh rate: with frame generation on, the game's frame rate is held to "
               "your display's refresh rate divided by the frames shown for each of the game's (for "
