@@ -142,7 +142,7 @@ QStandardItem* FindGame(QStandardItem* parent, u64 program_id) {
 namespace {
 
 constexpr int IconSize = 240;
-constexpr int LogoWidth = 520;
+constexpr int LogoWidth = 440;
 
 const char* const HomeStyle =
     "#fefwHome { background: #141418; }"
@@ -704,20 +704,19 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     }
     game_path = item->data(GameListItemPath::FullPathRole).toString();
 
-    // The game's icon at its own size (256 px), at the screen's pixel density (#68). Without it
-    // (the game list puts its small stand-in there when it can't read the icon), the game's own
-    // title logo in place of the icon and the written title, read once.
+    // The game's icon at its own size (256 px), at the screen's pixel density (#68), with the
+    // game's own title logo under it in place of the written title (read once). The game list
+    // puts a small stand-in there when it can't read the icon: then the logo alone.
     const QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
     const bool has_icon = !picture.isNull() && std::min(picture.width(), picture.height()) >= 128;
-    if (has_icon) {
+    if (!picture.isNull()) {
         icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
-        logo_path.clear();
-        logo = {};
-    } else if (logo_path != game_path) {
+    }
+    if (logo_path != game_path) {
         logo_path = game_path;
         logo = ReadLogo(game_path);
-        LOG_INFO(Frontend, "Home screen: no game icon; title logo {}",
-                 logo.isNull() ? std::string{"not found either"}
+        LOG_INFO(Frontend, "Home screen: title logo {}",
+                 logo.isNull() ? std::string{"not found, showing the written title"}
                                : fmt::format("{}x{}", logo.width(), logo.height()));
         if (!logo.isNull()) {
             const qreal ratio = logo_label->devicePixelRatioF();
@@ -725,15 +724,11 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
                 logo.scaledToWidth(qRound(LogoWidth * ratio), Qt::SmoothTransformation));
             pixmap.setDevicePixelRatio(ratio);
             logo_label->setPixmap(pixmap);
-        } else if (!picture.isNull()) {
-            icon_label->setPixmap(
-                Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
         }
     }
-    const bool show_logo = !has_icon && !logo.isNull();
-    logo_label->setVisible(show_logo);
-    icon_label->setVisible(!show_logo);
-    title_block->setVisible(!show_logo);
+    logo_label->setVisible(!logo.isNull());
+    title_block->setVisible(logo.isNull());
+    icon_label->setVisible(has_icon || logo.isNull());
     const QString title = item->data(GameListItemPath::TitleRole).toString();
     if (!title.isEmpty()) {
         title_label->setText(title);
