@@ -431,6 +431,18 @@ struct Values {
     // shown at an even pace instead of some being dropped (stutter). Off: no limit.
     SwitchableSetting<MfgFrameCap, true> mfg_frame_cap{linkage, MfgFrameCap::Display,
                                                        "mfg_frame_cap", Category::Renderer};
+    // The frame rate cap that pacing holds frame generation's frames to, when it's below the
+    // display's refresh rate (one set in the NVIDIA app or the MFG Unlocker's menu); 0: the
+    // display's refresh rate.
+    SwitchableSetting<int, true> mfg_frame_cap_fps{linkage,
+                                                   0,
+                                                   0,
+                                                   1000,
+                                                   "mfg_frame_cap_fps",
+                                                   Category::Renderer,
+                                                   Specialization::Scalar,
+                                                   true,
+                                                   true};
     // The most frames DLSS frame generation said it could make for each of the game's, the last
     // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.
     Setting<u32> dlss_mfg_max_seen{linkage, 0, "dlss_mfg_max_seen", Category::Renderer};
