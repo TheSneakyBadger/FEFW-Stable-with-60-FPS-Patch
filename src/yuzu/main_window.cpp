@@ -333,15 +333,17 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 
 
 namespace {
-/// Tells the game's button icons (Xbox and PlayStation) which controller button Player 1 has A,
-/// B, X and Y on and which keys switch mouse mode, before a game starts.
-void SetFefwButtonIcons(const InputCommon::InputSubsystem& input, HotkeyRegistry& hotkeys) {
-    using FileSys::FefwButtonIcons::Face;
-    FileSys::FefwButtonIcons::SetMouseModeKeys(
-        hotkeys.GetKeySequence("Main Window", "Toggle Mouse Mode")
-            .toString(QKeySequence::PortableText)
-            .toStdString());
+/// The keys that switch mouse mode, for the game's SL + SR icons.
+std::string FefwMouseModeKeys(HotkeyRegistry& hotkeys) {
+    return hotkeys.GetKeySequence("Main Window", "Toggle Mouse Mode")
+        .toString(QKeySequence::PortableText)
+        .toStdString();
+}
 
+/// Which controller button Player 1 has the game's A, B, X and Y on, for its button icons.
+std::array<FileSys::FefwButtonIcons::Face, 4> FefwFaceButtons(
+    const InputCommon::InputSubsystem& input) {
+    using FileSys::FefwButtonIcons::Face;
     std::array<Face, 4> faces{Face::East, Face::South, Face::North, Face::West};
     const auto& players = Settings::values.players.GetValue();
     const auto& player = !players[0].connected && players[8].connected ? players[8] : players[0];
@@ -374,7 +376,7 @@ void SetFefwButtonIcons(const InputCommon::InputSubsystem& input, HotkeyRegistry
             }
         }
     }
-    FileSys::FefwButtonIcons::SetFaceButtons(faces);
+    return faces;
 }
 } // Anonymous namespace
 
@@ -2080,7 +2082,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
-    SetFefwButtonIcons(*input_subsystem, hotkey_registry);
+    // The game's button icons are drawn as it starts: what they show, and what it was.
+    fefw_icons_at_boot = FefwIconsState();
+    fefw_icons_noticed = fefw_icons_at_boot;
+    FileSys::FefwButtonIcons::SetMouseModeKeys(fefw_icons_at_boot.keys);
+    FileSys::FefwButtonIcons::SetFaceButtons(fefw_icons_at_boot.faces);
 
 #ifdef EGLANTINE_STREAMLINE
     // NVIDIA's Streamline can't be set up again once its frame generation has run in this process
@@ -3865,6 +3871,7 @@ void MainWindow::OnConfigurePage(const QString& page) {
 
     config->SaveAllValues();
     fefw_home->UpdateStatusLine();
+    CheckFefwButtonIcons();
 
     if (emulation_running) {
         render_window->installEventFilter(render_window);
@@ -4066,6 +4073,38 @@ void MainWindow::OnToggleGraphicsAPI() {
     UpdateAPIText();
 }
 
+MainWindow::FefwIcons MainWindow::FefwIconsState() {
+    FefwIcons state;
+    state.icons = Settings::values.fefw_button_icons.GetValue();
+    state.keys = FefwMouseModeKeys(hotkey_registry);
+    state.faces = FefwFaceButtons(*input_subsystem);
+    return state;
+}
+
+void MainWindow::CheckFefwButtonIcons() {
+    if (!emulation_running) {
+        return;
+    }
+    // The game drew its button icons as it started and keeps them: a change to the icons, the
+    // face buttons or the mouse-mode keys shows next time it starts. Said once for each change.
+    const FefwIcons now = FefwIconsState();
+    const auto shown = [](const FefwIcons& state) {
+        return state.icons == Settings::FefwButtonIcons::Switch
+                   ? FefwIcons{state.icons, {}, {}}
+                   : state;
+    };
+    const FefwIcons was = shown(fefw_icons_at_boot), is = shown(now);
+    if (is == was || is == shown(fefw_icons_noticed)) {
+        fefw_icons_noticed = now;
+        return;
+    }
+    fefw_icons_noticed = now;
+    QMessageBox::information(
+        this, tr("Button icons"),
+        tr("The game's button icons will update next time you start the game. Your controls "
+           "have changed already."));
+}
+
 void MainWindow::OnConfigurePerGame() {
     const u64 title_id = QtCommon::system->GetApplicationProcessProgramID();
     OpenPerGameConfiguration(title_id, current_game_path.toStdString());
@@ -4102,6 +4141,7 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
     if (!is_powered_on) {
         config->SaveAllValues();
     }
+    CheckFefwButtonIcons();
 }
 
 void MainWindow::OnLoadAmiibo() {
