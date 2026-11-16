@@ -542,7 +542,12 @@ void TurnOffAstcBc7() {
 }
 
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode,
-                              std::string_view gpu_driver) {
+                              std::string_view gpu_driver, u64 card_memory_bytes) {
+    // BC7 costs the GPU much more to make than BC3 (the same size). Cards under 8 GB (4 and 6 GB
+    // cards report a little less than that) are the small ones, where making BC7 while
+    // exploring stuttered and BC3 was smooth (#70).
+    static constexpr u64 Bc7MinCardBytes = 7ULL << 30;
+    const bool small_card = card_memory_bytes != 0 && card_memory_bytes < Bc7MinCardBytes;
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
     bool bc7 = false;
@@ -562,6 +567,11 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode,
                             "BC7 didn't get as far as the game's first frames, so BC7 is off "
                             "until Fortune's Eden or the graphics driver is updated (delete "
                             "user\\config\\bc7-off.txt to try it again)");
+    } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode && small_card) {
+        effective = AstcRecompression::Bc3;
+        LOG_INFO(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto; the card has {} MiB "
+                         "of video memory, BC7 needs 8 GB cards; {} MiB may be used)",
+                 card_memory_bytes >> 20, memory_limit_bytes >> 20);
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
         // The GPU decodes ASTC and re-compresses it itself: a quarter of the memory of
         // uncompressed, without the CPU stalls that BC3 used to cost. To BC7 (in place of BC3,

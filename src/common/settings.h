@@ -1151,9 +1151,10 @@ void UpdateRescalingInfo();
 /// Auto, BC3 when the renderer re-compresses ASTC on the GPU (gpu_bcn_transcode). Otherwise (the
 /// CPU would re-compress them) uncompressed where the emulator may use about 15 GB of video memory
 /// (memory_limit_bytes, 0 when unknown, which picks BC3) below 1.5x resolution (and at 1x with the
-/// ultrawide patch), BC3 otherwise. Logs the choice.
+/// ultrawide patch), BC3 otherwise. With the GPU re-compressing, BC7 where the card has 8 GB of
+/// video memory or more (card_memory_bytes, 0 when unknown), BC3 on smaller cards. Logs the choice.
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode = false,
-                              std::string_view gpu_driver = {});
+                              std::string_view gpu_driver = {}, u64 card_memory_bytes = 0);
 
 /// Whether ASTC may be re-compressed to BC1/BC3 on the GPU (Vulkan, ASTC decoding on the GPU).
 /// EDEN_GPU_BCN_TRANSCODE=0 turns it off, for comparisons.
