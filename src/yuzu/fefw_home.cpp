@@ -916,8 +916,10 @@ void FefwHome::OfferMfgUnlocker() {
     const auto answer = QMessageBox::question(
         this, tr("Multi frame generation"),
         tr("NVIDIA allows 3x and 4x DLSS frame generation on GeForce RTX 50 cards only. On RTX 40 "
-           "and older cards, the community MFG Unlocker lifts that limit.\n\nDownload the MFG "
-           "Unlocker now? (Not needed on an RTX 50 card. Without it, 2x is used.)"),
+           "and older cards, the community MFG Unlocker lifts that limit.\n\nOn those cards, AMD "
+           "FSR 3.1 frame generation at 3x or 4x is usually smoother (RTX 40 cards lack the RTX "
+           "50's hardware frame pacing).\n\nDownload the MFG Unlocker now? (Not needed on an RTX "
+           "50 card. Without it, 2x is used.)"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (answer == QMessageBox::Yes) {
         DownloadMfgUnlocker(this);
