@@ -23,6 +23,7 @@
 #endif
 
 #include "main_window.h"
+#include "fefw_restart.h"
 
 #ifdef _WIN32
 #include <cstdlib>
@@ -83,29 +84,9 @@ static Qt::HighDpiScaleFactorRoundingPolicy GetHighDpiRoundingPolicy() {
 }
 
 int main(int argc, char* argv[]) {
-#ifdef _WIN32
-    // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one): wait
-    // (up to 20 s) for it to have exited first, so this one gets the log and the user folder's
-    // files to itself.
-    if (const HANDLE restarting =
-            OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\FortunesEdenRestarting")) {
-        const DWORD result = WaitForSingleObject(restarting, 20000);
-        if (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED) {
-            ReleaseMutex(restarting);
-        }
-        CloseHandle(restarting);
-    }
-    if (const char* const wait_for = std::getenv("FEFW_WAIT_FOR_PID")) {
-        const DWORD pid = static_cast<DWORD>(std::strtoul(wait_for, nullptr, 10));
-        _putenv("FEFW_WAIT_FOR_PID=");
-        if (pid != 0) {
-            if (const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
-                WaitForSingleObject(process, 20000);
-                CloseHandle(process);
-            }
-        }
-    }
-#endif
+    // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one):
+    // waits for it to have gone, so this one gets the log and the user folder's files to itself.
+    FefwRestart::WaitForPrevious();
 #if YUZU_ROOM
     bool launch_room = false;
     for (int i = 1; i < argc; i++) {
@@ -228,10 +209,16 @@ int main(int argc, char* argv[]) {
     // generating shaders
     setlocale(LC_ALL, "C");
 
-    MainWindow main_window{has_broken_vulkan};
-    // After settings have been loaded by GMainWindow, apply the filter
-    main_window.show();
+    int result = 0;
+    {
+        MainWindow main_window{has_broken_vulkan};
+        // After settings have been loaded by GMainWindow, apply the filter
+        main_window.show();
 
-    app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window, &MainWindow::OnAppFocusStateChanged);
-    return app.exec();
+        app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window,
+                    &MainWindow::OnAppFocusStateChanged);
+        result = app.exec();
+    }
+    FefwRestart::RunIfRequested(result);
+    return result;
 }
