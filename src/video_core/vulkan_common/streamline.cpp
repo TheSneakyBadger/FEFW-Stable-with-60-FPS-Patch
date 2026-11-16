@@ -827,23 +827,25 @@ void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
         return;
     }
     const sl::ViewportHandle viewport{0u};
-    // Frame generation's pacing (the game's frames that fit the display with the frames made
-    // between them) also as Reflex's frame limit, so the driver spaces the frames it makes for
-    // that rate (NVIDIA's frame generation is made to work with Reflex's limiter, not others).
-    // EDEN_DLSSG_REFLEX_LIMIT=0 leaves it off (testing).
+    // Frame generation's pacing also as Reflex's frame limit, so the driver spaces the frames it
+    // makes evenly (NVIDIA's frame generation is made to work with Reflex's limiter, not
+    // others). The limit is on the frames shown, made ones included (test 75o set it to the
+    // game's frames: 52 shown a second, the game at 17-20). EDEN_DLSSG_REFLEX_LIMIT=0 leaves it
+    // off (testing).
     static const bool limit_off = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_LIMIT");
         return value && value[0] == '0';
     }();
+    const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
     const u32 limit_us =
-        limit_off ? 0U : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000);
+        limit_off ? 0U : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown);
     if (limit_us != fg.frame_limit_us) {
         sl::ReflexOptions reflex{};
         reflex.mode = fg.reflex_mode;
         reflex.frameLimitUs = limit_us;
         const sl::Result result = fg.reflex_set_options(reflex);
         LOG_INFO(Render_Vulkan, "NVIDIA Reflex frame limit: {} (result {})",
-                 limit_us ? fmt::format("{:.1f} game FPS", 1e6 / limit_us) : std::string{"off"},
+                 limit_us ? fmt::format("{:.1f} FPS shown", 1e6 / limit_us) : std::string{"off"},
                  static_cast<int>(result));
         fg.frame_limit_us = limit_us;
     }
