@@ -6,7 +6,10 @@
 #include <cstdlib>
 #include <optional>
 
+#include <string>
+
 #include <QCoreApplication>
+#include <QDir>
 #include <QProcess>
 
 #ifdef _WIN32
@@ -37,17 +40,32 @@ void RunIfRequested(int exit_code) {
 #ifdef _WIN32
     // Held by this process until it has gone (never closed: the system releases it then).
     void(CreateMutexW(nullptr, TRUE, MutexName));
-#endif
-    QProcess::startDetached(QCoreApplication::applicationFilePath(), *requested);
-#ifdef _WIN32
-    // Ended here rather than through the normal exit: after DLSS frame generation, the normal
-    // exit went on for many seconds after the game had closed (with the log and the MFG
-    // Unlocker's files still open), so the new one lost its log and the MFG Unlocker fell back
-    // to 2x. Everything worth keeping (settings, saves) was written as the window closed.
-    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(exit_code));
+
+    // Started without this process's handles: Qt's startDetached let the new one inherit them
+    // (the log, the MFG Unlocker's log), so it couldn't open its own log or the MFG Unlocker's,
+    // however long it waited, and the MFG Unlocker fell back to 2x.
+    const auto quote = [](const QString& argument) {
+        QString quoted = argument;
+        quoted.replace(QStringLiteral("\""), QStringLiteral("\\\""));
+        return QStringLiteral("\"") + quoted + QStringLiteral("\"");
+    };
+    QString command_line = quote(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+    for (const QString& argument : *requested) {
+        command_line += QLatin1Char(' ') + quote(argument);
+    }
+    std::wstring command = command_line.toStdWString();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+                       &startup, &process)) {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
 #else
-    void(exit_code);
+    QProcess::startDetached(QCoreApplication::applicationFilePath(), *requested);
 #endif
+    void(exit_code);
 }
 
 void WaitForPrevious() {

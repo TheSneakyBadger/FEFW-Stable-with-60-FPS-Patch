@@ -12,8 +12,7 @@ namespace FefwRestart {
 /// Starts a new Fortune's Eden with these arguments once this one has closed.
 void Request(const QStringList& arguments);
 
-/// After the main window has closed: starts the new one, if asked for, and (on Windows) ends
-/// this process at once. Returns only when there was nothing to do.
+/// After the main window has closed: starts the new one, if asked for.
 void RunIfRequested(int exit_code);
 
 /// At the start of main: when started by RunIfRequested, waits (up to 20 s) for the previous
