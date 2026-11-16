@@ -225,18 +225,24 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
         }
     }
     nacp_file = BuildNacp(program, display_version);
-    if (!program.icon.empty()) {
+    // The English icon first (the general one can be another language's, with its logo cut
+    // off), then the general one, then any language's.
+    std::string icon_langs;
+    for (const auto& [lang, icon] : program.localized_icons) {
+        icon_langs += fmt::format("{}{} ({} bytes)", icon_langs.empty() ? "" : ", ", lang,
+                                  icon.size());
+        if (icon_file == nullptr && (lang == "en-us" || lang == "en-US") && !icon.empty()) {
+            icon_file = std::make_shared<FileSys::VectorVfsFile>(icon, "icon_" + lang + ".dat");
+        }
+    }
+    LOG_INFO(Loader, "NUP icons: general {} bytes; by language: {}", program.icon.size(),
+             icon_langs.empty() ? std::string{"none"} : icon_langs);
+    if (icon_file == nullptr && !program.icon.empty()) {
         icon_file = std::make_shared<FileSys::VectorVfsFile>(program.icon, "icon.dat");
-    } else {
-        for (const auto& [lang, icon] : program.localized_icons) {
-            if (lang == "en-us") {
-                icon_file = std::make_shared<FileSys::VectorVfsFile>(icon, "icon_" + lang + ".dat");
-            }
-        }
-        if (icon_file == nullptr && !program.localized_icons.empty()) {
-            icon_file = std::make_shared<FileSys::VectorVfsFile>(
-                program.localized_icons.front().second, "icon.dat");
-        }
+    }
+    if (icon_file == nullptr && !program.localized_icons.empty()) {
+        icon_file = std::make_shared<FileSys::VectorVfsFile>(
+            program.localized_icons.front().second, "icon.dat");
     }
 
     const auto addon_count = std::count_if(nup->GetPackages().begin(), nup->GetPackages().end(),
