@@ -716,8 +716,8 @@ bool DownloadMfgUnlocker(QWidget* parent) {
     QDialogButtonBox* buttons = new QDialogButtonBox(&dialog);
     buttons->addButton(Tr("Download"), QDialogButtonBox::AcceptRole);
     buttons->addButton(QDialogButtonBox::Cancel);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(intro);
     layout->addWidget(licence_text, 1);
     layout->addWidget(buttons);
