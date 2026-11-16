@@ -425,9 +425,9 @@ void FefwHome::BuildGamePage(QWidget* page) {
     button_icons_box->addItem(tr("PlayStation"),
                               static_cast<int>(Settings::FefwButtonIcons::PlayStation));
     button_icons_box->setToolTip(
-        tr("The button icons the game shows. They follow the button's position, as controllers "
-           "are mapped: with Xbox icons, A (the bottom button) shows where the game showed B. Also "
-           "in Settings > Controls. Takes effect when the game starts."));
+        tr("The button icons the game shows. Each shows the controller button Player 1 has it "
+           "on, so they follow your mapping. Also in Settings > Controls. Takes effect when the "
+           "game starts."));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setCursor(Qt::PointingHandCursor);
     }
