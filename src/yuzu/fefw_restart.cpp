@@ -65,7 +65,7 @@ void RunIfRequested(int exit_code) {
 #else
     QProcess::startDetached(QCoreApplication::applicationFilePath(), *requested);
 #endif
-    void(exit_code);
+    static_cast<void>(exit_code);
 }
 
 void WaitForPrevious() {
