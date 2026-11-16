@@ -177,6 +177,8 @@ add_executable(yuzu
     loading_screen.ui
 
     main.cpp
+    fefw_restart.cpp
+    fefw_restart.h
 
     multiplayer/chat_room.cpp
     multiplayer/chat_room.h

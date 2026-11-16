@@ -30,6 +30,7 @@
 
 #include "common/fs/ryujinx_compat.h"
 #include "main_window.h"
+#include "fefw_restart.h"
 #include "network/network.h"
 #include "qt_common/discord/discord.h"
 #include "ui_main.h"
@@ -2121,19 +2122,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             arguments.prepend(QStringLiteral("-f"));
         }
         LOG_INFO(Frontend, "NVIDIA DLSS: starting the game in a new Fortune's Eden");
-        connect(qApp, &QCoreApplication::aboutToQuit, [arguments] {
-            // The new one waits for this one to have exited: while both ran, the new one
-            // couldn't open the log (it went unwritten), and tools loaded with DLSS frame
-            // generation (the MFG Unlocker) read their settings half-written and fell back to 2x.
-            qputenv("FEFW_WAIT_FOR_PID",
-                    QByteArray::number(static_cast<qulonglong>(QCoreApplication::applicationPid())));
-#ifdef _WIN32
-            // Held by this one until it has exited (never closed: the system releases it then),
-            // and waited for by the new one, whatever environment it gets.
-            void(CreateMutexW(nullptr, TRUE, L"Local\\FortunesEdenRestarting"));
-#endif
-            QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
-        });
+        // Started once this one has closed (main.cpp, FefwRestart).
+        FefwRestart::Request(arguments);
         close();
         return;
     }
