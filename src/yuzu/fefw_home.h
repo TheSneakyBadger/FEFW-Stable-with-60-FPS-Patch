@@ -76,6 +76,8 @@ private:
     QComboBox* upscaler_box{};
     QComboBox* quality_box{};
     QComboBox* frame_gen_box{};
+    QComboBox* dlss_mfg_box{};
+    QWidget* dlss_mfg_column{};
     QComboBox* button_icons_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};

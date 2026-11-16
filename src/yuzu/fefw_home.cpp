@@ -4,6 +4,8 @@
 #include "yuzu/fefw_home.h"
 
 #include <algorithm>
+#include <utility>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -493,6 +495,28 @@ void FefwHome::BuildGamePage(QWidget* page) {
     choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
     choices->addLayout(labelled(tr("Upscaler quality"), quality_box));
     choices->addLayout(labelled(tr("Frame generation"), frame_gen_box));
+    // NVIDIA DLSS multi frame generation (2x, 3x, 4x): only while NVIDIA DLSS is chosen.
+    dlss_mfg_box = new QComboBox(right);
+    for (const auto& [mfg, name] : {std::pair{Settings::DlssMfg::X2, tr("2x")},
+                                     std::pair{Settings::DlssMfg::X3, tr("3x")},
+                                     std::pair{Settings::DlssMfg::X4, tr("4x")}}) {
+        dlss_mfg_box->addItem(name, static_cast<int>(mfg));
+    }
+    dlss_mfg_box->setCursor(Qt::PointingHandCursor);
+    dlss_mfg_box->setToolTip(
+        tr("How many frames NVIDIA DLSS frame generation shows for each of the game's. NVIDIA "
+           "allows 3x and 4x on GeForce RTX 50 cards; on RTX 40 and older they need the community "
+           "MFG Unlocker (Settings > Graphics > Frame generation can download it). Takes effect "
+           "when the game starts."));
+    dlss_mfg_column = new QWidget(right);
+    {
+        QVBoxLayout* const mfg_layout = new QVBoxLayout(dlss_mfg_column);
+        mfg_layout->setContentsMargins(0, 0, 0, 0);
+        mfg_layout->setSpacing(4);
+        mfg_layout->addWidget(caption(tr("Frames")));
+        mfg_layout->addWidget(dlss_mfg_box);
+    }
+    choices->addWidget(dlss_mfg_column);
     choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
@@ -583,6 +607,14 @@ void FefwHome::BuildGamePage(QWidget* page) {
             static_cast<Settings::FrameGeneration>(frame_gen_box->itemData(index).toInt());
         if (index >= 0 && Settings::values.frame_generation.GetValue() != frame_gen) {
             Settings::values.frame_generation.SetValue(frame_gen);
+            UpdateStatusLine();
+            emit SettingChanged();
+        }
+    });
+    connect(dlss_mfg_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto mfg = static_cast<Settings::DlssMfg>(dlss_mfg_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.dlss_mfg.GetValue() != mfg) {
+            Settings::values.dlss_mfg.SetValue(mfg);
             UpdateStatusLine();
             emit SettingChanged();
         }
@@ -778,6 +810,17 @@ void FefwHome::UpdateStatusLine() {
         notes << tr("NVIDIA DLSS frame generation needs NVIDIA's files: Settings → Graphics → "
                     "Frame generation has a download button (until then AMD's is used).");
     }
+    // 3x or 4x where the card was held at 2x last time, without the MFG Unlocker.
+    if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
+        Settings::values.dlss_mfg.GetValue() != Settings::DlssMfg::X2 &&
+        Settings::values.dlss_mfg_max_seen.GetValue() == 1) {
+        std::error_code ec;
+        if (!std::filesystem::exists(Vulkan::Streamline::MfgUnlockerPath(), ec)) {
+            notes << tr("NVIDIA allows 3x and 4x on GeForce RTX 50 cards only: Settings → Graphics "
+                        "→ Frame generation can download the community MFG Unlocker for this "
+                        "card (until then 2x is used).");
+        }
+    }
 #endif
     status_label->setText(notes.join(QLatin1Char('\n')));
     status_label->setVisible(!notes.isEmpty());
@@ -816,4 +859,9 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
+    const QSignalBlocker mfg_blocker{dlss_mfg_box};
+    dlss_mfg_box->setCurrentIndex(
+        dlss_mfg_box->findData(static_cast<int>(Settings::values.dlss_mfg.GetValue())));
+    dlss_mfg_column->setVisible(Settings::values.frame_generation.GetValue() ==
+                                Settings::FrameGeneration::NvidiaDlss);
 }

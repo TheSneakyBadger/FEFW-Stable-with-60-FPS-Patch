@@ -217,6 +217,13 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "(sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll) and "
               "nvngx_dlssg.dll in the user folder's streamline folder; AMD's is used where it "
               "can't run.\nTakes effect when a game starts. Experimental."));
+    INSERT(Settings, dlss_mfg, tr("NVIDIA DLSS multi frame generation:"),
+           tr("How many frames NVIDIA DLSS frame generation shows for each of the game's: 2x makes "
+              "one between each two, 3x two and 4x three. NVIDIA allows 3x and 4x on GeForce RTX "
+              "50 cards; on RTX 40 and older, DLSS makes one (2x) unless a tool such as the "
+              "community MFG Unlocker lifts that limit. Needs a display fast enough for the "
+              "result. Takes effect when a game starts. Experimental."));
+    INSERT(Settings, dlss_mfg_max_seen, QString(), QString());
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -496,6 +503,12 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(FrameGeneration, AmdFsr3, tr("AMD FSR 3.1 (any card)")),
                               PAIR(FrameGeneration, NvidiaDlss,
                                    tr("NVIDIA DLSS (GeForce RTX 40/50)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::DlssMfg>::Index(),
+                          {
+                              PAIR(DlssMfg, X2, tr("2x")),
+                              PAIR(DlssMfg, X3, tr("3x")),
+                              PAIR(DlssMfg, X4, tr("4x")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::AudioBuffer>::Index(),
                           {

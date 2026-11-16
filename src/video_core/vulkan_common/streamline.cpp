@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,6 +28,7 @@
 
 #include <sl_security.h>
 
+#include <bcrypt.h>
 #include <softpub.h>
 #include <wintrust.h>
 
@@ -198,6 +200,64 @@ std::filesystem::path UseAppModel(const DlssFiles& files) {
     return dir;
 }
 
+/// SHA-256 of a file, in lower-case hex; empty when it can't be read.
+std::string FileSha256(const std::filesystem::path& path) {
+    BCRYPT_ALG_HANDLE algorithm{};
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
+        return {};
+    }
+    BCRYPT_HASH_HANDLE hash{};
+    std::string result;
+    if (BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
+        std::ifstream file(path, std::ios::binary);
+        std::vector<char> buffer(1 << 16);
+        bool ok = static_cast<bool>(file);
+        while (ok && file) {
+            file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            const auto read = file.gcount();
+            if (read > 0 && BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer.data()),
+                                           static_cast<ULONG>(read), 0) != 0) {
+                ok = false;
+            }
+        }
+        std::array<UCHAR, 32> digest{};
+        if (ok && BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) == 0) {
+            for (const UCHAR byte : digest) {
+                result += fmt::format("{:02x}", byte);
+            }
+        }
+        BCryptDestroyHash(hash);
+    }
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return result;
+}
+
+void LoadMfgUnlocker() {
+    static bool tried = false;
+    if (tried) {
+        return;
+    }
+    tried = true;
+    const std::filesystem::path path = MfgUnlockerPath();
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        LOG_INFO(Render_Vulkan, "DLSS multi frame generation: the MFG Unlocker isn't installed "
+                                "(Settings, Graphics, Frame generation can download it)");
+        return;
+    }
+    if (FileSha256(path) != MfgUnlockerSha256) {
+        LOG_ERROR(Render_Vulkan, "{} isn't the MFG Unlocker release Fortune's Eden downloads; not "
+                                 "loading it",
+                  Common::FS::PathToUTF8String(path));
+        return;
+    }
+    if (LoadLibraryW(path.c_str()) == nullptr) {
+        LOG_ERROR(Render_Vulkan, "Could not load the MFG Unlocker (error {})", GetLastError());
+        return;
+    }
+    LOG_INFO(Render_Vulkan, "DLSS multi frame generation: MFG Unlocker loaded");
+}
+
 bool Load(State& state, const std::filesystem::path& path) {
     if (!IsStreamlineModule(path)) {
         LOG_ERROR(Render_Vulkan, "{} is not signed by NVIDIA; not loading it",
@@ -243,6 +303,10 @@ std::vector<std::string> Names(uint32_t count, const char** names) {
 
 std::filesystem::path UserFolder() {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::StreamlineDir);
+}
+
+std::filesystem::path MfgUnlockerPath() {
+    return UserFolder() / L"mfg-unlocker" / L"MFGUnlocker.dll";
 }
 
 bool IsStreamlineModule(const std::filesystem::path& path) {
@@ -334,6 +398,12 @@ bool Start() {
                         "DLSS frame generation) runs",
                         Common::FS::PathToUTF8String(files.folder));
             return false;
+        }
+        // 3x or 4x with DLSS frame generation: the MFG Unlocker, when it was downloaded, goes in
+        // before Streamline so it can lift NVIDIA's 2x limit on RTX 40 and older (on RTX 50 it
+        // changes nothing). Only the release Fortune's Eden downloads is loaded.
+        if (frame_gen_wanted && Settings::values.dlss_mfg.GetValue() != Settings::DlssMfg::X2) {
+            LoadMfgUnlocker();
         }
         if (!Load(state, files.interposer)) {
             return false;
@@ -851,13 +921,14 @@ void FrameGenPresentStart(u64 index, bool tagged) {
     if (tagged != fg.on) {
         sl::DLSSGOptions options{};
         options.mode = tagged ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-        // Testing multi frame generation: EDEN_DLSSG_FRAMES=2 or 3 asks for that many generated
-        // frames per game frame (3x, 4x), whatever the card reports it can do; if Streamline
-        // refuses, one (2x).
-        static const u32 frames_wanted = [] {
-            const char* const value = std::getenv("EDEN_DLSSG_FRAMES");
-            const int frames = value ? std::atoi(value) : 1;
-            return static_cast<u32>(std::clamp(frames, 1, 3));
+        // Multi frame generation (Settings: 2x, 3x or 4x; EDEN_DLSSG_FRAMES=1-3 for testing): that
+        // many generated frames per game frame minus one. If Streamline refuses (RTX 40 and older
+        // without the MFG Unlocker), one (2x).
+        const u32 frames_wanted = [] {
+            if (const char* const value = std::getenv("EDEN_DLSSG_FRAMES")) {
+                return static_cast<u32>(std::clamp(std::atoi(value), 1, 3));
+            }
+            return static_cast<u32>(Settings::values.dlss_mfg.GetValue()) + 1;
         }();
         options.numFramesToGenerate = frames_wanted;
         options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
@@ -898,6 +969,8 @@ void FrameGenPresentEnd(u64 index, bool tagged) {
     if (tagged && ++fg.presents % 600 == 1) {
         sl::DLSSGState state{};
         if (fg.get_state(sl::ViewportHandle{0u}, state, nullptr) == sl::Result::eOk) {
+            // For the settings: whether 3x and 4x were available the last time.
+            Settings::values.dlss_mfg_max_seen.SetValue(state.numFramesToGenerateMax);
             LOG_INFO(Render_Vulkan,
                      "NVIDIA DLSS frame generation: status {:#x}, {} frames presented for the "
                      "last, up to {} generated a frame, multi frame generation {}",

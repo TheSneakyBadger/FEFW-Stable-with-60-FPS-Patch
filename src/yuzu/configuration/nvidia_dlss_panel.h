@@ -25,11 +25,15 @@ protected:
 
 private:
     void Download();
+    /// The community MFG Unlocker, for 3x and 4x on GeForce RTX 40 and older.
+    void DownloadMfgUnlocker();
 
     QLabel* icon_label;
     QLabel* status_label;
     QPushButton* download_button;
     QPushButton* folder_button;
+    QLabel* mfg_label{};
+    QPushButton* mfg_button{};
     bool frame_generation;
 };
 
