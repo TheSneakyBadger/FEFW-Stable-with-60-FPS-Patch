@@ -32,6 +32,7 @@
 #include "yuzu/fefw_mouse_mode.h"
 
 #include <QComboBox>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSignalBlocker>
@@ -211,6 +212,25 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     control_set_box->hide();
     connect(control_set_combo, &QComboBox::currentIndexChanged, this,
             [this](int index) { ShowControlSet(index == 1); });
+
+    // Fortune's Eden: the button icons Fortune's Weave shows (core/file_sys/fefw_button_icons.cpp).
+    auto* button_icons_group = new QGroupBox(tr("Button icons in game"), ui->consoleInputSettings);
+    auto* button_icons_row = new QHBoxLayout(button_icons_group);
+    button_icons_row->setContentsMargins(3, 3, 3, 3);
+    button_icons_combo = new QComboBox(button_icons_group);
+    button_icons_combo->addItem(tr("Nintendo Switch"),
+                                static_cast<int>(Settings::FefwButtonIcons::Switch));
+    button_icons_combo->addItem(tr("Xbox"), static_cast<int>(Settings::FefwButtonIcons::Xbox));
+    button_icons_combo->addItem(tr("PlayStation"),
+                                static_cast<int>(Settings::FefwButtonIcons::PlayStation));
+    button_icons_combo->setToolTip(
+        tr("The button icons Fortune's Weave shows. They follow the button's position, as "
+           "controllers are mapped: with Xbox icons, A (the bottom button) shows where the game "
+           "showed B. Takes effect when the game starts."));
+    button_icons_combo->setCurrentIndex(button_icons_combo->findData(
+        static_cast<int>(Settings::values.fefw_button_icons.GetValue())));
+    button_icons_row->addWidget(button_icons_combo);
+    ui->buttonsBottomRightHorizontalLayout->insertWidget(1, button_icons_group);
 }
 
 void ConfigureInput::ShowControlSet(bool mouse) {
@@ -308,6 +328,10 @@ void ConfigureInput::ApplyConfiguration() {
 
     Settings::values.vibration_enabled.SetValue(ui->vibrationGroup->isChecked());
     Settings::values.motion_enabled.SetValue(ui->motionGroup->isChecked());
+    if (button_icons_combo != nullptr) {
+        Settings::values.fefw_button_icons.SetValue(
+            static_cast<Settings::FefwButtonIcons>(button_icons_combo->currentData().toInt()));
+    }
 
     // Keep the shown set's edits, and leave Player 1 on the set mouse emulation calls for.
     if (control_set_combo != nullptr) {
@@ -347,6 +371,10 @@ void ConfigureInput::LoadConfiguration() {
 
     ui->vibrationGroup->setChecked(Settings::values.vibration_enabled.GetValue());
     ui->motionGroup->setChecked(Settings::values.motion_enabled.GetValue());
+    if (button_icons_combo != nullptr) {
+        button_icons_combo->setCurrentIndex(button_icons_combo->findData(
+            static_cast<int>(Settings::values.fefw_button_icons.GetValue())));
+    }
 }
 
 void ConfigureInput::LoadPlayerControllerIndices() {
