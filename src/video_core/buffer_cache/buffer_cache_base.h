@@ -11,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -352,6 +353,14 @@ public:
     /// AsyncBufferDownloads, GPU writes there are still copied back at fences from now on.
     void NoteCpuRead(DAddr addr, size_t size);
 
+    /// Fortune's Eden (#60): a guest CPU write to [addr, addr + size) was held for the next
+    /// command list. Lock-free (from the emulated cores). Until it is applied, GPU data copied
+    /// back at a fence skips its pages: copied over it, the CPU's write was lost.
+    void OnHeldWrite(DAddr addr, u64 size) noexcept;
+
+    /// The held writes gathered for this command list were applied (under the lock).
+    void HeldWritesApplied(std::span<const std::pair<DAddr, u64>> writes);
+
     /// Return true when a region is registered on the cache
     [[nodiscard]] bool IsRegionRegistered(DAddr addr, size_t size);
 
@@ -570,6 +579,26 @@ private:
     }
     /// Buffer pages the guest CPU reads (NoteCpuRead).
     Common::RangeSet<DAddr> cpu_read_ranges;
+
+    /// Per caching page: the held-write interval of its last held guest CPU write (0: none
+    /// pending). Intervals advance after each batch of held writes is applied; a mark is cleared
+    /// once the batch after the one it was made in is applied (its write is applied by then).
+    std::unique_ptr<std::atomic<u32>[]> held_write_marks;
+    std::atomic<u32> held_write_interval{1};
+    std::vector<u64> held_pages_last_batch;
+    std::vector<u64> held_pages_this_batch;
+
+    /// Whether [addr, addr + size)'s pages have a held CPU write pending.
+    [[nodiscard]] bool HasHeldWrite(DAddr addr, u64 size) const noexcept {
+        const u64 page_end = Common::DivCeil(addr + size, CACHING_PAGESIZE);
+        for (u64 page = addr >> CACHING_PAGEBITS; page < page_end && page < page_table.size();
+             ++page) {
+            if (held_write_marks[page].load(std::memory_order_acquire) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /// Queues the parts of a GPU write to [addr, addr + size) that are copied back at the next
     /// fence.

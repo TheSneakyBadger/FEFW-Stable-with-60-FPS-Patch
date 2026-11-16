@@ -292,6 +292,10 @@ struct GPU::Impl {
         return renderer->ReadRasterizer()->OnCPUWrite(addr, size);
     }
 
+    void OnHeldWrite(DAddr addr, u64 size) {
+        renderer->ReadRasterizer()->OnHeldWrite(addr, size);
+    }
+
     /// Notify rasterizer that any caches of the specified region should be flushed and invalidated
     void FlushAndInvalidateRegion(DAddr addr, u64 size) {
         gpu_thread.FlushAndInvalidateRegion(addr, size, is_async);
@@ -586,6 +590,10 @@ void GPU::InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes) {
 
 bool GPU::OnCPUWrite(DAddr addr, u64 size) {
     return impl->OnCPUWrite(addr, size);
+}
+
+void GPU::OnHeldWrite(DAddr addr, u64 size) {
+    impl->OnHeldWrite(addr, size);
 }
 
 void GPU::FlushAndInvalidateRegion(DAddr addr, u64 size) {
