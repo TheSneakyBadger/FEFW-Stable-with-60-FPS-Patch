@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.7.4
+
+Multi frame generation (3x and 4x) for AMD FSR 3.1 and NVIDIA DLSS, and much smoother frame generation.
+
+#### 🚀 Frame generation
+
+- **Multi frame generation.** Choose **2x**, **3x** or **4x** (**Frames** on the home screen, **Multi frame generation** in *Settings → Graphics*): at 3x and 4x, two or three frames are made for each of the game's, so 60 FPS can fill a 165 Hz or 240 Hz display.
+  - **AMD FSR 3.1:** 3x and 4x on any card.
+  - **NVIDIA DLSS:** NVIDIA allows 3x and 4x on GeForce RTX 50 cards only. On RTX 40 and older, choosing 3x or 4x offers to download the community [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker) by dashdogy (MIT licence, not made by NVIDIA and not included in Fortune's Eden). It's checked before it's used. On those cards, FSR 3.1 at 3x or 4x is usually smoother, because RTX 40 cards lack the RTX 50's hardware frame pacing.
+- **Much smoother frame generation.** The game's frames are now spaced evenly to fit what your display can show with the made frames between them (a 165 Hz display at 3x: about 54 game frames a second). In 60 FPS mode the game's speed follows, as it always does between 30 and 60 FPS.
+- **Your frame rate cap.** If you cap your frame rate (NVIDIA Reflex, RTSS or the driver), type the cap in **Your frame rate cap** on the home screen or in *Settings → Graphics*, so the frames fit under it rather than some being dropped. With NVIDIA DLSS, the same rate goes to NVIDIA Reflex's frame limiter.
+- **NVIDIA DLSS keeps 3x or 4x when a game is started again.** A game with NVIDIA DLSS starts in a new Fortune's Eden; the new one used to fall back to 2x with the MFG Unlocker, and didn't write its log.
+
+Everything else is as in [v1.7.3](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.3).
+
 ## v1.7.3
 
 A new home screen just for Fortune's Weave, Xbox and PlayStation button icons in the game, and frame generation that no longer halves the frame rate for seconds at a time.

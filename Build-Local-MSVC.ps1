@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.3 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.4 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -457,12 +457,17 @@ HDR (optional): turn on HDR in Windows, tick "HDR output (HDR10)" in Graphics an
 game; its Brightness and UI Brightness options then work. Restart the game after changing it.
 
 Frame generation (experimental, off by default): Graphics > Frame generation, or the launch
-screen. Makes a frame between each two of the game's, so 60 FPS shows as 120, in the 3D scenes.
-Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
-- AMD FSR 3.1: any card (AMD's FidelityFX SDK, MIT).
+screen. Makes frames between the game's, in the 3D scenes: at 2x 60 FPS shows as 120; at 3x
+and 4x (Frames / Multi frame generation) two or three are made for each of the game's.
+- AMD FSR 3.1: any card (AMD's FidelityFX SDK, MIT). 2x, 3x and 4x.
 - NVIDIA DLSS: GeForce RTX 40/50 and hardware-accelerated GPU scheduling on in Windows. Choose
   it, then click "Download from NVIDIA" in the panel below the setting (NVIDIA's files aren't
-  included). Falls back to AMD's.
+  included). Falls back to AMD's. NVIDIA allows 3x and 4x on RTX 50 only; on RTX 40 and older,
+  Fortune's Eden offers to download the community MFG Unlocker (dashdogy, MIT, not included).
+  On those cards FSR 3.1 at 3x or 4x is usually smoother.
+Pacing: the game's frames are held to what the display can show with the made frames between
+them (165 Hz at 3x: about 54 a second). If you cap your frame rate (NVIDIA Reflex, RTSS,
+the driver), type your cap in "Your frame rate cap" so the frames fit under it.
 The status bar names the one running, next to the upscaler.
 
 HD Rumble (experimental, off by default): tick HD Rumble on the home screen, then restart
@@ -471,6 +476,15 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.4:
+- Multi frame generation: 2x, 3x or 4x (Frames on the home screen, Multi frame generation in
+  Settings > Graphics),
+  for AMD FSR 3.1 (any card) and NVIDIA DLSS (RTX 50, or RTX 40 and older with the community
+  MFG Unlocker, which Fortune's Eden offers to download).
+- Smoother frame generation: the game's frames are evenly spaced to fit your display (or your
+  frame rate cap, set in "Your frame rate cap"), instead of some being dropped.
+- NVIDIA DLSS keeps 3x or 4x when a game is started again.
 
 New in v1.7.3:
 - A home screen just for Fortune's Weave: its icon and title logo, Play, and the main settings.

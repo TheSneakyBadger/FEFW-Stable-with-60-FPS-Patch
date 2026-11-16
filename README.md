@@ -23,14 +23,15 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw/releases/tag/1.12).
 
-## What's new in v1.7.3
+## What's new in v1.7.4
 
-- **A home screen just for Fortune's Weave:** the game's icon and title logo, **Play**, and the main settings in one place. The **⋯** button adds a game folder, opens the save and mods folders, and installs updates or DLC. The multiplayer menu is gone.
-- **Xbox or PlayStation button icons in the game** (*Button icons* on the home screen or in *Settings → Controls*). They follow your controller mapping, and the mouse mode prompt shows your own shortcut.
-- **Frame generation no longer halves the frame rate for seconds at a time** ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)): it only pauses when the graphics card stays behind, and comes straight back.
+- **Multi frame generation:** 2x, 3x or 4x (**Frames** on the home screen, **Multi frame generation** in *Settings → Graphics*), for AMD FSR 3.1 (any card) and NVIDIA DLSS. NVIDIA allows 3x and 4x on RTX 50 cards only; on RTX 40 and older, Fortune's Eden offers to download the community [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker) (not included). On those cards FSR 3.1 at 3x or 4x is usually smoother.
+- **Smoother frame generation:** the game's frames are spaced evenly to fit your display, or the cap you type in **Your frame rate cap** if you limit your frame rate.
+- **NVIDIA DLSS keeps 3x or 4x** when a game is started again.
 
 ### Recent releases
 
+- **v1.7.3:** a home screen just for Fortune's Weave; Xbox or PlayStation button icons in the game that follow your mapping; and frame generation no longer halves the frame rate for seconds at a time ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)).
 - **v1.7.2:** no more orange blocks and yellow bars on battle maps ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)); no more black characters on some graphics cards ([#69](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/69)); smoother exploring on graphics cards with less than 8 GB ([#70](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/70)); no more blocky textures after one bad start ([#71](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/71)); the game no longer starts again after stopping it with F5 ([#67](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/67)); and sharp game icons ([#68](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/68)).
 - **v1.7.1:** no more hang at game start on some AMD cards ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)); Mouse mode has its own page in Settings, and the scroll wheel only zooms on battle maps; Dagsion's sky no longer turns black after time in menus ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)); stutters no longer build up over long sessions ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)); and Kompas9's ultrawide v1.2.
 - **v1.7:** HD Rumble (experimental, off by default) through [RenHDrum](https://github.com/trzz1214/RenHDrum), on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), Windows only; and lips render properly ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)), with ASTC textures re-compressed to BC7 instead of BC3.
@@ -62,7 +63,7 @@ Every version is in the [changelog](CHANGELOG.md).
 | 📳 **HD Rumble** | Experimental, off by default: the game's detailed vibration on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), through [RenHDrum](https://github.com/trzz1214/RenHDrum). Windows only |
 | ⚡ **Runs well** | PGO-optimised for this game, fewer shader stutters, smoother busy scenes |
 | 🎞️ **60 FPS mode** | Built in, off by default: game speed follows your real frame rate (30–60 FPS) |
-| 🚀 **Frame generation** | Experimental: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50) doubles the frames shown, with the UI kept still |
+| 🚀 **Frame generation** | Experimental: AMD FSR 3.1 (any card) or NVIDIA DLSS (RTX 40/50) shows 2, 3 or 4 frames for each of the game's, with the UI kept still |
 | 🎛️ **Performance options** | Lighter reflections, ambient occlusion, crowd and scenery detail for slower PCs |
 | 🔄 **Auto-updates** | Asks first, checks the download, never touches saves or settings |
 | 💾 **Portable** | Settings, saves and shader cache live next to the .exe |
@@ -112,12 +113,14 @@ NVIDIA DLSS and FSR 4 fall back to FSR 3.1 if they can't start. The status bar a
 
 ## Frame generation (experimental)
 
-**Frame generation** makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as 60). Choose it on the home screen or in *Settings → Graphics → Frame generation*; it's off by default and applies when the game starts.
+**Frame generation** makes frames between the game's: at **2x**, 60 FPS shows as 120 (or 30 as 60); **3x** and **4x** make two or three for each of the game's. Choose it, and how many (**Frames** on the home screen, **Multi frame generation** in *Settings → Graphics*), on the home screen or in *Settings → Graphics → Frame generation*; it's off by default and applies when the game starts.
 
 | Option | Cards | Notes |
 |---|---|---|
 | **AMD FSR 3.1** | Any | AMD's FidelityFX SDK frame interpolation and optical flow, built in. |
-| **NVIDIA DLSS** | GeForce RTX 40/50 | Needs hardware-accelerated GPU scheduling on in Windows. Choose it, then click **Download from NVIDIA** in the panel below the setting and accept NVIDIA's licences (NVIDIA's files aren't included). Falls back to AMD's if it can't start. |
+| **NVIDIA DLSS** | GeForce RTX 40/50 | Needs hardware-accelerated GPU scheduling on in Windows. Choose it, then click **Download from NVIDIA** in the panel below the setting and accept NVIDIA's licences (NVIDIA's files aren't included). Falls back to AMD's if it can't start. 3x and 4x: RTX 50, or RTX 40 and older with the community [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker) (by dashdogy, MIT), which Fortune's Eden offers to download; there, FSR 3.1 at 3x or 4x is usually smoother. |
+
+**Pacing:** the game's frames are held to what your display can show with the made frames between them (a 165 Hz display at 3x: about 54 a second), evenly, and in 60 FPS mode the game's speed follows. If you cap your frame rate (NVIDIA Reflex, RTSS or the driver), type your cap in **Your frame rate cap** (home screen or Settings) so the frames fit under it.
 
 It works with any upscaler, HDR and ultrawide. The game's UI is kept still, so menus, prompts and the minimap don't ghost when the camera moves. It only runs in the 3D scenes (menus and movies have no motion data), needs a display faster than the game's frame rate (120 Hz or more for 60 FPS), and adds about half a frame of input delay. The status bar shows which one is running.
 
