@@ -720,7 +720,15 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     // puts a small stand-in there when it can't read the icon: then the logo alone.
     const QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
     const bool has_icon = !picture.isNull() && std::min(picture.width(), picture.height()) >= 128;
-    if (!picture.isNull()) {
+    if (has_icon) {
+        // The icon's top rows hold the bottom edge of lettering Nintendo's crop cut through:
+        // trimmed (and the sides a little, to stay square).
+        const int top = picture.height() * 10 / 256;
+        const int side = top / 2;
+        const QPixmap trimmed =
+            picture.copy(side, top, picture.width() - 2 * side, picture.height() - top);
+        icon_label->setPixmap(Rounded(trimmed, IconSize, 30, icon_label->devicePixelRatioF()));
+    } else if (!picture.isNull()) {
         icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
     }
     if (logo_path != game_path) {
