@@ -645,7 +645,7 @@ void FefwHome::BuildGamePage(QWidget* page) {
             emit SettingChanged();
         }
     });
-    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [this](int value) {
+    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [](int value) {
         if (Settings::values.mfg_frame_cap_fps.GetValue() != value) {
             Settings::values.mfg_frame_cap_fps.SetValue(value);
         }
