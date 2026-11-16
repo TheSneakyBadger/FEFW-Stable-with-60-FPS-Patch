@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.7.3
+
+A new home screen just for Fortune's Weave, Xbox and PlayStation button icons in the game, and frame generation that no longer halves the frame rate for seconds at a time.
+
+#### 🏠 Home screen
+
+- **Fortune's Weave only.** The game list is gone: the home screen shows the game's icon with its own title logo (read from your copy of the game), the version and play time, **Play**, and a panel with the main settings: 60 FPS, Ultrawide, HDR and paper white, HD Rumble, upscaler and quality, frame generation and button icons.
+- **Performance Settings, Game Settings, Settings and Check for Updates** sit under the settings, and the **⋯** button has what the game list's right-click menu did: add a game folder, open the save or mods folder, and install an update or DLC.
+- **Until the game is found,** the home screen asks for the folder that holds it, with a **Choose game folder** button.
+- **No multiplayer menu or room status.** Fortune's Eden doesn't use Eden's multiplayer rooms, so the *Multiplayer* menu and the "Not Connected" text at the bottom of the window are gone.
+
+#### 🎮 Button icons
+
+- **Xbox or PlayStation button icons in the game.** Choose **Button icons** on the home screen or in *Settings → Controls*: Nintendo Switch (the game's own), Xbox or PlayStation. The game's button pictures are redrawn as it loads them, in your copy only: face buttons, LB/RB and LT/RT (L1/R1, L2/R2), Menu and View (Options and Create), and the d-pad.
+- **They follow your mapping.** Each of the game's A, B, X and Y shows the controller button you have it on. With the usual mapping, the game's A (confirm) shows Xbox B or PlayStation ○, the button on the right.
+- **The mouse mode prompt shows your shortcut.** Where the game shows SL + SR for switching mouse mode, it now shows Fortune's Eden's own shortcut (Ctrl + Enter by default, or whatever you set it to).
+- The icons are drawn as the game starts: if you change them, your controls or the shortcut during a game, Fortune's Eden says they'll update next time you start it.
+
+#### 🚀 Frame generation
+
+- **No more frame rate halving for seconds at a time** ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)). Frame generation (AMD FSR 3.1 and NVIDIA DLSS) paused whenever the graphics card's work briefly backed up, which mostly happens for a moment as the game enters a new area. Each pause could last up to 4 seconds. It now only pauses when the work stays backed up for about a second, comes back as soon as it clears, and doesn't pause at all when pausing wouldn't help.
+
+Everything else is as in [v1.7.2](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.2).
+
 ## v1.7.2
 
 Fixes for coloured blocks on battle maps, black characters on some graphics cards, stutters on smaller graphics cards, blocky textures after one bad start, and a game that restarted after stopping it.

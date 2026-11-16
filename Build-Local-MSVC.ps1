@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.2 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.3 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -413,7 +413,7 @@ and the Microsoft C++ runtime is included, so nothing needs installing.
 
 GETTING STARTED
 1. Extract this whole folder somewhere (not inside Program Files) and run Fortune's Eden.exe.
-2. Add your game folder: double-click the empty game list and choose the folder.
+2. Add your game folder: press Choose game folder on the home screen and choose the folder.
 
 LEGAL USE ONLY. Piracy is not acceptable and is not supported in any way. No games, keys,
 firmware or other Nintendo files are included. Use your own legally obtained copy of the game, dumped from your own
@@ -432,8 +432,9 @@ Usage Mode Conservative are the defaults. Settings has eight pages (General, Sys
 Performance, Audio, Controls, Mouse mode, Advanced); Game Settings only has the game's add-ons and input profiles.
 Pick the resolution so the output matches your screen (1.5X for 4K).
 Only controls need setting: Emulation > Configure > Controls.
-The launch screen has the main ones beside Play: 60 FPS, Ultrawide, HDR (with paper white),
-HD Rumble, Upscaler, Upscaler quality, Frame generation, and a button to the Performance page.
+The home screen has the main ones under Play: 60 FPS, Ultrawide, HDR (with paper white),
+HD Rumble, Upscaler, Upscaler quality, Frame generation, Button icons, and a button to the
+Performance page.
 
 Upscaler: Emulation > Configure > Graphics > Upscaler. Takes effect when the game starts.
 - AMD FSR 3.1 (default, any card): replaces the game's own DLSS network, which takes work off
@@ -464,12 +465,22 @@ Needs a display faster than the game's frame rate (120 Hz or more for 60 FPS).
   included). Falls back to AMD's.
 The status bar names the one running, next to the upscaler.
 
-HD Rumble (experimental, off by default): tick HD Rumble on the launch screen, then restart
+HD Rumble (experimental, off by default): tick HD Rumble on the home screen, then restart
 Fortune's Eden (or reconnect the controller). The game's detailed vibration is played through
 RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switch Pro
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.3:
+- A home screen just for Fortune's Weave: its icon and title logo, Play, and the main settings.
+  The ... button adds a game folder, opens the save and mods folders, and installs updates or
+  DLC. No multiplayer menu.
+- Xbox or PlayStation button icons in the game (Button icons, on the home screen or in
+  Settings > Controls). They follow your controller mapping, and the mouse mode prompt shows
+  your own shortcut (Ctrl + Enter by default).
+- Frame generation no longer halves the frame rate for seconds at a time (#55): it only
+  pauses when the graphics card stays behind, and comes straight back.
 
 New in v1.7.2:
 - No more orange blocks and yellow bars on battle maps (#60).

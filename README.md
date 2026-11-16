@@ -23,15 +23,15 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on [Duck912's Fortune's Weave fork](https://github.com/Duck912/eden-ns2-fe) and [xDarkWindx's eden-fefw 1.12](https://github.com/xDarkWindx/eden-fefw/releases/tag/1.12).
 
-## What's new in v1.7.2
+## What's new in v1.7.3
 
-- **No more orange blocks and yellow bars on battle maps** ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
-- **No more black characters on some graphics cards** ([#69](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/69)): Fortune's Eden checks the graphics card's BC7 textures as the game starts, and uses BC3 if they come out wrong.
-- **Smoother exploring on graphics cards with less than 8 GB** ([#70](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/70)): they use BC3 textures again.
-- **No more blocky textures after one bad start** ([#71](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/71)), **the game no longer starts again after stopping it with F5** ([#67](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/67)), and **sharp game icons** on the home screen and in the game list ([#68](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/68)).
+- **A home screen just for Fortune's Weave:** the game's icon and title logo, **Play**, and the main settings in one place. The **⋯** button adds a game folder, opens the save and mods folders, and installs updates or DLC. The multiplayer menu is gone.
+- **Xbox or PlayStation button icons in the game** (*Button icons* on the home screen or in *Settings → Controls*). They follow your controller mapping, and the mouse mode prompt shows your own shortcut.
+- **Frame generation no longer halves the frame rate for seconds at a time** ([#55](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/55)): it only pauses when the graphics card stays behind, and comes straight back.
 
 ### Recent releases
 
+- **v1.7.2:** no more orange blocks and yellow bars on battle maps ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)); no more black characters on some graphics cards ([#69](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/69)); smoother exploring on graphics cards with less than 8 GB ([#70](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/70)); no more blocky textures after one bad start ([#71](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/71)); the game no longer starts again after stopping it with F5 ([#67](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/67)); and sharp game icons ([#68](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/68)).
 - **v1.7.1:** no more hang at game start on some AMD cards ([#65](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/65)); Mouse mode has its own page in Settings, and the scroll wheel only zooms on battle maps; Dagsion's sky no longer turns black after time in menus ([#64](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/64)); stutters no longer build up over long sessions ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)); and Kompas9's ultrawide v1.2.
 - **v1.7:** HD Rumble (experimental, off by default) through [RenHDrum](https://github.com/trzz1214/RenHDrum), on a Switch Pro Controller, Joy-Con, DualSense, Xbox controller or Steam Controller (2026), Windows only; and lips render properly ([#56](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/56), [#49](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/49)), with ASTC textures re-compressed to BC7 instead of BC3.
 - **v1.6.8.9:** no more broken textures or flashes after a few minutes in the same place ([#60](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/60)).
@@ -53,7 +53,8 @@ Every version is in the [changelog](CHANGELOG.md).
 
 | Feature | What you get |
 |---|---|
-| 🎮 **Launch screen** | The game's card with **Play** and the main settings beside it: 60 FPS, Ultrawide, HDR, HD Rumble, upscaler, quality and frame generation |
+| 🎮 **Home screen** | Just Fortune's Weave: its icon and title logo, **Play**, and the main settings: 60 FPS, Ultrawide, HDR, HD Rumble, upscaler, quality, frame generation and button icons |
+| 🕹️ **Button icons** | Xbox or PlayStation button icons in the game, following your controller mapping |
 | ✨ **Upscalers** | AMD FSR 3.1 (default, any card), AMD FSR 4 (Radeon), NVIDIA DLSS (GeForce RTX), with quality modes from Native/DLAA to Performance |
 | 🖱️ **Mouse mode** | Your PC mouse as the game's Joy-Con mouse cursor, with its own Settings page, controls and sensitivity, and the scroll wheel zooming battle maps |
 | 🖥️ **Ultrawide** | Optional 21:9 (3440x1440) with the HUD and menus kept at 16:9, using [Kompas9](https://github.com/Kompas9/Switch-Game-Patches)'s patch (game version 1.1.0) |
@@ -86,8 +87,8 @@ Every version is in the [changelog](CHANGELOG.md).
 
 1. Download the [latest release](../../releases/latest) (`FEFW-Stable-60FPS-Portable.zip`, about 74 MB).
 2. Extract the whole folder somewhere outside Program Files and run `Fortune's Eden.exe`.
-3. Double-click the empty game list and choose the folder containing your game (or use *File → Load File* to open a `.nup` directly).
-4. The game's card appears at the top: press **Play**.
+3. Press **Choose game folder** and choose the folder containing your game (or use *File → Load File* to open a `.nup` directly).
+4. The home screen shows the game: press **Play**.
 
 **Updating:** Fortune's Eden checks for new versions when it starts and asks before installing one (or press **Check for Updates**). Your saves, settings and shader cache are kept.
 
@@ -105,13 +106,13 @@ The game draws its 3D scene at 720p and upscales it. Choose what does that in *S
 | **NVIDIA DLSS** | GeForce RTX | The best picture. Click **Download from NVIDIA** in the panel below the setting and accept NVIDIA's licences (NVIDIA's files aren't included). |
 | **Game's own DLSS** | Any | The game's own small network, run as compute passes. Some prefer its look; it costs the emulator more. |
 
-NVIDIA DLSS and FSR 4 fall back to FSR 3.1 if they can't start. The status bar and the launch screen show which one is running, e.g. *NVIDIA DLSS - DLAA*.
+NVIDIA DLSS and FSR 4 fall back to FSR 3.1 if they can't start. The status bar and the home screen show which one is running, e.g. *NVIDIA DLSS - DLAA*.
 
 **Upscaler quality** (at **1X** resolution) sets how big the 3D scene is drawn before upscaling, while menus and text stay sharp at 1440p: **Native** (DLAA with DLSS), **Ultra Quality**, **Quality**, **Balanced** (default) or **Performance**. Higher looks better and costs more GPU time. With the game's own DLSS it always runs at Performance.
 
 ## Frame generation (experimental)
 
-**Frame generation** makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as 60). Choose it on the launch screen or in *Settings → Graphics → Frame generation*; it's off by default and applies when the game starts.
+**Frame generation** makes a frame between each two of the game's, so 60 FPS shows as 120 (or 30 as 60). Choose it on the home screen or in *Settings → Graphics → Frame generation*; it's off by default and applies when the game starts.
 
 | Option | Cards | Notes |
 |---|---|---|
@@ -122,11 +123,11 @@ It works with any upscaler, HDR and ultrawide. The game's UI is kept still, so m
 
 ## HDR
 
-Fortune's Weave has an HDR mode on Switch 2. Turn on HDR in Windows (*Settings → System → Display → Use HDR*), tick **HDR output (HDR10)** in *Settings → Graphics* (or **HDR** on the launch screen), and start the game. **Paper white** sets how bright the game's white is. Its *Brightness* and *UI Brightness* options then adjust the picture. The game checks for HDR once when it starts, so restart it after changing either setting.
+Fortune's Weave has an HDR mode on Switch 2. Turn on HDR in Windows (*Settings → System → Display → Use HDR*), tick **HDR output (HDR10)** in *Settings → Graphics* (or **HDR** on the home screen), and start the game. **Paper white** sets how bright the game's white is. Its *Brightness* and *UI Brightness* options then adjust the picture. The game checks for HDR once when it starts, so restart it after changing either setting.
 
 ## 60 FPS mode
 
-**30 FPS is how Fortune's Weave runs on Switch 2**, and it's how this build runs by default. The built-in **60 FPS mode** is off by default: turn it on in *Settings → Graphics → 60 FPS mode* (or **60 FPS** on the launch screen) and start the game.
+**30 FPS is how Fortune's Weave runs on Switch 2**, and it's how this build runs by default. The built-in **60 FPS mode** is off by default: turn it on in *Settings → Graphics → 60 FPS mode* (or **60 FPS** on the home screen) and start the game.
 
 Unlike the old 60 FPS cheat, which forced a fixed 60 and made the whole game run in slow motion whenever a PC fell below it, game speed follows your real frame rate anywhere from 30 to 60 FPS. About 50 places in the game that counted per frame (the map cursor and markers, menus, physics, cutscene shake, character creation and more) were traced and fixed so they keep their normal speed, and capes and hair are simulated every frame with physics scaled to the frame time. It was made for game version 1.1.0; on other versions it turns on when every place it changes is found. It works alongside mods, including those that use the free space after the game's code its routines usually take (they then go in memory Fortune's Eden adds), and turns itself off (the mod still works) only if a mod changes the same game code. An old `60fps` add-on folder becomes the setting.
 
