@@ -144,6 +144,8 @@ ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
 ENUM(FrameGeneration, Off, AmdFsr3, NvidiaDlss);
 // NVIDIA DLSS multi frame generation: the frames shown for each of the game's.
 ENUM(MfgMultiplier, X2, X3, X4);
+// With frame generation, hold the game's frame rate to the display's refresh rate / frames shown.
+ENUM(MfgFrameCap, Display, Off);
 // Fortune's Weave's screen-space reflections: as the game sets them (32 rays), 8 rays, or off.
 ENUM(FefwReflections, Full, Reduced, Off);
 // The button icons Fortune's Weave shows: its own (Nintendo Switch), Xbox's or PlayStation's.

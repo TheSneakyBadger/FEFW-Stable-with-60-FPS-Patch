@@ -426,6 +426,11 @@ struct Values {
     // starts.
     SwitchableSetting<MfgMultiplier, true> mfg_multiplier{linkage, MfgMultiplier::X2, "mfg_multiplier",
                                               Category::Renderer};
+    // With frame generation: the game's frame rate is held to the display's refresh rate divided
+    // by the frames shown for each of the game's (165 Hz at 3x: 55 FPS), so every frame made is
+    // shown at an even pace instead of some being dropped (stutter). Off: no limit.
+    SwitchableSetting<MfgFrameCap, true> mfg_frame_cap{linkage, MfgFrameCap::Display,
+                                                       "mfg_frame_cap", Category::Renderer};
     // The most frames DLSS frame generation said it could make for each of the game's, the last
     // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.
     Setting<u32> dlss_mfg_max_seen{linkage, 0, "dlss_mfg_max_seen", Category::Renderer};
@@ -1188,6 +1193,9 @@ void SetActiveUpscaler(const char* name);
 /// "AMD FSR 3.1"), else null. Set with each frame made.
 const char* ActiveFrameGeneration();
 void SetActiveFrameGeneration(const char* name);
+/// The refresh rate of the display the game window is on (0: unknown), set by the frontend.
+[[nodiscard]] f32 DisplayRefreshRate();
+void SetDisplayRefreshRate(f32 hz);
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.

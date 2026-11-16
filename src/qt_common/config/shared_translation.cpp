@@ -226,6 +226,12 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "frame rate cap: above it, frames are dropped and it stutters. Takes effect when a "
               "game starts. Experimental."));
     INSERT(Settings, dlss_mfg_max_seen, QString(), QString());
+    INSERT(Settings, mfg_frame_cap, tr("Frame generation pacing:"),
+           tr("Display refresh rate: with frame generation on, the game's frame rate is held to "
+              "your display's refresh rate divided by the frames shown for each of the game's (for "
+              "example 165 Hz at 3x: 55 FPS), so every frame is shown at an even pace. Without "
+              "this, frames above the refresh rate (or a frame rate cap) are dropped and it "
+              "stutters. The game's speed follows its frame rate in 60 FPS mode. Off: no limit.")); 
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -511,6 +517,11 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(MfgMultiplier, X2, tr("2x")),
                               PAIR(MfgMultiplier, X3, tr("3x")),
                               PAIR(MfgMultiplier, X4, tr("4x")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::MfgFrameCap>::Index(),
+                          {
+                              PAIR(MfgFrameCap, Display, tr("Display refresh rate")),
+                              PAIR(MfgFrameCap, Off, tr("Off")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::AudioBuffer>::Index(),
                           {

@@ -96,6 +96,7 @@
 #include <QPalette>
 #include <QProgressDialog>
 #include <QScreen>
+#include <QWindow>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QtConcurrentRun>
@@ -2084,6 +2085,19 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
+    // Frame generation's pacing: the refresh rate of the display the game is on.
+    {
+        const auto set_refresh = [](QScreen* screen) {
+            if (screen) {
+                Settings::SetDisplayRefreshRate(static_cast<f32>(screen->refreshRate()));
+            }
+        };
+        set_refresh(screen());
+        if (QWindow* const handle = windowHandle(); handle && !refresh_rate_connected) {
+            refresh_rate_connected = true;
+            connect(handle, &QWindow::screenChanged, this, set_refresh);
+        }
+    }
     // The game's button icons are drawn as it starts: what they show, and what it was.
     fefw_icons_at_boot = FefwIconsState();
     fefw_icons_noticed = fefw_icons_at_boot;
