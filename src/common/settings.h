@@ -904,6 +904,12 @@ struct Values {
     // keep the standard rumble; switching it on takes effect for controllers connected after
     // that (or after restarting). The other settings are read on every vibration.
     Setting<bool> hd_rumble_enabled{linkage, false, "hd_rumble_enabled", Category::Controls};
+    // The button icons Fortune's Weave shows in its text: its own, Xbox's or PlayStation's, drawn
+    // into the game's button font as it loads (core/file_sys/fefw_button_icons.cpp). They follow
+    // the button's position, as controllers are mapped: Xbox A (bottom) shows where the game shows
+    // its B. Takes effect when the game starts.
+    Setting<FefwButtonIcons> fefw_button_icons{linkage, FefwButtonIcons::Switch,
+                                               "fefw_button_icons", Category::Controls};
     // Off (default): the HD Rumble dialog shows only the switch and the tuning values below are
     // ignored (built-in defaults). On: edit qt-config.ini by hand; no UI control sets it.
     Setting<bool> hd_rumble_advanced{linkage, false, "hd_rumble_advanced", Category::Controls};

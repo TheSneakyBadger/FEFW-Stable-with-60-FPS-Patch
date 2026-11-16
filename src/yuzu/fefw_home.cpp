@@ -330,7 +330,17 @@ void FefwHome::BuildGamePage(QWidget* page) {
            "Needs a display faster than the game's frame rate. AMD FSR 3.1: any card. NVIDIA "
            "DLSS: GeForce RTX 40 and 50, with NVIDIA Streamline's DLLs in the user folder's "
            "streamline folder. Takes effect when the game starts. Experimental."));
-    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box}) {
+    button_icons_box = new QComboBox(right);
+    button_icons_box->addItem(tr("Nintendo Switch"),
+                              static_cast<int>(Settings::FefwButtonIcons::Switch));
+    button_icons_box->addItem(tr("Xbox"), static_cast<int>(Settings::FefwButtonIcons::Xbox));
+    button_icons_box->addItem(tr("PlayStation"),
+                              static_cast<int>(Settings::FefwButtonIcons::PlayStation));
+    button_icons_box->setToolTip(
+        tr("The button icons the game shows. They follow the button's position, as controllers "
+           "are mapped: with Xbox icons, A (the bottom button) shows where the game showed B. Also "
+           "in Settings > Controls. Takes effect when the game starts."));
+    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setCursor(Qt::PointingHandCursor);
     }
     status_label = new QLabel(right);
@@ -373,6 +383,15 @@ void FefwHome::BuildGamePage(QWidget* page) {
         row->setSpacing(10);
         row->addWidget(paper_white_label);
         row->addWidget(paper_white, 1);
+        display->addLayout(row);
+    }
+    {
+        QHBoxLayout* const row = new QHBoxLayout;
+        row->setSpacing(10);
+        QLabel* const label = caption(tr("Button icons"));
+        label->setMinimumWidth(140);
+        row->addWidget(label);
+        row->addWidget(button_icons_box, 1);
         display->addLayout(row);
     }
 
@@ -462,6 +481,14 @@ void FefwHome::BuildGamePage(QWidget* page) {
         if (index >= 0 && Settings::values.frame_generation.GetValue() != frame_gen) {
             Settings::values.frame_generation.SetValue(frame_gen);
             UpdateStatusLine();
+            emit SettingChanged();
+        }
+    });
+    connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto icons =
+            static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.fefw_button_icons.GetValue() != icons) {
+            Settings::values.fefw_button_icons.SetValue(icons);
             emit SettingChanged();
         }
     });
@@ -655,6 +682,9 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker paper_white_blocker{paper_white};
     paper_white->setValue(Settings::values.hdr_paper_white.GetValue());
     paper_white_label->setText(tr("Paper white: %1 nits").arg(paper_white->value()));
+    const QSignalBlocker button_icons_blocker{button_icons_box};
+    button_icons_box->setCurrentIndex(button_icons_box->findData(
+        static_cast<int>(Settings::values.fefw_button_icons.GetValue())));
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
