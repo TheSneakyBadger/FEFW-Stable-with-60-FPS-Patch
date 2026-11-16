@@ -6,6 +6,7 @@ No games, keys, firmware or saves are included.
 
 | File | For | SHA-256 |
 |---|---|---|
+| `FEFW-Test-v1.7.4-test76a.zip` | v1.7.4 plus: when many new textures appear at once, their conversion uses spare video memory instead of waiting for the graphics card (#63). The program says v1.7.4. Source: [`source-v1.7.4-test76a`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76a) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.1-test70c.zip` | test70b plus: BC7 is turned off only after two starts in a row that never got going, not one (#71). The program says v1.7.1. Source: [`source-v1.7.1-test70c`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.1-test70c) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.1-test70b.zip` | test69a plus: BC3 instead of BC7 on cards under 8 GB (#70); a check of the BC7 converter at start, BC3 when its blocks come out wrong (#69); sharp game list icons (#68). The program says v1.7.1. Source: [`source-v1.7.1-test70b`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.1-test70b) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.1-test69a.zip` | test68a plus a sharp game icon on the home screen (#68): the icon at its own size, drawn at the screen's pixel density. The program says v1.7.1. Source: [`source-v1.7.1-test69a`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.1-test69a) | see `SHA256.txt` |
