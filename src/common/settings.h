@@ -440,7 +440,7 @@ struct Values {
                                                    1000,
                                                    "mfg_frame_cap_fps",
                                                    Category::Renderer,
-                                                   Specialization::Scalar,
+                                                   Specialization::Countable,
                                                    true,
                                                    true};
     // The most frames DLSS frame generation said it could make for each of the game's, the last

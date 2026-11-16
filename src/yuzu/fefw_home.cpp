@@ -31,6 +31,7 @@
 #include <QScrollArea>
 #include <QFrame>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 
@@ -520,6 +521,26 @@ void FefwHome::BuildGamePage(QWidget* page) {
         mfg_layout->addWidget(mfg_box);
     }
     choices->addWidget(mfg_column);
+    // Your frame rate cap, if you have one: frame generation's pacing stays under it.
+    mfg_cap_spin = new QSpinBox(right);
+    mfg_cap_spin->setRange(0, 1000);
+    mfg_cap_spin->setSpecialValueText(tr("None"));
+    mfg_cap_spin->setSuffix(tr(" FPS"));
+    mfg_cap_spin->setMinimumWidth(110);
+    mfg_cap_spin->setToolTip(
+        tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, RTSS or "
+           "the MFG Unlocker's menu), set this to the same number, so frame generation's pacing "
+           "stays just under it. If you don't have a cap, leave it at None: Fortune's Eden caps "
+           "to your display's refresh rate itself. Takes effect right away."));
+    mfg_cap_column = new QWidget(right);
+    {
+        QVBoxLayout* const cap_layout = new QVBoxLayout(mfg_cap_column);
+        cap_layout->setContentsMargins(0, 0, 0, 0);
+        cap_layout->setSpacing(4);
+        cap_layout->addWidget(caption(tr("Your frame rate cap")));
+        cap_layout->addWidget(mfg_cap_spin);
+    }
+    choices->addWidget(mfg_cap_column);
     choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
@@ -624,6 +645,12 @@ void FefwHome::BuildGamePage(QWidget* page) {
             emit SettingChanged();
         }
     });
+    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [this](int value) {
+        if (Settings::values.mfg_frame_cap_fps.GetValue() != value) {
+            Settings::values.mfg_frame_cap_fps.SetValue(value);
+        }
+    });
+    connect(mfg_cap_spin, &QSpinBox::editingFinished, this, &FefwHome::SettingChanged);
     connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
         const auto icons =
             static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
@@ -869,6 +896,12 @@ void FefwHome::UpdateStatusLine() {
         mfg_box->findData(static_cast<int>(Settings::values.mfg_multiplier.GetValue())));
     mfg_column->setVisible(Settings::values.frame_generation.GetValue() !=
                            Settings::FrameGeneration::Off);
+    const QSignalBlocker cap_blocker{mfg_cap_spin};
+    mfg_cap_spin->setValue(Settings::values.mfg_frame_cap_fps.GetValue());
+    mfg_cap_column->setVisible(Settings::values.frame_generation.GetValue() !=
+                                   Settings::FrameGeneration::Off &&
+                               Settings::values.mfg_frame_cap.GetValue() ==
+                                   Settings::MfgFrameCap::Display);
 }
 
 void FefwHome::OfferMfgUnlocker() {

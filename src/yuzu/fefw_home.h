@@ -14,6 +14,7 @@ class QAction;
 class QCheckBox;
 class QComboBox;
 class QSlider;
+class QSpinBox;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
@@ -80,6 +81,8 @@ private:
     QComboBox* frame_gen_box{};
     QComboBox* mfg_box{};
     QWidget* mfg_column{};
+    QSpinBox* mfg_cap_spin{};
+    QWidget* mfg_cap_column{};
     QComboBox* button_icons_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
