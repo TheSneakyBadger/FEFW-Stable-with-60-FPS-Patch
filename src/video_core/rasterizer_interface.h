@@ -155,6 +155,9 @@ public:
 
     virtual bool OnCPUWrite(PAddr addr, u64 size) = 0;
 
+    /// A guest CPU write to [addr, addr + size) was held for the next command list (#60).
+    virtual void OnHeldWrite(DAddr addr, u64 size) {}
+
     /// Sync memory between guest and host.
     virtual void InvalidateGPUCache() = 0;
 

@@ -906,6 +906,7 @@ void RasterizerVulkan::OnCachedWrites(std::span<const std::pair<DAddr, u64>> wri
                 buffer_cache.CachedWriteMemory(addr, size);
             }
         }
+        buffer_cache.HeldWritesApplied(writes);
     }
     for (const auto& [addr, size] : writes) {
         if (addr != 0 && size != 0) {
@@ -1004,6 +1005,10 @@ void CountCpuWrite(bool fast) {
     }
 }
 } // Anonymous namespace
+
+void RasterizerVulkan::OnHeldWrite(DAddr addr, u64 size) {
+    buffer_cache.OnHeldWrite(addr, size);
+}
 
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);

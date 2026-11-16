@@ -10,4 +10,7 @@ namespace Tegra::Texture::BCN {
 /// Encodes a 4x4 block of RGBA8 texels (row-major, 64 bytes) as a 16-byte BC7 block.
 void EncodeBc7Block(u8* output, const u8* input);
 
+/// Decodes a 16-byte BC7 block into 4x4 RGBA8 texels (row-major, 64 bytes).
+void DecodeBc7Block(u8* output, const u8* block);
+
 } // namespace Tegra::Texture::BCN

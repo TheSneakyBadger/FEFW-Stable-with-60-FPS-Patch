@@ -1775,10 +1775,19 @@ void Device::CollectPhysicalMemoryInfo() {
     const std::string gpu_driver =
         fmt::format("{:04X}:{:04X} {}", properties.properties.vendorID,
                     properties.properties.deviceID, properties.properties.driverVersion);
+    // The card's own video memory picks BC3 on small cards; EDEN_VRAM_LIMIT_MIB stands in for a
+    // smaller card here too.
+    u64 card_memory = local_memory;
+    if (const char* value = std::getenv("EDEN_VRAM_LIMIT_MIB")) {
+        const u64 forced = std::strtoull(value, nullptr, 10) << 20;
+        if (forced != 0) {
+            card_memory = std::min<u64>(card_memory, forced);
+        }
+    }
     Settings::ResolveAstcRecompression(device_access_memory,
                                        !is_optimal_astc_supported &&
                                            Settings::GpuBcnTranscodeAllowed(),
-                                       gpu_driver);
+                                       gpu_driver, card_memory);
 }
 
 void Device::CollectToolingInfo() {

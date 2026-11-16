@@ -472,8 +472,11 @@ namespace {
 // or running the BC7 converter, #65) is noted in the config folder, and the next starts use BC3
 // on the GPU instead until Fortune's Eden, the graphics card or its driver changes.
 // bc7-start.txt is written when BC7 is chosen and removed once the game has drawn 600 frames
-// with it or stops normally; found at the next start, it becomes bc7-off.txt, which holds the
-// version, card and driver it applies to. A converter the driver doesn't build within 10 s
+// with it or stops normally. Found at the next start, it becomes bc7-failed.txt and BC7 is tried
+// once more: one start can end early for other reasons (a crash, the game closed at once) and
+// left BC3's blocky textures for good (#71). Found with bc7-failed.txt still there (two starts in
+// a row that never got going), it becomes bc7-off.txt, which holds the version, card and driver
+// it applies to. A converter the driver doesn't build within 10 s
 // writes bc7-off.txt straight away (TurnOffAstcBc7).
 std::filesystem::path Bc7MarkerPath(const char* name) {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / name;
@@ -497,22 +500,29 @@ bool Bc7StartAllowed(std::string_view gpu_driver) {
     std::error_code ec;
     const auto start = Bc7MarkerPath("bc7-start.txt");
     const auto off = Bc7MarkerPath("bc7-off.txt");
-    if (std::filesystem::exists(start, ec)) {
-        std::filesystem::remove(off, ec);
-        std::filesystem::rename(start, off, ec);
-        if (ec) {
-            std::ofstream{off} << Bc7OffKey();
-            std::filesystem::remove(start, ec);
-        }
-    }
-    if (std::filesystem::exists(off, ec)) {
-        std::ifstream in{off};
+    const auto failed = Bc7MarkerPath("bc7-failed.txt");
+    const auto read_key = [](const std::filesystem::path& path) {
+        std::ifstream in{path};
         std::string key{std::istreambuf_iterator<char>{in}, {}};
-        in.close();
         while (!key.empty() && (key.back() == '\n' || key.back() == '\r' || key.back() == ' ')) {
             key.pop_back();
         }
-        if (key == Bc7OffKey()) {
+        return key;
+    };
+    if (std::filesystem::exists(start, ec)) {
+        std::filesystem::remove(start, ec);
+        if (std::filesystem::exists(failed, ec) && read_key(failed) == Bc7OffKey()) {
+            // The second start in a row that never got going
+            std::filesystem::remove(failed, ec);
+            std::ofstream{off} << Bc7OffKey();
+        } else {
+            std::ofstream{failed} << Bc7OffKey();
+            LOG_WARNING(Common, "ASTC textures: the last start with BC7 ended before the game's "
+                                "first frames; BC7 is tried once more");
+        }
+    }
+    if (std::filesystem::exists(off, ec)) {
+        if (read_key(off) == Bc7OffKey()) {
             return false;
         }
         std::filesystem::remove(off, ec);
@@ -527,6 +537,7 @@ void MarkAstcBc7Working(bool log) {
     if (bc7_start_pending.exchange(false, std::memory_order_relaxed)) {
         std::error_code ec;
         std::filesystem::remove(Bc7MarkerPath("bc7-start.txt"), ec);
+        std::filesystem::remove(Bc7MarkerPath("bc7-failed.txt"), ec);
         if (log) {
             LOG_INFO(Common, "ASTC textures: BC7 works on this graphics card");
         }
@@ -538,11 +549,17 @@ void TurnOffAstcBc7() {
     bc7_start_pending.store(false, std::memory_order_relaxed);
     std::error_code ec;
     std::filesystem::remove(Bc7MarkerPath("bc7-start.txt"), ec);
+    std::filesystem::remove(Bc7MarkerPath("bc7-failed.txt"), ec);
     std::ofstream{Bc7MarkerPath("bc7-off.txt")} << Bc7OffKey();
 }
 
 void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode,
-                              std::string_view gpu_driver) {
+                              std::string_view gpu_driver, u64 card_memory_bytes) {
+    // BC7 costs the GPU much more to make than BC3 (the same size). Cards under 8 GB (4 and 6 GB
+    // cards report a little less than that) are the small ones, where making BC7 while
+    // exploring stuttered and BC3 was smooth (#70).
+    static constexpr u64 Bc7MinCardBytes = 7ULL << 30;
+    const bool small_card = card_memory_bytes != 0 && card_memory_bytes < Bc7MinCardBytes;
     const AstcRecompression setting = values.astc_recompression.GetValue();
     AstcRecompression effective = setting;
     bool bc7 = false;
@@ -558,10 +575,16 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode,
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode &&
                !Bc7StartAllowed(gpu_driver)) {
         effective = AstcRecompression::Bc3;
-        LOG_WARNING(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto). A start with "
-                            "BC7 didn't get as far as the game's first frames, so BC7 is off "
+        LOG_WARNING(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto). BC7 failed on "
+                            "an earlier start (it hung before the game's first frames, or its "
+                            "check found wrong blocks), so BC7 is off "
                             "until Fortune's Eden or the graphics driver is updated (delete "
                             "user\\config\\bc7-off.txt to try it again)");
+    } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode && small_card) {
+        effective = AstcRecompression::Bc3;
+        LOG_INFO(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto; the card has {} MiB "
+                         "of video memory, BC7 needs 8 GB cards; {} MiB may be used)",
+                 card_memory_bytes >> 20, memory_limit_bytes >> 20);
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode) {
         // The GPU decodes ASTC and re-compresses it itself: a quarter of the memory of
         // uncompressed, without the CPU stalls that BC3 used to cost. To BC7 (in place of BC3,

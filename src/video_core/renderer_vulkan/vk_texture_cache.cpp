@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
+#include <string_view>
 #include "common/bit_util.h"
 #include "common/div_ceil.h"
 #include "common/settings.h"
@@ -41,6 +42,7 @@
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
+#include "video_core/textures/bc7_encoder.h"
 #include "video_core/textures/decoders.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
@@ -1007,6 +1009,209 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
 
 void TextureCacheRuntime::Finish() {
     scheduler.Finish();
+}
+
+void TextureCacheRuntime::CheckBc7Encoder() {
+    if (std::exchange(bc7_checked, true) || !bc_encoder_pass || !bc_encoder_pass->IsBc7()) {
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    // 16x16 texels, 16 blocks: flat colours, gradients, masks packing red, green and black (the
+    // face masks of #56), two-colour splits, alpha ramps and noise, so the converter's modes all
+    // get a turn.
+    static constexpr u32 Size = 16;
+    static constexpr u32 Blocks = (Size / 4) * (Size / 4);
+    std::array<u8, Size * Size * 4> texels{};
+    u32 seed = 12345;
+    for (u32 block = 0; block < Blocks; ++block) {
+        const u32 bx = block % (Size / 4);
+        const u32 by = block / (Size / 4);
+        for (u32 i = 0; i < 16; ++i) {
+            const u32 x = i % 4;
+            const u32 y = i / 4;
+            for (u32 c = 0; c < 4; ++c) {
+                seed = seed * 1103515245U + 12345U;
+                const u32 noise = (seed >> 16) & 255;
+                u32 value = 0;
+                switch (block % 8) {
+                case 0: // flat colour
+                    value = c == 3 ? 255 : (block * 53 + c * 97) & 255;
+                    break;
+                case 1: // gradient
+                    value = c == 3 ? 255 : x * 60 + y * 10 + c * 20;
+                    break;
+                case 2: // red, green and black mask
+                    value = c == 3 ? 255 : (((x + y) % 3) == c ? 230 : noise & 15);
+                    break;
+                case 3: // two colours, left and right
+                    value = c == 3 ? 255 : (x < 2 ? 40 + c * 50 : 200 - c * 60 + y * 9);
+                    break;
+                case 4: // alpha ramp over a gradient
+                    value = c == 3 ? 255 - i * 13 : x * 30 + c * 40 + y * 7;
+                    break;
+                case 5: // two gradients
+                    value = c == 3 ? 255 : (x < 2 ? y * 20 + c * 10 : 255 - y * 25 - c * 30);
+                    break;
+                case 6: // soft noise
+                    value = c == 3 ? 255 : 96 + c * 30 + (noise & 31);
+                    break;
+                default: // noise with alpha
+                    value = noise;
+                    break;
+                }
+                texels[((by * 4 + y) * Size + bx * 4 + x) * 4 + c] = static_cast<u8>(value);
+            }
+        }
+    }
+
+    static constexpr VkFormat TestFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    vk::Image image = memory_allocator.CreateImage(VkImageCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = TestFormat,
+        .extent = {Size, Size, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    });
+    vk::ImageView view = MakeStorageView(device.GetLogical(), 0, *image, TestFormat);
+    const auto upload = staging_buffer_pool.Request(texels.size(), MemoryUsage::Upload);
+    std::memcpy(upload.mapped_span.data(), texels.data(), texels.size());
+    static constexpr u64 OutputBytes = Blocks * 16;
+    const auto output = staging_buffer_pool.Request(OutputBytes, MemoryUsage::Download);
+    std::memset(output.mapped_span.data(), 0, OutputBytes);
+
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record([image = *image, buffer = upload.buffer,
+                      offset = upload.offset](vk::CommandBuffer cmdbuf) {
+        const VkImageSubresourceRange range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                               VkImageMemoryBarrier{
+                                   .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                   .pNext = nullptr,
+                                   .srcAccessMask = 0,
+                                   .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                   .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                   .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                   .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                   .image = image,
+                                   .subresourceRange = range,
+                               });
+        const VkBufferImageCopy copy{
+            .bufferOffset = offset,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+            .imageOffset{0, 0, 0},
+            .imageExtent{Size, Size, 1},
+        };
+        cmdbuf.CopyBufferToImage(buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               0,
+                               VkImageMemoryBarrier{
+                                   .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                   .pNext = nullptr,
+                                   .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                   .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                                   .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                   .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                   .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                   .image = image,
+                                   .subresourceRange = range,
+                               });
+    });
+    bc_encoder_pass->Encode(*view, Size, Size, 1, true, output.buffer, output.offset,
+                            OutputBytes, 0);
+    scheduler.Record([](vk::CommandBuffer cmdbuf) {
+        const VkMemoryBarrier barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                               barrier);
+    });
+    scheduler.Finish();
+    // EDEN_BC7_CHECK=fail spoils the GPU's blocks, to try the fallback on a card where BC7 works.
+    if (const char* value = std::getenv("EDEN_BC7_CHECK"); value && std::string_view{value} == "fail") {
+        std::memset(output.mapped_span.data(), 0, OutputBytes);
+    }
+
+    // Both conversions decoded and measured against the texels: the GPU's may differ from the
+    // CPU's in rounding, so it only has to come close to the CPU's error, not match it.
+    u32 bad_blocks = 0;
+    u64 worst_gpu = 0;
+    u64 worst_cpu = 0;
+    for (u32 block = 0; block < Blocks; ++block) {
+        const u32 bx = block % (Size / 4);
+        const u32 by = block / (Size / 4);
+        std::array<u8, 64> source{};
+        for (u32 y = 0; y < 4; ++y) {
+            std::memcpy(&source[y * 16], &texels[((by * 4 + y) * Size + bx * 4) * 4], 16);
+        }
+        std::array<u8, 16> cpu_block{};
+        Tegra::Texture::BCN::EncodeBc7Block(cpu_block.data(), source.data());
+        std::array<u8, 64> cpu_texels{};
+        std::array<u8, 64> gpu_texels{};
+        Tegra::Texture::BCN::DecodeBc7Block(cpu_texels.data(), cpu_block.data());
+        Tegra::Texture::BCN::DecodeBc7Block(gpu_texels.data(),
+                                            output.mapped_span.data() + block * 16);
+        u64 cpu_error = 0;
+        u64 gpu_error = 0;
+        for (u32 i = 0; i < 64; ++i) {
+            const s32 cpu_diff = s32{cpu_texels[i]} - s32{source[i]};
+            const s32 gpu_diff = s32{gpu_texels[i]} - s32{source[i]};
+            cpu_error += u64(cpu_diff * cpu_diff);
+            gpu_error += u64(gpu_diff * gpu_diff);
+        }
+        // Up to twice the CPU's error, plus about 4 levels per channel.
+        if (gpu_error > cpu_error * 2 + 1024) {
+            ++bad_blocks;
+        }
+        worst_gpu = (std::max)(worst_gpu, gpu_error);
+        worst_cpu = (std::max)(worst_cpu, cpu_error);
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    if (bad_blocks == 0) {
+        LOG_INFO(Render_Vulkan,
+                 "BC7 texture converter checked in {} ms: the GPU's {} test blocks match the "
+                 "CPU's (worst error {} vs {})",
+                 ms, Blocks, worst_gpu, worst_cpu);
+        return;
+    }
+    LOG_WARNING(Render_Vulkan,
+                "BC7 texture converter check: {} of the GPU's {} test blocks came out wrong "
+                "(worst error {}, the CPU's {}). Textures go to BC3 instead (also on later "
+                "starts, until Fortune's Eden or the graphics driver is updated)",
+                bad_blocks, Blocks, worst_gpu, worst_cpu);
+    Settings::TurnOffAstcBc7();
+    bc_encoder_pass.reset();
+    bc_encoder_pass.emplace(device, scheduler, descriptor_pool, compute_pass_descriptor_queue,
+                            false);
 }
 
 StagingBufferRef TextureCacheRuntime::UploadStagingBuffer(size_t size, bool deferred) {
@@ -2417,7 +2622,8 @@ void TextureCacheRuntime::TickFrame() {
 Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu_addr_,
              VAddr cpu_addr_)
     : VideoCommon::ImageBase(info_, gpu_addr_, cpu_addr_), scheduler{&runtime_.scheduler},
-      runtime{&runtime_},
+      // The BC7 check runs before the first image picks its format (BC7 or BC3)
+      runtime{(runtime_.CheckBc7Encoder(), &runtime_)},
       original_image(MakeImage(runtime_.device, runtime_.memory_allocator, info,
                                runtime->ViewFormats(info.format))),
       aspect_mask(ImageAspectMask(info.format)) {
