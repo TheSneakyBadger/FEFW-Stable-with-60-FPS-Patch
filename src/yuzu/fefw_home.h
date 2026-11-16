@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QImage>
 #include <QPixmap>
 #include <QString>
 #include <QWidget>
@@ -63,6 +64,10 @@ private:
     QAction* open_saves{};
     QAction* open_mods{};
     QLabel* icon_label{};
+    QWidget* title_block{};
+    QLabel* logo_label{};
+    QImage logo;
+    QString logo_path;
     QLabel* title_label{};
     QLabel* version_label{};
     QLabel* status_label{};

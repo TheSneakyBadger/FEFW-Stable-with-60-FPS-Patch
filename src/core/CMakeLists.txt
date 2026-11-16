@@ -84,6 +84,8 @@ add_library(core STATIC
     file_sys/fefw_button_icons.cpp
     file_sys/fefw_button_icons.h
     file_sys/fefw_button_labels.h
+    file_sys/fefw_title_logo.cpp
+    file_sys/fefw_title_logo.h
     file_sys/fefw_romfs_tweaks.cpp
     file_sys/fefw_romfs_tweaks.h
     file_sys/fefw_ultrawide.h
