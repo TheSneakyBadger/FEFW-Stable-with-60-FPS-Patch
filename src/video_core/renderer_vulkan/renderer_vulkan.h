@@ -144,10 +144,12 @@ private:
         u32 backlog_count{};
         bool held{};
         u32 clear_frames{};       ///< Game frames in a row with the backlog cleared.
-        u32 clear_needed{15};     ///< ... before frame generation comes back on.
+        u32 clear_needed{10};     ///< ... before frame generation comes back on.
         u32 held_frames{};        ///< In this hold.
         size_t held_peak{};       ///< The largest backlog in this hold.
         std::optional<std::chrono::steady_clock::time_point> resumed_at;
+        /// Not held again until then: the last hold didn't clear the backlog.
+        std::optional<std::chrono::steady_clock::time_point> rest_until;
         u32 holds{};              ///< For the 10 s report.
         u32 skipped{};
         u32 logged{};
