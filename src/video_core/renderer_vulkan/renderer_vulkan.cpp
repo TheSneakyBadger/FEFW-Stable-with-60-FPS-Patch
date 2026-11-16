@@ -325,8 +325,10 @@ void RendererVulkan::PaceForFrameGeneration() {
     const f32 shown = static_cast<f32>(Settings::values.mfg_multiplier.GetValue()) + 2.0f;
     // A few below the refresh rate (as frame rate caps for variable refresh are set), so the
     // frames always fit.
+    // Never below 30 of the game's frames a second: the 60 FPS mode's game speed follows the
+    // frame rate from 30 to 60, and below 30 the game itself slows down (as on Switch).
     const auto interval = std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<f32>(shown / (refresh - 3.0f)));
+        std::chrono::duration<f32>((std::min)(shown / (refresh - 3.0f), 1.0f / 30.0f)));
     Clock::time_point target = *fg_pace_last + interval;
     if (target < now - interval) {
         // Far behind (a stall): start again from now rather than catching up in a burst.
