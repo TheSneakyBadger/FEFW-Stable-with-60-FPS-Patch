@@ -563,8 +563,9 @@ void ResolveAstcRecompression(u64 memory_limit_bytes, bool gpu_bcn_transcode,
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode &&
                !Bc7StartAllowed(gpu_driver)) {
         effective = AstcRecompression::Bc3;
-        LOG_WARNING(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto). A start with "
-                            "BC7 didn't get as far as the game's first frames, so BC7 is off "
+        LOG_WARNING(Common, "ASTC textures: BC3, re-compressed on the GPU (Auto). BC7 failed on "
+                            "an earlier start (it hung before the game's first frames, or its "
+                            "check found wrong blocks), so BC7 is off "
                             "until Fortune's Eden or the graphics driver is updated (delete "
                             "user\\config\\bc7-off.txt to try it again)");
     } else if (setting == AstcRecompression::Auto && gpu_bcn_transcode && small_card) {

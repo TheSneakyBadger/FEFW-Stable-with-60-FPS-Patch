@@ -994,7 +994,161 @@ uvec4 EncodeBlock() {
 }
 
 
+// Reads a BC7 block's bits from the lowest up.
+class BitReader {
+public:
+    explicit BitReader(const u8* block_) : block{block_} {}
+    int Read(int count) {
+        int value = 0;
+        for (int i = 0; i < count; ++i, ++pos) {
+            value |= ((block[pos >> 3] >> (pos & 7)) & 1) << i;
+        }
+        return value;
+    }
+
+private:
+    const u8* block;
+    int pos = 0;
+};
+
 } // Anonymous namespace
+
+void DecodeBc7Block(u8* output, const u8* block) {
+    struct ModeInfo {
+        int subsets, partition_bits, rotation_bits, selector_bits, colour_bits, alpha_bits,
+            endpoint_pbits, shared_pbits, index_bits, index2_bits;
+    };
+    static constexpr ModeInfo MODES[8] = {
+        {3, 4, 0, 0, 4, 0, 1, 0, 3, 0}, {2, 6, 0, 0, 6, 0, 0, 1, 3, 0},
+        {3, 6, 0, 0, 5, 0, 0, 0, 2, 0}, {2, 6, 0, 0, 7, 0, 1, 0, 2, 0},
+        {1, 0, 2, 1, 5, 6, 0, 0, 2, 3}, {1, 0, 2, 0, 7, 8, 0, 0, 2, 2},
+        {1, 0, 0, 0, 7, 7, 1, 0, 4, 0}, {2, 6, 0, 0, 5, 5, 1, 0, 2, 0},
+    };
+    BitReader bits{block};
+    int mode = 0;
+    while (mode < 8 && bits.Read(1) == 0) {
+        ++mode;
+    }
+    if (mode == 8) {
+        std::memset(output, 0, 64); // Reserved: transparent black
+        return;
+    }
+    const ModeInfo& m = MODES[mode];
+    const int partition = bits.Read(m.partition_bits);
+    const int rotation = bits.Read(m.rotation_bits);
+    const int selector = bits.Read(m.selector_bits);
+    int ends[3][2][4]{};
+    int value_bits[4] = {m.colour_bits, m.colour_bits, m.colour_bits, m.alpha_bits};
+    for (int c = 0; c < 3; ++c) {
+        for (int s = 0; s < m.subsets; ++s) {
+            for (int e = 0; e < 2; ++e) {
+                ends[s][e][c] = bits.Read(m.colour_bits);
+            }
+        }
+    }
+    if (m.alpha_bits != 0) {
+        for (int s = 0; s < m.subsets; ++s) {
+            for (int e = 0; e < 2; ++e) {
+                ends[s][e][3] = bits.Read(m.alpha_bits);
+            }
+        }
+    }
+    if (m.endpoint_pbits != 0 || m.shared_pbits != 0) {
+        int pbits[3][2]{};
+        for (int s = 0; s < m.subsets; ++s) {
+            if (m.endpoint_pbits != 0) {
+                pbits[s][0] = bits.Read(1);
+                pbits[s][1] = bits.Read(1);
+            } else {
+                pbits[s][0] = pbits[s][1] = bits.Read(1);
+            }
+        }
+        for (int s = 0; s < m.subsets; ++s) {
+            for (int e = 0; e < 2; ++e) {
+                for (int c = 0; c < 4; ++c) {
+                    if (value_bits[c] != 0) {
+                        ends[s][e][c] = (ends[s][e][c] << 1) | pbits[s][e];
+                    }
+                }
+            }
+        }
+        for (int c = 0; c < 4; ++c) {
+            if (value_bits[c] != 0) {
+                ++value_bits[c];
+            }
+        }
+    }
+    for (int s = 0; s < m.subsets; ++s) {
+        for (int e = 0; e < 2; ++e) {
+            for (int c = 0; c < 4; ++c) {
+                ends[s][e][c] = value_bits[c] != 0 ? Expand(ends[s][e][c], value_bits[c]) : 255;
+            }
+        }
+    }
+    const auto subset_of = [&](int i) {
+        if (m.subsets == 2) {
+            return int((PARTITIONS2[partition] >> (2 * i)) & 3);
+        }
+        if (m.subsets == 3) {
+            return int((PARTITIONS3[partition] >> (2 * i)) & 3);
+        }
+        return 0;
+    };
+    const auto is_anchor = [&](int i) {
+        if (i == 0) {
+            return true;
+        }
+        if (m.subsets == 2) {
+            return i == ANCHORS2[partition];
+        }
+        if (m.subsets == 3) {
+            return i == ANCHORS3A[partition] || i == ANCHORS3B[partition];
+        }
+        return false;
+    };
+    int index1[16];
+    int index2[16]{};
+    for (int i = 0; i < 16; ++i) {
+        index1[i] = bits.Read(m.index_bits - (is_anchor(i) ? 1 : 0));
+    }
+    if (m.index2_bits != 0) {
+        for (int i = 0; i < 16; ++i) {
+            index2[i] = bits.Read(m.index2_bits - (i == 0 ? 1 : 0));
+        }
+    }
+    const auto weight = [](int index_bits, int index) {
+        return index_bits == 2 ? WEIGHTS2[index]
+                               : (index_bits == 3 ? WEIGHTS3[index] : WEIGHTS4[index]);
+    };
+    for (int i = 0; i < 16; ++i) {
+        const int s = subset_of(i);
+        int colour_weight = weight(m.index_bits, index1[i]);
+        int alpha_weight = colour_weight;
+        if (m.index2_bits != 0) {
+            const int second = weight(m.index2_bits, index2[i]);
+            if (selector != 0) {
+                alpha_weight = colour_weight;
+                colour_weight = second;
+            } else {
+                alpha_weight = second;
+            }
+        }
+        int out[4];
+        for (int c = 0; c < 4; ++c) {
+            const int w = c == 3 ? alpha_weight : colour_weight;
+            out[c] = ((64 - w) * ends[s][0][c] + w * ends[s][1][c] + 32) >> 6;
+        }
+        if (rotation != 0) {
+            const int other = rotation - 1;
+            const int a = out[3];
+            out[3] = out[other];
+            out[other] = a;
+        }
+        for (int c = 0; c < 4; ++c) {
+            output[i * 4 + c] = static_cast<u8>(out[c]);
+        }
+    }
+}
 
 void EncodeBc7Block(u8* output, const u8* input) {
     for (int i = 0; i < 16; ++i) {
