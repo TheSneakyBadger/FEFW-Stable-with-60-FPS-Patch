@@ -402,7 +402,7 @@ bool Start() {
         // 3x or 4x with DLSS frame generation: the MFG Unlocker, when it was downloaded, goes in
         // before Streamline so it can lift NVIDIA's 2x limit on RTX 40 and older (on RTX 50 it
         // changes nothing). Only the release Fortune's Eden downloads is loaded.
-        if (frame_gen_wanted && Settings::values.dlss_mfg.GetValue() != Settings::DlssMfg::X2) {
+        if (frame_gen_wanted && Settings::values.mfg_multiplier.GetValue() != Settings::MfgMultiplier::X2) {
             LoadMfgUnlocker();
         }
         if (!Load(state, files.interposer)) {
@@ -928,7 +928,7 @@ void FrameGenPresentStart(u64 index, bool tagged) {
             if (const char* const value = std::getenv("EDEN_DLSSG_FRAMES")) {
                 return static_cast<u32>(std::clamp(std::atoi(value), 1, 3));
             }
-            return static_cast<u32>(Settings::values.dlss_mfg.GetValue()) + 1;
+            return static_cast<u32>(Settings::values.mfg_multiplier.GetValue()) + 1;
         }();
         options.numFramesToGenerate = frames_wanted;
         options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;

@@ -14,6 +14,7 @@
 #include <QBoxLayout>
 #include <QGridLayout>
 #include <QMenu>
+#include <QMessageBox>
 #include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
@@ -45,6 +46,7 @@
 #include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
+#include "yuzu/configuration/nvidia_dlss_panel.h"
 #endif
 #include "qt_common/game_list/game_list_p.h"
 
@@ -495,28 +497,29 @@ void FefwHome::BuildGamePage(QWidget* page) {
     choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
     choices->addLayout(labelled(tr("Upscaler quality"), quality_box));
     choices->addLayout(labelled(tr("Frame generation"), frame_gen_box));
-    // NVIDIA DLSS multi frame generation (2x, 3x, 4x): only while NVIDIA DLSS is chosen.
-    dlss_mfg_box = new QComboBox(right);
-    for (const auto& [mfg, name] : {std::pair{Settings::DlssMfg::X2, tr("2x")},
-                                     std::pair{Settings::DlssMfg::X3, tr("3x")},
-                                     std::pair{Settings::DlssMfg::X4, tr("4x")}}) {
-        dlss_mfg_box->addItem(name, static_cast<int>(mfg));
+    // Multi frame generation (2x, 3x, 4x): while frame generation is on.
+    mfg_box = new QComboBox(right);
+    for (const auto& [mfg, name] : {std::pair{Settings::MfgMultiplier::X2, tr("2x")},
+                                     std::pair{Settings::MfgMultiplier::X3, tr("3x")},
+                                     std::pair{Settings::MfgMultiplier::X4, tr("4x")}}) {
+        mfg_box->addItem(name, static_cast<int>(mfg));
     }
-    dlss_mfg_box->setCursor(Qt::PointingHandCursor);
-    dlss_mfg_box->setToolTip(
-        tr("How many frames NVIDIA DLSS frame generation shows for each of the game's. NVIDIA "
-           "allows 3x and 4x on GeForce RTX 50 cards; on RTX 40 and older they need the community "
-           "MFG Unlocker (Settings > Graphics > Frame generation can download it). Takes effect "
-           "when the game starts."));
-    dlss_mfg_column = new QWidget(right);
+    mfg_box->setCursor(Qt::PointingHandCursor);
+    mfg_box->setToolTip(
+        tr("How many frames frame generation shows for each of the game's. AMD FSR 3.1: any card. "
+           "NVIDIA DLSS: 3x and 4x on GeForce RTX 50 cards, or on RTX 40 and older with the "
+           "community MFG Unlocker (offered when you choose them). Keep the game's frame rate "
+           "times this at or under your display's refresh rate and any frame rate cap, or it "
+           "stutters. Takes effect when the game starts."));
+    mfg_column = new QWidget(right);
     {
-        QVBoxLayout* const mfg_layout = new QVBoxLayout(dlss_mfg_column);
+        QVBoxLayout* const mfg_layout = new QVBoxLayout(mfg_column);
         mfg_layout->setContentsMargins(0, 0, 0, 0);
         mfg_layout->setSpacing(4);
         mfg_layout->addWidget(caption(tr("Frames")));
-        mfg_layout->addWidget(dlss_mfg_box);
+        mfg_layout->addWidget(mfg_box);
     }
-    choices->addWidget(dlss_mfg_column);
+    choices->addWidget(mfg_column);
     choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
@@ -607,14 +610,16 @@ void FefwHome::BuildGamePage(QWidget* page) {
             static_cast<Settings::FrameGeneration>(frame_gen_box->itemData(index).toInt());
         if (index >= 0 && Settings::values.frame_generation.GetValue() != frame_gen) {
             Settings::values.frame_generation.SetValue(frame_gen);
+            OfferMfgUnlocker();
             UpdateStatusLine();
             emit SettingChanged();
         }
     });
-    connect(dlss_mfg_box, &QComboBox::currentIndexChanged, this, [this](int index) {
-        const auto mfg = static_cast<Settings::DlssMfg>(dlss_mfg_box->itemData(index).toInt());
-        if (index >= 0 && Settings::values.dlss_mfg.GetValue() != mfg) {
-            Settings::values.dlss_mfg.SetValue(mfg);
+    connect(mfg_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto mfg = static_cast<Settings::MfgMultiplier>(mfg_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.mfg_multiplier.GetValue() != mfg) {
+            Settings::values.mfg_multiplier.SetValue(mfg);
+            OfferMfgUnlocker();
             UpdateStatusLine();
             emit SettingChanged();
         }
@@ -812,7 +817,7 @@ void FefwHome::UpdateStatusLine() {
     }
     // 3x or 4x where the card was held at 2x last time, without the MFG Unlocker.
     if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
-        Settings::values.dlss_mfg.GetValue() != Settings::DlssMfg::X2 &&
+        Settings::values.mfg_multiplier.GetValue() != Settings::MfgMultiplier::X2 &&
         Settings::values.dlss_mfg_max_seen.GetValue() == 1) {
         std::error_code ec;
         if (!std::filesystem::exists(Vulkan::Streamline::MfgUnlockerPath(), ec)) {
@@ -859,9 +864,30 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
-    const QSignalBlocker mfg_blocker{dlss_mfg_box};
-    dlss_mfg_box->setCurrentIndex(
-        dlss_mfg_box->findData(static_cast<int>(Settings::values.dlss_mfg.GetValue())));
-    dlss_mfg_column->setVisible(Settings::values.frame_generation.GetValue() ==
-                                Settings::FrameGeneration::NvidiaDlss);
+    const QSignalBlocker mfg_blocker{mfg_box};
+    mfg_box->setCurrentIndex(
+        mfg_box->findData(static_cast<int>(Settings::values.mfg_multiplier.GetValue())));
+    mfg_column->setVisible(Settings::values.frame_generation.GetValue() !=
+                           Settings::FrameGeneration::Off);
+}
+
+void FefwHome::OfferMfgUnlocker() {
+#ifdef EGLANTINE_STREAMLINE
+    // NVIDIA DLSS at 3x or 4x without the MFG Unlocker, on a card not known to do more than 2x by
+    // itself (RTX 50): offer to download it.
+    if (Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::NvidiaDlss ||
+        Settings::values.mfg_multiplier.GetValue() == Settings::MfgMultiplier::X2 ||
+        Settings::values.dlss_mfg_max_seen.GetValue() > 1 || HasMfgUnlocker()) {
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this, tr("Multi frame generation"),
+        tr("NVIDIA allows 3x and 4x DLSS frame generation on GeForce RTX 50 cards only. On RTX 40 "
+           "and older cards, the community MFG Unlocker lifts that limit.\n\nDownload the MFG "
+           "Unlocker now? (Not needed on an RTX 50 card. Without it, 2x is used.)"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (answer == QMessageBox::Yes) {
+        DownloadMfgUnlocker(this);
+    }
+#endif
 }

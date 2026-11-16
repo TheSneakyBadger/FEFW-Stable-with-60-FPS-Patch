@@ -29,6 +29,7 @@
 #include "video_core/host_shaders/fsr3_fg_of_search_comp_spv.h"
 #include "video_core/host_shaders/vulkan_fsr3_fg_ui_mask_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
+#include <bit>
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_fsr3_frame_generator.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -878,8 +879,10 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
     const VkDeviceSize of_slot = align(sizeof(OfConstants));
     const VkDeviceSize spd_slot = align(sizeof(OfSpdConstants));
     const VkDeviceSize ui_slot = align(sizeof(UiMaskConstants));
-    const VkDeviceSize total =
-        fi_slot + 2 * pyramid_slot + (FLOW_LEVELS + 1) * of_slot + spd_slot + 2 * ui_slot;
+    // One set of interpolation constants a frame made (its time differs).
+    const u32 outputs = 1 + (std::min)(in.more_outputs, 2U);
+    const VkDeviceSize total = fi_slot * outputs + 2 * pyramid_slot +
+                               (FLOW_LEVELS + 1) * of_slot + spd_slot + 2 * ui_slot;
     const StagingBufferRef uniforms = staging_buffer_pool.Request(total, MemoryUsage::Upload);
     VkDeviceSize offset = 0;
     const auto stage = [&](const void* data, size_t size, VkDeviceSize slot_size) {
@@ -890,7 +893,16 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         offset += slot_size;
         return result;
     };
-    const Resource cb_fi = stage(&fi, sizeof(fi), fi_slot);
+    std::array<Resource, 3> cb_fi_at{};
+    for (u32 k = 0; k < outputs; ++k) {
+        // Frame k's time between the two game frames, as float bits (0: the SDK's halfway).
+        FiConstants timed = fi;
+        timed.pad = outputs == 1
+                        ? 0
+                        : std::bit_cast<s32>(static_cast<f32>(k + 1) / static_cast<f32>(outputs + 1));
+        cb_fi_at[k] = stage(&timed, sizeof(timed), fi_slot);
+    }
+    const Resource cb_fi = cb_fi_at[0];
     const Resource cb_game_pyramid = stage(&game_pyramid, sizeof(game_pyramid), pyramid_slot);
     const Resource cb_display_pyramid =
         stage(&display_pyramid, sizeof(display_pyramid), pyramid_slot);
@@ -1024,8 +1036,13 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
         has_previous = true;
         return;
     }
-    // The output frame: whatever it held is replaced (every pixel is written).
-    scheduler.Record([output = in.output_image](vk::CommandBuffer cmdbuf) {
+    // The output frames: whatever they held is replaced (every pixel is written).
+    const std::array<VkImage, 3> output_images{in.output_image, in.more_output_images[0],
+                                               in.more_output_images[1]};
+    const std::array<VkImageView, 3> output_views{in.output_view, in.more_output_views[0],
+                                                  in.more_output_views[1]};
+    for (u32 k = 0; k < outputs; ++k)
+    scheduler.Record([output = output_images[k]](vk::CommandBuffer cmdbuf) {
         const VkImageMemoryBarrier barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -1042,7 +1059,6 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {}, barrier);
     });
 
-    const Resource output{.view = in.output_view};
     if (remove_ui) {
         passes[PassUiMask]->Dispatch(scheduler, descriptor_queue,
                                      std::array{layer(0), layer(1), layer(2), layer(3),
@@ -1125,82 +1141,86 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
             list.push_back(pyramid_level(level));
         }
     };
-    passes[PassSetup]->Dispatch(
-        scheduler, descriptor_queue,
-        std::array{tex(scd_output), tex(game_motion_x), tex(game_motion_y), tex(flow_motion_x),
-                   tex(flow_motion_y), tex(disocclusion_mask), counters_buffer, cb_fi},
-        groups(rw, 8), groups(rh, 8));
-    if (!reset) {
-        scheduler.Record([image = *reconstructed_interpolated_depth.image](vk::CommandBuffer cmdbuf) {
-            cmdbuf.ClearColorImage(image, VK_IMAGE_LAYOUT_GENERAL, VkClearColorValue{},
-                                   ALL_LEVELS);
-            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                   MemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT,
-                                                 VK_ACCESS_SHADER_READ_BIT |
-                                                     VK_ACCESS_SHADER_WRITE_BIT));
-        });
-        passes[PassReconstructPreviousDepth]->Dispatch(
+    // Each frame made: its own interpolation at its own time (the optical flow above is shared).
+    for (u32 k = 0; k < outputs; ++k) {
+        const Resource cb_fi_k = cb_fi_at[k];
+        const Resource output{.view = output_views[k]};
+        passes[PassSetup]->Dispatch(
             scheduler, descriptor_queue,
-            std::array{tex(dilated_motion_vectors), tex(dilated_depth), current,
-                       tex(distortion_field), tex(reconstructed_interpolated_depth), cb_fi},
+            std::array{tex(scd_output), tex(game_motion_x), tex(game_motion_y), tex(flow_motion_x),
+                       tex(flow_motion_y), tex(disocclusion_mask), counters_buffer, cb_fi_k},
             groups(rw, 8), groups(rh, 8));
-        passes[PassGameMotionVectorField]->Dispatch(
-            scheduler, descriptor_queue,
-            std::array{tex(dilated_motion_vectors), tex(dilated_depth), previous, current,
-                       tex(distortion_field), tex(game_motion_x), tex(game_motion_y), cb_fi},
-            groups(rw, 8), groups(rh, 8));
-        {
-            std::vector<Resource> list{tex(game_motion_x), tex(game_motion_y), counters_buffer};
-            pyramid_mips(list);
-            list.push_back(cb_fi);
-            list.push_back(cb_game_pyramid);
-            passes[PassGameVectorFieldPyramid]->Dispatch(scheduler, descriptor_queue, list,
-                                                         game_spd[0], game_spd[1]);
+        if (!reset) {
+            scheduler.Record([image = *reconstructed_interpolated_depth.image](vk::CommandBuffer cmdbuf) {
+                cmdbuf.ClearColorImage(image, VK_IMAGE_LAYOUT_GENERAL, VkClearColorValue{},
+                                       ALL_LEVELS);
+                cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       MemoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT,
+                                                     VK_ACCESS_SHADER_READ_BIT |
+                                                         VK_ACCESS_SHADER_WRITE_BIT));
+            });
+            passes[PassReconstructPreviousDepth]->Dispatch(
+                scheduler, descriptor_queue,
+                std::array{tex(dilated_motion_vectors), tex(dilated_depth), current,
+                           tex(distortion_field), tex(reconstructed_interpolated_depth), cb_fi_k},
+                groups(rw, 8), groups(rh, 8));
+            passes[PassGameMotionVectorField]->Dispatch(
+                scheduler, descriptor_queue,
+                std::array{tex(dilated_motion_vectors), tex(dilated_depth), previous, current,
+                           tex(distortion_field), tex(game_motion_x), tex(game_motion_y), cb_fi_k},
+                groups(rw, 8), groups(rh, 8));
+            {
+                std::vector<Resource> list{tex(game_motion_x), tex(game_motion_y), counters_buffer};
+                pyramid_mips(list);
+                list.push_back(cb_fi_k);
+                list.push_back(cb_game_pyramid);
+                passes[PassGameVectorFieldPyramid]->Dispatch(scheduler, descriptor_queue, list,
+                                                             game_spd[0], game_spd[1]);
+            }
+            const u32 flow_groups_x =
+                (static_cast<u32>(static_cast<f32>(dw) / static_cast<f32>(FLOW_BLOCK_SIZE)) + 7) / 8;
+            const u32 flow_groups_y =
+                (static_cast<u32>(static_cast<f32>(dh) / static_cast<f32>(FLOW_BLOCK_SIZE)) + 7) / 8;
+            passes[PassOpticalFlowVectorField]->Dispatch(
+                scheduler, descriptor_queue,
+                std::array{tex(flow_vector), tex(zero_uint), tex(dilated_depth), previous, current,
+                           tex(flow_motion_x), tex(flow_motion_y), cb_fi_k},
+                flow_groups_x, flow_groups_y);
+            passes[PassDisocclusionMask]->Dispatch(
+                scheduler, descriptor_queue,
+                std::array{tex(game_motion_x), tex(game_motion_y), tex(reconstructed_previous_depth),
+                           tex(dilated_depth), tex(reconstructed_interpolated_depth),
+                           tex(inpainting_pyramid), tex(distortion_field), tex(disocclusion_mask),
+                           cb_fi_k},
+                groups(rw, 8), groups(rh, 8));
         }
-        const u32 flow_groups_x =
-            (static_cast<u32>(static_cast<f32>(dw) / static_cast<f32>(FLOW_BLOCK_SIZE)) + 7) / 8;
-        const u32 flow_groups_y =
-            (static_cast<u32>(static_cast<f32>(dh) / static_cast<f32>(FLOW_BLOCK_SIZE)) + 7) / 8;
-        passes[PassOpticalFlowVectorField]->Dispatch(
+        passes[PassInterpolation]->Dispatch(
             scheduler, descriptor_queue,
-            std::array{tex(flow_vector), tex(zero_uint), tex(dilated_depth), previous, current,
-                       tex(flow_motion_x), tex(flow_motion_y), cb_fi},
-            flow_groups_x, flow_groups_y);
-        passes[PassDisocclusionMask]->Dispatch(
-            scheduler, descriptor_queue,
-            std::array{tex(game_motion_x), tex(game_motion_y), tex(reconstructed_previous_depth),
-                       tex(dilated_depth), tex(reconstructed_interpolated_depth),
-                       tex(inpainting_pyramid), tex(distortion_field), tex(disocclusion_mask),
-                       cb_fi},
-            groups(rw, 8), groups(rh, 8));
-    }
-    passes[PassInterpolation]->Dispatch(
-        scheduler, descriptor_queue,
-        std::array{tex(game_motion_x), tex(game_motion_y), tex(flow_motion_x), tex(flow_motion_y),
-                   previous, current, tex(disocclusion_mask), tex(inpainting_pyramid),
-                   counters_buffer, output, cb_fi},
-        groups(dw, 8), groups(dh, 8));
-    {
-        std::vector<Resource> list{output, counters_buffer};
-        pyramid_mips(list);
-        list.push_back(cb_fi);
-        list.push_back(cb_display_pyramid);
-        passes[PassInpaintingPyramid]->Dispatch(scheduler, descriptor_queue, list,
-                                                display_spd[0], display_spd[1]);
-    }
-    passes[PassInpainting]->Dispatch(
-        scheduler, descriptor_queue,
-        std::array{tex(scd_output), tex(inpainting_pyramid), current, current, output, cb_fi},
-        groups(dw, 8), groups(dh, 8));
-    if (has_ui) {
-        passes[PassUiMask]->Dispatch(
-            scheduler, descriptor_queue,
-            std::array{layer(0), layer(1), layer(2), layer(3), real_current, output,
-                       cb_ui_finish, tex(ui_alpha_now)},
+            std::array{tex(game_motion_x), tex(game_motion_y), tex(flow_motion_x), tex(flow_motion_y),
+                       previous, current, tex(disocclusion_mask), tex(inpainting_pyramid),
+                       counters_buffer, output, cb_fi_k},
             groups(dw, 8), groups(dh, 8));
+        {
+            std::vector<Resource> list{output, counters_buffer};
+            pyramid_mips(list);
+            list.push_back(cb_fi_k);
+            list.push_back(cb_display_pyramid);
+            passes[PassInpaintingPyramid]->Dispatch(scheduler, descriptor_queue, list,
+                                                    display_spd[0], display_spd[1]);
+        }
+        passes[PassInpainting]->Dispatch(
+            scheduler, descriptor_queue,
+            std::array{tex(scd_output), tex(inpainting_pyramid), current, current, output, cb_fi_k},
+            groups(dw, 8), groups(dh, 8));
+        if (has_ui) {
+            passes[PassUiMask]->Dispatch(
+                scheduler, descriptor_queue,
+                std::array{layer(0), layer(1), layer(2), layer(3), real_current, output,
+                           cb_ui_finish, tex(ui_alpha_now)},
+                groups(dw, 8), groups(dh, 8));
+        }
     }
-
     if (in.show_ui_less && remove_ui) {
         scheduler.Record([source = *ui_less_now.image, destination = in.output_image, dw,
                           dh](vk::CommandBuffer cmdbuf) {

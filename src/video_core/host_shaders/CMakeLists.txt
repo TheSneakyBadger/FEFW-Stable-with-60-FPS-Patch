@@ -274,7 +274,8 @@ foreach(VARIANT IN ITEMS ${FSR3_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${FSR3_HEADER_FILE})
 endforeach()
 
-# AMD FidelityFX frame interpolation and optical flow (externals/FidelityFX-SDK, unmodified): FSR 3.1
+# AMD FidelityFX frame interpolation and optical flow (externals/FidelityFX-SDK; the frame
+# interpolation headers also take a time between the frames, for multi frame generation): FSR 3.1
 # frame generation. The SDK's Vulkan pass files with the upscaler's input options (render-size
 # motion vectors, reversed depth).
 set(FFXFG_GPU_DIR ${CMAKE_SOURCE_DIR}/externals/FidelityFX-SDK/include/FidelityFX/gpu)

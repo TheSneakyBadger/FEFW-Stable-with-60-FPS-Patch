@@ -23,6 +23,18 @@
 #if !defined(FFX_FRAMEINTERPOLATION_COMMON_H)
 #define FFX_FRAMEINTERPOLATION_COMMON_H
 
+// Fortune's Eden (multi frame generation): the vector fields hold half the motion between the two
+// frames, as the SDK's. From a frame made at time t (0: previous, 1: current), the previous frame
+// is FFX_FI_TO_PREVIOUS(v) away and the current one FFX_FI_TO_CURRENT(v) back; both are v at
+// t = 0.5, the SDK's only case.
+#if defined(FFX_FRAMEINTERPOLATION_HAS_INTERPOLATION_TIME)
+#define FFX_FI_TIME() InterpolationTime()
+#else
+#define FFX_FI_TIME() 0.5f
+#endif
+#define FFX_FI_TO_PREVIOUS(v) ((v) * (2.0f * FFX_FI_TIME()))
+#define FFX_FI_TO_CURRENT(v) ((v) * (2.0f * (1.0f - FFX_FI_TIME())))
+
 #define FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_TEAR_LINES       (1 << 0)
 #define FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_RESET_INDICATORS (1 << 1)
 #define FFX_FRAMEINTERPOLATION_DISPATCH_DRAW_DEBUG_VIEW             (1 << 2)
@@ -362,8 +374,8 @@ void LoadInpaintedGameFieldMv(FfxFloat32x2 fUv, out VectorFieldEntry vfElement)
         vfElement.bInPainted            = true;
     }
 
-    vfElement.bNegOutside = !IsUvInside(fUv - vfElement.fMotionVector);
-    vfElement.bPosOutside = !IsUvInside(fUv + vfElement.fMotionVector);
+    vfElement.bNegOutside = !IsUvInside(fUv - FFX_FI_TO_CURRENT(vfElement.fMotionVector));
+    vfElement.bPosOutside = !IsUvInside(fUv + FFX_FI_TO_PREVIOUS(vfElement.fMotionVector));
     vfElement.fVelocity   = length(vfElement.fMotionVector);
 }
 #endif
@@ -409,8 +421,8 @@ void SampleOpticalFlowMotionVectorField(FfxFloat32x2 fUv, out VectorFieldEntry v
         vfElement.uLowPriorityFactor /= fWeightSum;
     }
 
-    vfElement.bNegOutside = !IsUvInside(fUv - vfElement.fMotionVector);
-    vfElement.bPosOutside = !IsUvInside(fUv + vfElement.fMotionVector);
+    vfElement.bNegOutside = !IsUvInside(fUv - FFX_FI_TO_CURRENT(vfElement.fMotionVector));
+    vfElement.bPosOutside = !IsUvInside(fUv + FFX_FI_TO_PREVIOUS(vfElement.fMotionVector));
     vfElement.fVelocity   = length(vfElement.fMotionVector);
 }
 #endif
