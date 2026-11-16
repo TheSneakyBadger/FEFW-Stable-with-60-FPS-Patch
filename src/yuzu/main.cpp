@@ -25,7 +25,12 @@
 #include "main_window.h"
 
 #ifdef _WIN32
+#include <cstdlib>
 #include <QScreen>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 static void OverrideWindowsFont() {
     // Qt5 chooses these fonts on Windows and they have fairly ugly alphanumeric/cyrillic characters
@@ -78,6 +83,21 @@ static Qt::HighDpiScaleFactorRoundingPolicy GetHighDpiRoundingPolicy() {
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one): wait
+    // (up to 20 s) for it to have exited first, so this one gets the log and the user folder's
+    // files to itself.
+    if (const char* const wait_for = std::getenv("FEFW_WAIT_FOR_PID")) {
+        const DWORD pid = static_cast<DWORD>(std::strtoul(wait_for, nullptr, 10));
+        _putenv("FEFW_WAIT_FOR_PID=");
+        if (pid != 0) {
+            if (const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
+                WaitForSingleObject(process, 20000);
+                CloseHandle(process);
+            }
+        }
+    }
+#endif
 #if YUZU_ROOM
     bool launch_room = false;
     for (int i = 1; i < argc; i++) {

@@ -312,23 +312,28 @@ void RendererVulkan::PaceForFrameGeneration() {
     // emulated GPU and the game back, and in 60 FPS mode the game's speed follows.
     using Clock = std::chrono::steady_clock;
     const Clock::time_point now = Clock::now();
+    // The frames a second the display can take: a cap set below the refresh rate (one would
+    // drop the frames above it), else the refresh rate less 3 (as caps for variable refresh are
+    // set), so the frames always fit.
+    const int cap = Settings::values.mfg_frame_cap_fps.GetValue();
     const f32 refresh = Settings::DisplayRefreshRate();
+    const f32 limit = cap > 0 && (refresh <= 0.0f || static_cast<f32>(cap) - 1.0f < refresh - 3.0f)
+                          ? static_cast<f32>(cap) - 1.0f
+                          : refresh - 3.0f;
     const bool active = Settings::values.frame_generation.GetValue() !=
                             Settings::FrameGeneration::Off &&
                         Settings::values.mfg_frame_cap.GetValue() ==
                             Settings::MfgFrameCap::Display &&
-                        Settings::ActiveFrameGeneration() != nullptr && refresh >= 30.0f;
+                        Settings::ActiveFrameGeneration() != nullptr && limit >= 30.0f;
     if (!active || !fg_pace_last) {
         fg_pace_last = now;
         return;
     }
     const f32 shown = static_cast<f32>(Settings::values.mfg_multiplier.GetValue()) + 2.0f;
-    // A few below the refresh rate (as frame rate caps for variable refresh are set), so the
-    // frames always fit.
     // Never below 30 of the game's frames a second: the 60 FPS mode's game speed follows the
     // frame rate from 30 to 60, and below 30 the game itself slows down (as on Switch).
     const auto interval = std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<f32>((std::min)(shown / (refresh - 3.0f), 1.0f / 30.0f)));
+        std::chrono::duration<f32>((std::min)(shown / limit, 1.0f / 30.0f)));
     Clock::time_point target = *fg_pace_last + interval;
     if (target < now - interval) {
         // Far behind (a stall): start again from now rather than catching up in a burst.

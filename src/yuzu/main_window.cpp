@@ -2122,6 +2122,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         }
         LOG_INFO(Frontend, "NVIDIA DLSS: starting the game in a new Fortune's Eden");
         connect(qApp, &QCoreApplication::aboutToQuit, [arguments] {
+            // The new one waits for this one to have exited: while both ran, the new one
+            // couldn't open the log (it went unwritten), and tools loaded with DLSS frame
+            // generation (the MFG Unlocker) read their settings half-written and fell back to 2x.
+            qputenv("FEFW_WAIT_FOR_PID",
+                    QByteArray::number(static_cast<qulonglong>(QCoreApplication::applicationPid())));
             QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
         });
         close();
