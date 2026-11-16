@@ -30,6 +30,7 @@
 
 #include "common/fs/ryujinx_compat.h"
 #include "main_window.h"
+#include "fefw_restart.h"
 #include "network/network.h"
 #include "qt_common/discord/discord.h"
 #include "ui_main.h"
@@ -96,6 +97,7 @@
 #include <QPalette>
 #include <QProgressDialog>
 #include <QScreen>
+#include <QWindow>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QtConcurrentRun>
@@ -2084,6 +2086,19 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
+    // Frame generation's pacing: the refresh rate of the display the game is on.
+    {
+        const auto set_refresh = [](QScreen* screen) {
+            if (screen) {
+                Settings::SetDisplayRefreshRate(static_cast<f32>(screen->refreshRate()));
+            }
+        };
+        set_refresh(screen());
+        if (QWindow* const handle = windowHandle(); handle && !refresh_rate_connected) {
+            refresh_rate_connected = true;
+            connect(handle, &QWindow::screenChanged, this, set_refresh);
+        }
+    }
     // The game's button icons are drawn as it starts: what they show, and what it was.
     fefw_icons_at_boot = FefwIconsState();
     fefw_icons_noticed = fefw_icons_at_boot;
@@ -2107,9 +2122,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             arguments.prepend(QStringLiteral("-f"));
         }
         LOG_INFO(Frontend, "NVIDIA DLSS: starting the game in a new Fortune's Eden");
-        connect(qApp, &QCoreApplication::aboutToQuit, [arguments] {
-            QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
-        });
+        // Started once this one has closed (main.cpp, FefwRestart).
+        FefwRestart::Request(arguments);
         close();
         return;
     }

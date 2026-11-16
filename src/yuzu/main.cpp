@@ -23,9 +23,15 @@
 #endif
 
 #include "main_window.h"
+#include "fefw_restart.h"
 
 #ifdef _WIN32
+#include <cstdlib>
 #include <QScreen>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 static void OverrideWindowsFont() {
     // Qt5 chooses these fonts on Windows and they have fairly ugly alphanumeric/cyrillic characters
@@ -78,6 +84,9 @@ static Qt::HighDpiScaleFactorRoundingPolicy GetHighDpiRoundingPolicy() {
 }
 
 int main(int argc, char* argv[]) {
+    // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one):
+    // waits for it to have gone, so this one gets the log and the user folder's files to itself.
+    FefwRestart::WaitForPrevious();
 #if YUZU_ROOM
     bool launch_room = false;
     for (int i = 1; i < argc; i++) {
@@ -200,10 +209,16 @@ int main(int argc, char* argv[]) {
     // generating shaders
     setlocale(LC_ALL, "C");
 
-    MainWindow main_window{has_broken_vulkan};
-    // After settings have been loaded by GMainWindow, apply the filter
-    main_window.show();
+    int result = 0;
+    {
+        MainWindow main_window{has_broken_vulkan};
+        // After settings have been loaded by GMainWindow, apply the filter
+        main_window.show();
 
-    app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window, &MainWindow::OnAppFocusStateChanged);
-    return app.exec();
+        app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window,
+                    &MainWindow::OnAppFocusStateChanged);
+        result = app.exec();
+    }
+    FefwRestart::RunIfRequested(result);
+    return result;
 }

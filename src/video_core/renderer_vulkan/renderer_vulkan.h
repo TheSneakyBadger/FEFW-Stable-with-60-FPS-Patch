@@ -77,14 +77,14 @@ private:
                               VkDeviceSize buffer_size);
     void RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers);
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
-    /// AMD FSR 3.1 frame generation: presents a frame between the last one and `frame` (when on
-    /// and this frame has the game's motion), and paces the two.
     /// The surface the swapchain is made on: with DLSS frame generation, the window's surface
     /// made again through Streamline now that it has the device.
     VkSurfaceKHR SwapchainSurface();
 
     /// Whether frame generation is held off for this game frame (the card is behind).
     bool FrameGenHeldOff(std::chrono::steady_clock::time_point now);
+    /// AMD FSR 3.1 frame generation: presents the frames made between the last one and `frame`
+    /// (when on and this frame has the game's motion), and paces them.
     void GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                           u32 presented_height);
 

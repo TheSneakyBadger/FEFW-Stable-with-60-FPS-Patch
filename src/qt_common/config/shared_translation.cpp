@@ -217,6 +217,29 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "(sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll) and "
               "nvngx_dlssg.dll in the user folder's streamline folder; AMD's is used where it "
               "can't run.\nTakes effect when a game starts. Experimental."));
+    INSERT(Settings, mfg_multiplier, tr("Multi frame generation:"),
+           tr("How many frames frame generation shows for each of the game's: 2x makes one between "
+              "each two, 3x two and 4x three.\nAMD FSR 3.1: any card.\nNVIDIA DLSS: NVIDIA allows "
+              "3x and 4x on GeForce RTX 50 cards; on RTX 40 and older it makes one (2x) unless the "
+              "community MFG Unlocker lifts that limit (download it below).\nThe game's frame rate "
+              "times this should stay at or under your display's refresh rate, and under any "
+              "frame rate cap: above it, frames are dropped and it stutters. Takes effect when a "
+              "game starts. Experimental."));
+    INSERT(Settings, dlss_mfg_max_seen, QString(), QString());
+    INSERT(Settings, mfg_frame_cap_fps,
+           tr("Your frame rate cap, if you have one (0: none):"),
+           tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, "
+              "RTSS or the MFG Unlocker's menu), set this to the same number, so frame "
+              "generation's pacing stays just under your cap (with a 158 cap at 3x, the game runs "
+              "at about 52 FPS). If you don't have a cap, leave it at 0: Fortune's Eden then caps "
+              "to your display's refresh rate itself, and you don't need one. A cap of your own "
+              "below the refresh rate with this at 0 makes it stutter."));
+    INSERT(Settings, mfg_frame_cap, tr("Frame generation pacing:"),
+           tr("Display refresh rate: with frame generation on, the game's frame rate is held to "
+              "your display's refresh rate divided by the frames shown for each of the game's (for "
+              "example 165 Hz at 3x: 55 FPS), so every frame is shown at an even pace. Without "
+              "this, frames above the refresh rate (or a frame rate cap) are dropped and it "
+              "stutters. The game's speed follows its frame rate in 60 FPS mode. Off: no limit.")); 
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
@@ -496,6 +519,17 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(FrameGeneration, AmdFsr3, tr("AMD FSR 3.1 (any card)")),
                               PAIR(FrameGeneration, NvidiaDlss,
                                    tr("NVIDIA DLSS (GeForce RTX 40/50)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::MfgMultiplier>::Index(),
+                          {
+                              PAIR(MfgMultiplier, X2, tr("2x")),
+                              PAIR(MfgMultiplier, X3, tr("3x")),
+                              PAIR(MfgMultiplier, X4, tr("4x")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::MfgFrameCap>::Index(),
+                          {
+                              PAIR(MfgFrameCap, Display, tr("Display refresh rate")),
+                              PAIR(MfgFrameCap, Off, tr("Off")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::AudioBuffer>::Index(),
                           {

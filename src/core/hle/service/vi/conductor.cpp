@@ -122,7 +122,16 @@ s64 Conductor::GetNextTicks() const {
     }
 
     const f32 effective_fps = 60.f / static_cast<f32>(m_swap_interval);
-    return static_cast<s64>(speed_scale * (1000000000.f / effective_fps));
+    const s64 ticks = static_cast<s64>(speed_scale * (1000000000.f / effective_fps));
+    // While frame generation makes frames: the game's frames come no faster than the display (or
+    // the frame rate cap) can show them with the frames made between them (165 Hz at 3x: 54 a
+    // second), evenly, from the game's own vsync. (Held back on the GPU thread instead, the game
+    // still saw a 60 Hz vsync: its frames came 1 or 2 vsyncs apart and the motion stuttered.)
+    if (settings.use_speed_limit.GetValue() && Settings::SpeedLimit() == 100 &&
+        m_compose_speed_scale == 1.f) {
+        return (std::max)(ticks, Settings::FrameGenerationPeriodNs());
+    }
+    return ticks;
 }
 
 s64 Conductor::GetFramePeriodNs() const {

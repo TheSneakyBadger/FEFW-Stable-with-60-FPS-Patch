@@ -4,6 +4,8 @@
 #include "yuzu/fefw_home.h"
 
 #include <algorithm>
+#include <utility>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -12,6 +14,7 @@
 #include <QBoxLayout>
 #include <QGridLayout>
 #include <QMenu>
+#include <QMessageBox>
 #include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
@@ -28,6 +31,7 @@
 #include <QScrollArea>
 #include <QFrame>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 
@@ -43,6 +47,7 @@
 #include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
+#include "yuzu/configuration/nvidia_dlss_panel.h"
 #endif
 #include "qt_common/game_list/game_list_p.h"
 
@@ -493,6 +498,49 @@ void FefwHome::BuildGamePage(QWidget* page) {
     choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
     choices->addLayout(labelled(tr("Upscaler quality"), quality_box));
     choices->addLayout(labelled(tr("Frame generation"), frame_gen_box));
+    // Multi frame generation (2x, 3x, 4x): while frame generation is on.
+    mfg_box = new QComboBox(right);
+    for (const auto& [mfg, name] : {std::pair{Settings::MfgMultiplier::X2, tr("2x")},
+                                     std::pair{Settings::MfgMultiplier::X3, tr("3x")},
+                                     std::pair{Settings::MfgMultiplier::X4, tr("4x")}}) {
+        mfg_box->addItem(name, static_cast<int>(mfg));
+    }
+    mfg_box->setCursor(Qt::PointingHandCursor);
+    mfg_box->setToolTip(
+        tr("How many frames frame generation shows for each of the game's. AMD FSR 3.1: any card. "
+           "NVIDIA DLSS: 3x and 4x on GeForce RTX 50 cards, or on RTX 40 and older with the "
+           "community MFG Unlocker (offered when you choose them). Keep the game's frame rate "
+           "times this at or under your display's refresh rate and any frame rate cap, or it "
+           "stutters. Takes effect when the game starts."));
+    mfg_column = new QWidget(right);
+    {
+        QVBoxLayout* const mfg_layout = new QVBoxLayout(mfg_column);
+        mfg_layout->setContentsMargins(0, 0, 0, 0);
+        mfg_layout->setSpacing(4);
+        mfg_layout->addWidget(caption(tr("Frames")));
+        mfg_layout->addWidget(mfg_box);
+    }
+    choices->addWidget(mfg_column);
+    // Your frame rate cap, if you have one: frame generation's pacing stays under it.
+    mfg_cap_spin = new QSpinBox(right);
+    mfg_cap_spin->setRange(0, 1000);
+    mfg_cap_spin->setSpecialValueText(tr("None"));
+    mfg_cap_spin->setSuffix(tr(" FPS"));
+    mfg_cap_spin->setMinimumWidth(110);
+    mfg_cap_spin->setToolTip(
+        tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, RTSS or "
+           "the MFG Unlocker's menu), set this to the same number, so frame generation's pacing "
+           "stays just under it. If you don't have a cap, leave it at None: Fortune's Eden caps "
+           "to your display's refresh rate itself. Takes effect right away."));
+    mfg_cap_column = new QWidget(right);
+    {
+        QVBoxLayout* const cap_layout = new QVBoxLayout(mfg_cap_column);
+        cap_layout->setContentsMargins(0, 0, 0, 0);
+        cap_layout->setSpacing(4);
+        cap_layout->addWidget(caption(tr("Your frame rate cap")));
+        cap_layout->addWidget(mfg_cap_spin);
+    }
+    choices->addWidget(mfg_cap_column);
     choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
@@ -583,10 +631,26 @@ void FefwHome::BuildGamePage(QWidget* page) {
             static_cast<Settings::FrameGeneration>(frame_gen_box->itemData(index).toInt());
         if (index >= 0 && Settings::values.frame_generation.GetValue() != frame_gen) {
             Settings::values.frame_generation.SetValue(frame_gen);
+            OfferMfgUnlocker();
             UpdateStatusLine();
             emit SettingChanged();
         }
     });
+    connect(mfg_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto mfg = static_cast<Settings::MfgMultiplier>(mfg_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.mfg_multiplier.GetValue() != mfg) {
+            Settings::values.mfg_multiplier.SetValue(mfg);
+            OfferMfgUnlocker();
+            UpdateStatusLine();
+            emit SettingChanged();
+        }
+    });
+    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [](int value) {
+        if (Settings::values.mfg_frame_cap_fps.GetValue() != value) {
+            Settings::values.mfg_frame_cap_fps.SetValue(value);
+        }
+    });
+    connect(mfg_cap_spin, &QSpinBox::editingFinished, this, &FefwHome::SettingChanged);
     connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
         const auto icons =
             static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
@@ -778,6 +842,17 @@ void FefwHome::UpdateStatusLine() {
         notes << tr("NVIDIA DLSS frame generation needs NVIDIA's files: Settings → Graphics → "
                     "Frame generation has a download button (until then AMD's is used).");
     }
+    // 3x or 4x where the card was held at 2x last time, without the MFG Unlocker.
+    if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
+        Settings::values.mfg_multiplier.GetValue() != Settings::MfgMultiplier::X2 &&
+        Settings::values.dlss_mfg_max_seen.GetValue() == 1) {
+        std::error_code ec;
+        if (!std::filesystem::exists(Vulkan::Streamline::MfgUnlockerPath(), ec)) {
+            notes << tr("NVIDIA allows 3x and 4x on GeForce RTX 50 cards only: Settings → Graphics "
+                        "→ Frame generation can download the community MFG Unlocker for this "
+                        "card (until then 2x is used).");
+        }
+    }
 #endif
     status_label->setText(notes.join(QLatin1Char('\n')));
     status_label->setVisible(!notes.isEmpty());
@@ -816,4 +891,38 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
+    const QSignalBlocker mfg_blocker{mfg_box};
+    mfg_box->setCurrentIndex(
+        mfg_box->findData(static_cast<int>(Settings::values.mfg_multiplier.GetValue())));
+    mfg_column->setVisible(Settings::values.frame_generation.GetValue() !=
+                           Settings::FrameGeneration::Off);
+    const QSignalBlocker cap_blocker{mfg_cap_spin};
+    mfg_cap_spin->setValue(Settings::values.mfg_frame_cap_fps.GetValue());
+    mfg_cap_column->setVisible(Settings::values.frame_generation.GetValue() !=
+                                   Settings::FrameGeneration::Off &&
+                               Settings::values.mfg_frame_cap.GetValue() ==
+                                   Settings::MfgFrameCap::Display);
+}
+
+void FefwHome::OfferMfgUnlocker() {
+#ifdef EGLANTINE_STREAMLINE
+    // NVIDIA DLSS at 3x or 4x without the MFG Unlocker, on a card not known to do more than 2x by
+    // itself (RTX 50): offer to download it.
+    if (Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::NvidiaDlss ||
+        Settings::values.mfg_multiplier.GetValue() == Settings::MfgMultiplier::X2 ||
+        Settings::values.dlss_mfg_max_seen.GetValue() > 1 || HasMfgUnlocker()) {
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this, tr("Multi frame generation"),
+        tr("NVIDIA allows 3x and 4x DLSS frame generation on GeForce RTX 50 cards only. On RTX 40 "
+           "and older cards, the community MFG Unlocker lifts that limit.\n\nOn those cards, AMD "
+           "FSR 3.1 frame generation at 3x or 4x is usually smoother (RTX 40 cards lack the RTX "
+           "50's hardware frame pacing).\n\nDownload the MFG Unlocker now? (Not needed on an RTX "
+           "50 card. Without it, 2x is used.)"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (answer == QMessageBox::Yes) {
+        DownloadMfgUnlocker(this);
+    }
+#endif
 }

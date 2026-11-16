@@ -14,6 +14,7 @@ class QAction;
 class QCheckBox;
 class QComboBox;
 class QSlider;
+class QSpinBox;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
@@ -56,6 +57,8 @@ protected:
 private:
     void BuildGamePage(QWidget* page);
     void BuildSetupPage(QWidget* page);
+    /// NVIDIA DLSS at 3x or 4x without the MFG Unlocker: offers to download it.
+    void OfferMfgUnlocker();
 
     QStackedWidget* pages{};
     QWidget* game_page{};
@@ -76,6 +79,10 @@ private:
     QComboBox* upscaler_box{};
     QComboBox* quality_box{};
     QComboBox* frame_gen_box{};
+    QComboBox* mfg_box{};
+    QWidget* mfg_column{};
+    QSpinBox* mfg_cap_spin{};
+    QWidget* mfg_cap_column{};
     QComboBox* button_icons_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};

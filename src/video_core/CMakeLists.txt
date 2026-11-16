@@ -538,7 +538,7 @@ if (ENABLE_NVIDIA_DLSS)
             set(STREAMLINE_INCLUDE_DIR "${streamline_SOURCE_DIR}/include")
         endif()
         target_include_directories(video_core PRIVATE "${STREAMLINE_INCLUDE_DIR}")
-        target_link_libraries(video_core PRIVATE version wintrust crypt32)
+        target_link_libraries(video_core PRIVATE version wintrust crypt32 bcrypt)
         message(STATUS "NVIDIA DLSS through Streamline: ${STREAMLINE_INCLUDE_DIR}")
     else()
         # The DLSS library's SHA-256 is checked with OpenSSL before NGX may load it.

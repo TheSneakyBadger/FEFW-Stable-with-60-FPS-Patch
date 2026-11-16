@@ -577,12 +577,21 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         return;
     }
     const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+    // Multi frame generation: 1 frame made for 2x, 2 for 3x, 3 for 4x.
+    const size_t made_count = static_cast<size_t>(Settings::values.mfg_multiplier.GetValue()) + 1;
+    std::array<Frame*, 3> made{};
     const auto generated_wait_start = std::chrono::steady_clock::now();
-    Frame* const generated = present_manager.GetRenderFrame();
+    for (size_t i = 0; i < made_count; ++i) {
+        made[i] = present_manager.GetRenderFrame();
+        blit_swapchain.PrepareFrame(device, made[i], layout);
+    }
     fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() -
                                                              generated_wait_start)
                           .count();
-    blit_swapchain.PrepareFrame(device, generated, layout);
+    Frame* const generated = made[0];
+    const bool all_storage = std::all_of(made.begin(), made.begin() + made_count, [&](Frame* f) {
+        return f->storage_view && f->width == frame->width && f->height == frame->height;
+    });
     const VkFormat format = present_manager.SwapchainImageFormat();
     const u32 transfer_function = format == VK_FORMAT_A2B10G10R10_UNORM_PACK32   ? 1U
                                   : format == VK_FORMAT_R16G16B16A16_SFLOAT ? 2U
@@ -600,11 +609,11 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         const char* value = std::getenv("EDEN_FG_DEBUG");
         return value != nullptr ? std::atoi(value) : 0;
     }();
-    if (!generated->storage_view || generated->width != frame->width ||
-        generated->height != frame->height || width == 0 || height == 0 || debug_mode == 1) {
+    if (!all_storage || width == 0 || height == 0 || debug_mode == 1) {
         // Shouldn't happen (the frames are made alike); show the real frame twice.
         generator->Skip(game_frame.seq);
-        scheduler.Record([source = *frame->image, destination = *generated->image,
+        for (size_t i = 0; i < made_count; ++i)
+        scheduler.Record([source = *frame->image, destination = *made[i]->image,
                           w = frame->width, h = frame->height](vk::CommandBuffer cmdbuf) {
             const VkImageMemoryBarrier barrier{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -629,8 +638,11 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                                  .extent{w, h, 1},
                              });
         });
-        scheduler.Flush(*generated->render_ready);
-        present_manager.Present(generated);
+        for (size_t i = 0; i < made_count; ++i) {
+            made[i]->present_delay = {};
+            scheduler.Flush(*made[i]->render_ready);
+            present_manager.Present(made[i]);
+        }
         return;
     }
     std::array<VkImageView, 4> ui_layers{};
@@ -664,6 +676,11 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         .seq = game_frame.seq,
         .late = late,
         .show_ui_less = debug_mode == 5,
+        .more_output_images = {made_count > 1 ? *made[1]->image : VkImage{},
+                               made_count > 2 ? *made[2]->image : VkImage{}},
+        .more_output_views = {made_count > 1 ? *made[1]->storage_view : VkImageView{},
+                              made_count > 2 ? *made[2]->storage_view : VkImageView{}},
+        .more_outputs = static_cast<u32>(made_count - 1),
     });
     if (debug_mode >= 2) {
         scheduler.Record([source = *generated->image, destination = *frame->image,
@@ -689,11 +706,17 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
     // interval later (a little less, so a late frame catches up). Only the real one waits: when
     // both did, the emulated GPU waited for free frames behind the waits, the game slowed, the
     // measured interval grew and the waits with it (60 FPS settled at 30).
-    generated->present_delay = {};
-    frame->present_delay = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.45f));
-    scheduler.Flush(*generated->render_ready);
-    present_manager.Present(generated);
+    // With multi frame generation the made frames and the real one are spread evenly over the
+    // game's interval the same way (each 0.9 of a share after the one before).
+    const auto step = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<f32, std::milli>(fsr_fg_interval_ms * 0.9f /
+                                               static_cast<f32>(made_count + 1)));
+    for (size_t i = 0; i < made_count; ++i) {
+        made[i]->present_delay = i == 0 ? std::chrono::nanoseconds{} : step;
+        scheduler.Flush(*made[i]->render_ready);
+        present_manager.Present(made[i]);
+    }
+    frame->present_delay = step;
     Settings::SetActiveFrameGeneration("AMD FSR 3.1");
     ++fsr_fg_made;
     if (++fsr_fg_generated == 1) {

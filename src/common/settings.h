@@ -420,6 +420,32 @@ struct Values {
     // run. Only in the 3D scenes, where the game evaluates DLSS. Takes effect when a game starts.
     SwitchableSetting<FrameGeneration, true> frame_generation{
         linkage, FrameGeneration::Off, "frame_generation", Category::Renderer};
+    // Multi frame generation: 2x (one frame made between each two of the game's), 3x or 4x. AMD
+    // FSR 3.1: any card. NVIDIA DLSS: NVIDIA allows 3x and 4x on GeForce RTX 50 cards; on others
+    // it makes one, unless the community MFG Unlocker lifts the limit. Takes effect when a game
+    // starts.
+    SwitchableSetting<MfgMultiplier, true> mfg_multiplier{linkage, MfgMultiplier::X2, "mfg_multiplier",
+                                              Category::Renderer};
+    // With frame generation: the game's frame rate is held to the display's refresh rate divided
+    // by the frames shown for each of the game's (165 Hz at 3x: 55 FPS), so every frame made is
+    // shown at an even pace instead of some being dropped (stutter). Off: no limit.
+    SwitchableSetting<MfgFrameCap, true> mfg_frame_cap{linkage, MfgFrameCap::Display,
+                                                       "mfg_frame_cap", Category::Renderer};
+    // The frame rate cap that pacing holds frame generation's frames to, when it's below the
+    // display's refresh rate (one set in the NVIDIA app or the MFG Unlocker's menu); 0: the
+    // display's refresh rate.
+    SwitchableSetting<int, true> mfg_frame_cap_fps{linkage,
+                                                   0,
+                                                   0,
+                                                   1000,
+                                                   "mfg_frame_cap_fps",
+                                                   Category::Renderer,
+                                                   Specialization::Countable,
+                                                   true,
+                                                   true};
+    // The most frames DLSS frame generation said it could make for each of the game's, the last
+    // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.
+    Setting<u32> dlss_mfg_max_seen{linkage, 0, "dlss_mfg_max_seen", Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.
@@ -1179,6 +1205,13 @@ void SetActiveUpscaler(const char* name);
 /// "AMD FSR 3.1"), else null. Set with each frame made.
 const char* ActiveFrameGeneration();
 void SetActiveFrameGeneration(const char* name);
+/// The refresh rate of the display the game window is on (0: unknown), set by the frontend.
+[[nodiscard]] f32 DisplayRefreshRate();
+void SetDisplayRefreshRate(f32 hz);
+/// While frame generation makes frames and its pacing is on: the time between the game's frames
+/// that fits the display (or the frame rate cap) with the frames made between them, in ns (at
+/// most 1/30 s). 0 otherwise.
+[[nodiscard]] s64 FrameGenerationPeriodNs();
 
 /// What ASTC textures become (never Auto): the choice ResolveAstcRecompression made at the
 /// renderer's start, so it can't change under images already made.
