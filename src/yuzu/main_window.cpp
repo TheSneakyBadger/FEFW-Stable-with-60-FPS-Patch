@@ -1577,6 +1577,17 @@ void MainWindow::ConnectWidgetEvents() {
     connect(fefw_home, &FefwHome::SettingChanged, this, [this] { config->SaveAllValues(); });
     connect(fefw_home, &FefwHome::PerformanceSettingsRequested, this,
             [this] { OnConfigurePage(tr("Performance")); });
+    connect(fefw_home, &FefwHome::AddGameFolderRequested, this,
+            &MainWindow::OnGameListAddDirectory);
+    connect(fefw_home, &FefwHome::InstallRequested, this, &MainWindow::OnMenuInstallToNAND);
+    connect(fefw_home, &FefwHome::OpenSaveFolderRequested, this,
+            [this](u64 title_id, const QString& path) {
+                OnGameListOpenFolder(title_id, GameListOpenTarget::SaveData, path.toStdString());
+            });
+    connect(fefw_home, &FefwHome::OpenModsFolderRequested, this,
+            [this](u64 title_id, const QString& path) {
+                OnGameListOpenFolder(title_id, GameListOpenTarget::ModData, path.toStdString());
+            });
     connect(game_list, &GameList::SaveConfig, this, &MainWindow::OnSaveConfig);
 
     connect(game_list, &GameList::OpenPerGameGeneralRequested, this,
@@ -2331,11 +2342,9 @@ void MainWindow::OnEmulationStopped() {
     render_window->hide();
     loading_screen->hide();
     loading_screen->Clear();
-    if (game_list->IsEmpty()) {
-        game_list_placeholder->show();
-    } else {
-        game_list->show();
-    }
+    // The home screen (with the game list hidden inside it) also covers an empty list: it asks
+    // for the game's folder.
+    game_list->show();
     game_list->SetFilterFocus();
     tas_label->clear();
     input_subsystem->GetTas()->Stop();
@@ -2993,8 +3002,11 @@ void MainWindow::OnGameListAddDirectory() {
 void MainWindow::OnGameListShowList(bool show) {
     if (emulation_running && ui->action_Single_Window_Mode->isChecked())
         return;
-    game_list->setVisible(show);
-    game_list_placeholder->setVisible(!show);
+    // The home screen asks for the game's folder itself, so the empty list's placeholder isn't
+    // shown.
+    static_cast<void>(show);
+    game_list->setVisible(true);
+    game_list_placeholder->setVisible(false);
 };
 
 void MainWindow::OnGameListOpenPerGameProperties(const std::string& file) {
