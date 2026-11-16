@@ -1064,8 +1064,10 @@ void MainWindow::InitializeWidgets() {
     firmware_label->setFocusPolicy(Qt::NoFocus);
     statusBar()->addPermanentWidget(firmware_label);
 
-    statusBar()->addPermanentWidget(multiplayer_state->GetStatusText(), 0);
-    statusBar()->addPermanentWidget(multiplayer_state->GetStatusIcon(), 0);
+    // Fortune's Eden has no multiplayer: no Multiplayer menu, and no room status ("Not
+    // Connected. Click here to find a room!") in the status bar. Its labels stay hidden inside
+    // multiplayer_state.
+    ui->menu_Multiplayer->menuAction()->setVisible(false);
 
     tas_label = new QLabel();
     tas_label->setObjectName(QStringLiteral("TASlabel"));
