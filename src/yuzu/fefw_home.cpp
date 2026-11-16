@@ -3,6 +3,11 @@
 
 #include "yuzu/fefw_home.h"
 
+#include <algorithm>
+#include <string_view>
+
+#include <fmt/format.h>
+
 #include <QBoxLayout>
 #include <QGridLayout>
 #include <QMenu>
@@ -13,6 +18,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
@@ -25,6 +31,13 @@
 #include "common/fefw_version.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/core.h"
+#include "core/file_sys/fefw_title_logo.h"
+#include "core/file_sys/romfs.h"
+#include "core/file_sys/vfs/vfs.h"
+#include "core/file_sys/vfs/vfs_real.h"
+#include "core/loader/loader.h"
+#include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #endif
@@ -128,6 +141,7 @@ QStandardItem* FindGame(QStandardItem* parent, u64 program_id) {
 namespace {
 
 constexpr int IconSize = 240;
+constexpr int LogoWidth = 520;
 
 const char* const HomeStyle =
     "#fefwHome { background: #141418; }"
@@ -166,8 +180,13 @@ void MakeBigButton(QPushButton* button, int point_size, int extra_height) {
     button->setCursor(Qt::PointingHandCursor);
 }
 
-/// "FIRE EMBLEM" above "Fortune's Weave", in a serif display font.
-void AddTitle(QBoxLayout* layout, QWidget* parent, int title_points, Qt::Alignment align) {
+/// "FIRE EMBLEM" above "Fortune's Weave", in a serif display font (until the game's own logo is
+/// read). Returns the widget holding both.
+QWidget* AddTitle(QBoxLayout* layout, QWidget* outer, int title_points, Qt::Alignment align) {
+    QWidget* const parent = new QWidget(outer);
+    QVBoxLayout* const block = new QVBoxLayout(parent);
+    block->setContentsMargins(0, 0, 0, 0);
+    block->setSpacing(layout->spacing());
     QLabel* const kicker = new QLabel(QObject::tr("FIRE EMBLEM"), parent);
     kicker->setObjectName(QStringLiteral("fefwHomeKicker"));
     QFont kicker_font = kicker->font();
@@ -185,8 +204,69 @@ void AddTitle(QBoxLayout* layout, QWidget* parent, int title_points, Qt::Alignme
     title->setFont(title_font);
     kicker->setAlignment(align);
     title->setAlignment(align);
-    layout->addWidget(kicker);
-    layout->addWidget(title);
+    block->addWidget(kicker);
+    block->addWidget(title);
+    layout->addWidget(parent);
+    return parent;
+}
+
+/// The game's language code for its logo texture.
+std::string_view LogoLanguage() {
+    switch (Settings::values.language_index.GetValue()) {
+    case Settings::Language::Japanese:
+        return "JPja";
+    case Settings::Language::Korean:
+        return "KRko";
+    case Settings::Language::Chinese:
+    case Settings::Language::ChineseSimplified:
+        return "CNzh";
+    case Settings::Language::Taiwanese:
+    case Settings::Language::ChineseTraditional:
+        return "TWzh";
+    default:
+        return "USen";
+    }
+}
+
+/// Fortune's Weave's title logo from the player's copy of the game (base game romfs), cropped to
+/// its drawing; null when it can't be read.
+QImage ReadLogo(const QString& path) {
+    const auto file =
+        QtCommon::vfs->OpenFile(path.toStdString(), FileSys::OpenMode::Read);
+    if (file == nullptr) {
+        return {};
+    }
+    const auto loader = Loader::GetLoader(*QtCommon::system, file);
+    FileSys::VirtualFile romfs_file;
+    if (loader == nullptr || loader->ReadRomFS(romfs_file) != Loader::ResultStatus::Success ||
+        romfs_file == nullptr) {
+        return {};
+    }
+    const auto logo =
+        FileSys::FefwTitleLogo::Read(FileSys::ExtractRomFS(romfs_file), LogoLanguage());
+    if (!logo) {
+        return {};
+    }
+    const QImage image(logo->rgba.data(), static_cast<int>(logo->width),
+                       static_cast<int>(logo->height), static_cast<int>(logo->width) * 4,
+                       QImage::Format_RGBA8888);
+    // Crop the clear margin around the lettering.
+    int left = image.width(), top = image.height(), right = -1, bottom = -1;
+    for (int y = 0; y < image.height(); ++y) {
+        const auto* line = reinterpret_cast<const uchar*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            if (line[x * 4 + 3] > 8) {
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+    }
+    if (right < left || bottom < top) {
+        return {};
+    }
+    return image.copy(left, top, right - left + 1, bottom - top + 1);
 }
 
 } // Anonymous namespace
@@ -244,7 +324,12 @@ void FefwHome::BuildGamePage(QWidget* page) {
     left_layout->addStretch(2);
     left_layout->addWidget(icon_label);
     left_layout->addSpacing(26);
-    AddTitle(left_layout, left, 40, Qt::AlignLeft);
+    title_block = AddTitle(left_layout, left, 40, Qt::AlignLeft);
+    logo_label = new QLabel(left);
+    logo_label->setObjectName(QStringLiteral("fefwHomeIcon"));
+    logo_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    logo_label->hide();
+    left_layout->addWidget(logo_label);
     left_layout->addSpacing(6);
     left_layout->addWidget(version_label);
     left_layout->addStretch(3);
@@ -616,6 +701,25 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     }
     game_path = item->data(GameListItemPath::FullPathRole).toString();
 
+    // The game's own title logo, big, in place of the icon and the written title (read once).
+    if (logo_path != game_path) {
+        logo_path = game_path;
+        logo = ReadLogo(game_path);
+        LOG_INFO(Frontend, "Home screen: title logo {}",
+                 logo.isNull() ? "not found, showing the icon"
+                               : fmt::format("{}x{}", logo.width(), logo.height()));
+        if (!logo.isNull()) {
+            const qreal ratio = logo_label->devicePixelRatioF();
+            QPixmap pixmap = QPixmap::fromImage(
+                logo.scaledToWidth(qRound(LogoWidth * ratio), Qt::SmoothTransformation));
+            pixmap.setDevicePixelRatio(ratio);
+            logo_label->setPixmap(pixmap);
+        }
+        logo_label->setVisible(!logo.isNull());
+        icon_label->setVisible(logo.isNull());
+        title_block->setVisible(logo.isNull());
+    }
+
     // The icon at its own size (256 px for most games), not the list's 64 px one, and at the
     // screen's pixel density (#68).
     QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
@@ -623,7 +727,6 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
         picture = item->data(Qt::DecorationRole).value<QPixmap>();
     }
     if (!picture.isNull()) {
-        LOG_INFO(Frontend, "Home screen: game icon {}x{}", picture.width(), picture.height());
         icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
     }
     const QString title = item->data(GameListItemPath::TitleRole).toString();
