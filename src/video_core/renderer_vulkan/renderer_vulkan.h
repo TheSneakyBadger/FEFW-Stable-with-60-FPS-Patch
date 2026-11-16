@@ -139,7 +139,7 @@ private:
     /// effects (a battle with torches and magic floor tiles) a stall left a backlog it couldn't
     /// clear with frame generation's work added, and frames reached the screen late.
     struct FrameGenBackoff {
-        std::array<u8, 8> backlog{}; ///< The last 8 game frames: 1 where the backlog was large.
+        std::array<u8, 60> backlog{}; ///< The last 60 game frames: 1 where the backlog was large.
         u32 backlog_at{};
         u32 backlog_count{};
         bool held{};

@@ -321,6 +321,11 @@ bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) 
     // isn't what's behind it (the game itself is busy): frame generation comes back on and isn't
     // held again for 15 s, rather than staying off for nothing. (Holds used to grow to 4 s each
     // and kept coming back every 10-20 s in busy places.)
+    // Only a backlog that lasts (in 45 of the last 60 game frames, about a second) holds it off:
+    // the short bursts when the game enters a new area or loads (textures being converted,
+    // shaders built) clear by themselves, and holding off for them was the frame rate halving
+    // "randomly" for a moment.
+    constexpr u32 SUSTAINED = 45;
     constexpr u32 CLEAR_FIRST = 10;
     constexpr u32 CLEAR_MAX = 30;
     constexpr u32 NOT_HELPING = 30;
@@ -371,7 +376,7 @@ bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) 
     if (b.rest_until && now < *b.rest_until) {
         return false;
     }
-    if (b.backlog_count < 4) {
+    if (b.backlog_count < SUSTAINED) {
         // A while without a backlog: the next hold ends as soon as it has cleared.
         if (b.resumed_at && now - *b.resumed_at > std::chrono::seconds{10}) {
             b.clear_needed = CLEAR_FIRST;
