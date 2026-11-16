@@ -13,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QObject>
 #include <QRegularExpression>
 #include <QStandardItem>
@@ -121,7 +122,11 @@ public:
             picture = GetDefaultIcon(size);
         }
         setData(picture, FullIconRole);
-        picture = picture.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        // Scale to the screen's pixel density, so the list icons stay sharp on a scaled screen.
+        const qreal pixel_ratio = qGuiApp ? qGuiApp->devicePixelRatio() : 1.0;
+        const int pixels = qRound(size * pixel_ratio);
+        picture = picture.scaled(pixels, pixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        picture.setDevicePixelRatio(pixel_ratio);
 
         setData(picture, Qt::DecorationRole);
     }
