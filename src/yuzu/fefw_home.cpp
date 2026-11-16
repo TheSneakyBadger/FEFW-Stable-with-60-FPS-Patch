@@ -25,6 +25,8 @@
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QFrame>
 #include <QSlider>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
@@ -141,13 +143,15 @@ QStandardItem* FindGame(QStandardItem* parent, u64 program_id) {
 
 namespace {
 
-constexpr int IconSize = 240;
-constexpr int LogoWidth = 440;
+constexpr int IconSize = 180;
+constexpr int LogoWidth = 400;
 
 const char* const HomeStyle =
     "#fefwHome { background: #141418; }"
-    "#fefwHomeLeft { background: #17171c; }"
-    "#fefwHomeRight { background: #141418; border-left: 1px solid #26262d; }"
+    "#fefwHomeScroll, #fefwHomeContent { background: transparent; }"
+    "#fefwHomePanel { background: #1b1b21; border: 1px solid #2a2a33; border-radius: 14px; }"
+    "#fefwHomeDivider { background: #2a2a33; border: none; }"
+    "#fefwHomeMoreButton::menu-indicator { image: none; width: 0px; }"
     "#fefwHomeSetup { background: #141418; }"
     "#fefwHomeKicker { color: #d9a63a; background: transparent; }"
     "#fefwHomeTitle { color: #f3efe6; background: transparent; }"
@@ -309,50 +313,42 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
 }
 
 void FefwHome::BuildGamePage(QWidget* page) {
-    // Left: the game's icon (from the player's copy) and its title.
-    QWidget* const left = new QWidget(page);
-    left->setObjectName(QStringLiteral("fefwHomeLeft"));
-    left->setAttribute(Qt::WA_StyledBackground, true);
-    icon_label = new QLabel(left);
+    // One centred column: the game's icon, its title logo and version, Play, then a panel with
+    // the settings people look for most and the other pages. It scrolls when the window is short.
+    QScrollArea* const scroll = new QScrollArea(page);
+    scroll->setObjectName(QStringLiteral("fefwHomeScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    QWidget* const content = new QWidget(scroll);
+    content->setObjectName(QStringLiteral("fefwHomeContent"));
+    scroll->setWidget(content);
+    scroll->viewport()->setAutoFillBackground(false);
+
+    icon_label = new QLabel(content);
     icon_label->setObjectName(QStringLiteral("fefwHomeIcon"));
     icon_label->setFixedSize(IconSize, IconSize);
-    title_label = new QLabel(left); // The game list's title, for the tooltip only
+    title_label = new QLabel(content); // The game list's title, for the tooltip only
     title_label->hide();
-    version_label = new QLabel(left);
+    version_label = new QLabel(content);
     version_label->setObjectName(QStringLiteral("fefwHomeVersion"));
+    version_label->setAlignment(Qt::AlignHCenter);
     version_label->setWordWrap(true);
-    QVBoxLayout* const left_layout = new QVBoxLayout(left);
-    left_layout->setContentsMargins(64, 32, 48, 32);
-    left_layout->setSpacing(6);
-    left_layout->addStretch(2);
-    left_layout->addWidget(icon_label);
-    left_layout->addSpacing(26);
-    title_block = AddTitle(left_layout, left, 40, Qt::AlignLeft);
-    logo_label = new QLabel(left);
+    logo_label = new QLabel(content);
     logo_label->setObjectName(QStringLiteral("fefwHomeIcon"));
-    logo_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    logo_label->setAlignment(Qt::AlignCenter);
     logo_label->hide();
-    left_layout->addWidget(logo_label);
-    left_layout->addSpacing(6);
-    left_layout->addWidget(version_label);
-    left_layout->addStretch(3);
 
-    // Right: Play, then the settings in groups, then the other pages.
-    QWidget* const right = new QWidget(page);
-    right->setObjectName(QStringLiteral("fefwHomeRight"));
-    right->setAttribute(Qt::WA_StyledBackground, true);
-    right->setFixedWidth(440);
+    QFrame* const right = new QFrame(content); // the settings panel
+    right->setObjectName(QStringLiteral("fefwHomePanel"));
+    right->setMaximumWidth(900);
 
-    play_button = new QPushButton(tr("Play"), right);
+    play_button = new QPushButton(tr("Play"), content);
     play_button->setIcon(PlayIcon());
     play_button->setIconSize(QSize(16, 16));
     MakeBigButton(play_button, 15, 22);
+    play_button->setFixedWidth(280);
 
-    const auto section = [right](const QString& name) {
-        QLabel* const label = new QLabel(name.toUpper(), right);
-        label->setObjectName(QStringLiteral("fefwHomeSection"));
-        return label;
-    };
     const auto caption = [right](const QString& name) {
         QLabel* const label = new QLabel(name, right);
         label->setObjectName(QStringLiteral("fefwHomeCaption"));
@@ -448,9 +444,11 @@ void FefwHome::BuildGamePage(QWidget* page) {
         button->setMinimumHeight(34);
     }
     // What the game list's right-click menu was used for, now in one menu.
-    QPushButton* const more = new QPushButton(tr("Game folder, saves, mods and updates"), right);
-    more->setObjectName(QStringLiteral("fefwHomeMore"));
+    QPushButton* const more = new QPushButton(QStringLiteral("\u22EF"), right);
+    more->setObjectName(QStringLiteral("fefwHomeMoreButton"));
+    more->setToolTip(tr("Game folder, saves, mods and updates"));
     more->setCursor(Qt::PointingHandCursor);
+    more->setMinimumSize(44, 34);
     QMenu* const more_menu = new QMenu(more);
     QAction* const add_folder = more_menu->addAction(tr("Add a game folder..."));
     open_saves = more_menu->addAction(tr("Open the save folder"));
@@ -458,82 +456,95 @@ void FefwHome::BuildGamePage(QWidget* page) {
     QAction* const install = more_menu->addAction(tr("Install an update or DLC..."));
     more->setMenu(more_menu);
 
-    QVBoxLayout* const display = new QVBoxLayout;
-    display->setSpacing(8);
-    display->addWidget(section(tr("Display")));
-    {
-        QHBoxLayout* const row = new QHBoxLayout;
-        row->setSpacing(20);
-        row->addWidget(sixty_fps);
-        row->addWidget(ultrawide_box);
-        row->addWidget(hdr_box);
-        row->addStretch();
-        display->addLayout(row);
-    }
-    {
-        QHBoxLayout* const row = new QHBoxLayout;
-        row->setSpacing(10);
-        row->addWidget(paper_white_label);
-        row->addWidget(paper_white, 1);
-        display->addLayout(row);
-    }
-    {
-        QHBoxLayout* const row = new QHBoxLayout;
-        row->setSpacing(10);
-        QLabel* const label = caption(tr("Button icons"));
-        label->setMinimumWidth(140);
-        row->addWidget(label);
-        row->addWidget(button_icons_box, 1);
-        display->addLayout(row);
-    }
+    // A caption above a control.
+    const auto labelled = [&caption](const QString& name, QWidget* widget) {
+        QVBoxLayout* const column = new QVBoxLayout;
+        column->setSpacing(4);
+        column->addWidget(caption(name));
+        column->addWidget(widget);
+        return column;
+    };
 
-    QVBoxLayout* const upscaling = new QVBoxLayout;
-    upscaling->setSpacing(8);
-    upscaling->addWidget(section(tr("Upscaling")));
-    QGridLayout* const grid = new QGridLayout;
-    grid->setHorizontalSpacing(12);
-    grid->setVerticalSpacing(4);
-    grid->addWidget(caption(tr("Upscaler")), 0, 0);
-    grid->addWidget(upscaler_box, 1, 0);
-    grid->addWidget(caption(tr("Quality")), 0, 1);
-    grid->addWidget(quality_box, 1, 1);
-    grid->setRowMinimumHeight(2, 8);
-    grid->addWidget(caption(tr("Frame generation")), 3, 0);
-    grid->addWidget(frame_gen_box, 4, 0);
+    // First row: the switches and the HDR brightness.
+    QHBoxLayout* const switches = new QHBoxLayout;
+    switches->setSpacing(22);
+    switches->addWidget(sixty_fps);
+    switches->addWidget(ultrawide_box);
+    switches->addWidget(hdr_box);
+    {
+        QVBoxLayout* const column = new QVBoxLayout;
+        column->setSpacing(4);
+        column->addWidget(paper_white_label);
+        column->addWidget(paper_white);
+        paper_white->setMinimumWidth(150);
+        switches->addLayout(column);
+    }
 #ifdef _WIN32
-    grid->addWidget(caption(tr("Experimental")), 3, 1);
-    grid->addWidget(hd_rumble_box, 4, 1);
+    switches->addLayout(labelled(tr("Experimental"), hd_rumble_box));
 #else
     // RenHDrum ships for Windows only (renhdrum.dll); other builds keep the standard rumble.
     hd_rumble_box->hide();
 #endif
-    grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
-    upscaling->addLayout(grid);
-    upscaling->addWidget(status_label);
+    switches->addStretch();
 
-    QGridLayout* const buttons = new QGridLayout;
+    // Second row: upscaling, frame generation and the button icons.
+    QHBoxLayout* const choices = new QHBoxLayout;
+    choices->setSpacing(14);
+    choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
+    choices->addLayout(labelled(tr("Upscaler quality"), quality_box));
+    choices->addLayout(labelled(tr("Frame generation"), frame_gen_box));
+    choices->addLayout(labelled(tr("Button icons"), button_icons_box));
+    for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
+        box->setMinimumWidth(150);
+    }
+    choices->addStretch();
+
+    QFrame* const divider = new QFrame(right);
+    divider->setObjectName(QStringLiteral("fefwHomeDivider"));
+    divider->setFixedHeight(1);
+
+    QHBoxLayout* const buttons = new QHBoxLayout;
     buttons->setSpacing(8);
-    buttons->addWidget(performance, 0, 0);
-    buttons->addWidget(game_settings, 0, 1);
-    buttons->addWidget(settings, 1, 0);
-    buttons->addWidget(updates, 1, 1);
+    buttons->addWidget(performance);
+    buttons->addWidget(game_settings);
+    buttons->addWidget(settings);
+    buttons->addWidget(updates);
+    buttons->addStretch();
+    buttons->addWidget(more);
 
-    QVBoxLayout* const right_layout = new QVBoxLayout(right);
-    right_layout->setContentsMargins(32, 32, 32, 20);
-    right_layout->setSpacing(22);
-    right_layout->addWidget(play_button);
-    right_layout->addLayout(display);
-    right_layout->addLayout(upscaling);
-    right_layout->addStretch();
-    right_layout->addLayout(buttons);
-    right_layout->addWidget(more);
+    QVBoxLayout* const panel_layout = new QVBoxLayout(right);
+    panel_layout->setContentsMargins(22, 18, 22, 18);
+    panel_layout->setSpacing(14);
+    panel_layout->addLayout(switches);
+    panel_layout->addLayout(choices);
+    panel_layout->addWidget(status_label);
+    panel_layout->addWidget(divider);
+    panel_layout->addLayout(buttons);
+
+    QVBoxLayout* const column = new QVBoxLayout(content);
+    column->setContentsMargins(32, 24, 32, 24);
+    column->setSpacing(0);
+    column->addStretch(1);
+    column->addWidget(icon_label, 0, Qt::AlignHCenter);
+    column->addSpacing(18);
+    title_block = AddTitle(column, content, 34, Qt::AlignHCenter);
+    column->addWidget(logo_label, 0, Qt::AlignHCenter);
+    column->addSpacing(10);
+    column->addWidget(version_label);
+    column->addSpacing(18);
+    column->addWidget(play_button, 0, Qt::AlignHCenter);
+    column->addSpacing(18);
+    QHBoxLayout* const centre = new QHBoxLayout;
+    centre->addStretch(1);
+    centre->addWidget(right, 100);
+    centre->addStretch(1);
+    column->addLayout(centre);
+    column->addStretch(1);
 
     QHBoxLayout* const layout = new QHBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(left, 1);
-    layout->addWidget(right);
+    layout->addWidget(scroll);
 
     connect(play_button, &QPushButton::clicked, this, [this] {
         if (!game_path.isEmpty()) {
@@ -761,6 +772,7 @@ void FefwHome::UpdateStatusLine() {
     }
 #endif
     status_label->setText(notes.join(QLatin1Char('\n')));
+    status_label->setVisible(!notes.isEmpty());
     status_label->setVisible(!status_label->text().isEmpty());
 
     const QSignalBlocker sixty_blocker{sixty_fps};
