@@ -17,6 +17,8 @@
 #include <vector>
 
 #include <QApplication>
+#include <QCryptographicHash>
+#include <QFile>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -57,6 +59,27 @@ constexpr const char* STREAMLINE_LICENSE_ENTRY = "license.txt";
 constexpr const char* DLSS_LICENSE_ENTRY = "bin/x64/nvngx_dlss.license.txt";
 constexpr const char* REFLEX_LICENSE_ENTRY = "bin/x64/reflex.license.txt";
 
+// dashdogy's MFG Unlocker (MIT licence): lifts NVIDIA's 2x limit on DLSS frame generation on
+// GeForce RTX 40 and older. Downloaded on request into the Streamline folder, never shipped.
+constexpr const char* MFG_PAGE = "https://github.com/dashdogy/MFG-Unlocker";
+constexpr const char* MFG_VERSION = "1.7.1";
+constexpr const char* MFG_ZIP_PATH =
+    "/dashdogy/MFG-Unlocker/releases/download/v1.7.1/MFGUnlocker-v1.7.1.zip";
+constexpr const char* MFG_LICENCE =
+    "MIT License\n\nCopyright (c) 2026 Michael Robles\n\nPermission is hereby granted, free "
+    "of charge, to any person obtaining a copy of this software and associated documentation "
+    "files (the \"Software\"), to deal in the Software without restriction, including "
+    "without limitation the rights to use, copy, modify, merge, publish, distribute, "
+    "sublicense, and/or sell copies of the Software, and to permit persons to whom the "
+    "Software is furnished to do so, subject to the following conditions:\n\nThe above "
+    "copyright notice and this permission notice shall be included in all copies or "
+    "substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT "
+    "WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES "
+    "OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT "
+    "SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER "
+    "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR "
+    "IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n";
+
 QString Tr(const char* text) {
     return QCoreApplication::translate("NvidiaDlssPanel", text);
 }
@@ -85,10 +108,13 @@ struct ZipEntry {
 /// needed are downloaded (about 32 MB of the 276 MB release).
 class RemoteZip {
 public:
+    explicit RemoteZip(std::string zip_host = ZIP_HOST, std::string zip_path = ZIP_PATH)
+        : origin_host{std::move(zip_host)}, origin_path{std::move(zip_path)} {}
+
     /// Follows GitHub's redirect to the file's (short-lived) download address.
     bool Resolve() {
-        host = ZIP_HOST;
-        path = ZIP_PATH;
+        host = origin_host;
+        path = origin_path;
         for (int redirect = 0; redirect < 5; ++redirect) {
             const auto result = MakeClient()->Get(path, httplib::Headers{{"Range", "bytes=0-0"}});
             if (!result) {
@@ -195,6 +221,16 @@ public:
         return true;
     }
 
+    /// The first entry whose name ends with `suffix`.
+    std::pair<std::string, const ZipEntry*> FindEnding(const std::string& suffix) const {
+        for (const auto& [name, entry] : entries) {
+            if (name.ends_with(suffix)) {
+                return {name, &entry};
+            }
+        }
+        return {{}, nullptr};
+    }
+
     const ZipEntry* Find(const std::string& name) const {
         const auto it = entries.find(name);
         return it == entries.end() ? nullptr : &it->second;
@@ -294,6 +330,8 @@ private:
         return body;
     }
 
+    std::string origin_host;
+    std::string origin_path;
     std::string host;
     std::string path;
     u64 zip_size{};
@@ -306,6 +344,17 @@ QString Named(const QString& name, const std::string& version) {
 
 QString PathText(const std::filesystem::path& path) {
     return QString::fromStdWString(path.wstring());
+}
+
+/// Whether the MFG Unlocker Fortune's Eden downloads is in place.
+bool HasMfgUnlocker() {
+    QFile file(PathText(Streamline::MfgUnlockerPath()));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(&file);
+    return hash.result().toHex() == QByteArray(Streamline::MfgUnlockerSha256);
 }
 
 } // Anonymous namespace
@@ -346,6 +395,22 @@ NvidiaDlssPanel::NvidiaDlssPanel(QWidget* parent, bool frame_generation_)
 
     layout->addLayout(status_row);
     layout->addLayout(button_row);
+
+    if (frame_generation) {
+        // 3x and 4x on GeForce RTX 40 and older: the community MFG Unlocker, on request.
+        mfg_label = new QLabel(this);
+        mfg_label->setTextFormat(Qt::RichText);
+        mfg_label->setWordWrap(true);
+        mfg_label->setOpenExternalLinks(true);
+        mfg_button = new QPushButton(this);
+        QHBoxLayout* mfg_row = new QHBoxLayout;
+        mfg_row->setContentsMargins(24, 0, 0, 0);
+        mfg_row->addWidget(mfg_button);
+        mfg_row->addStretch(1);
+        layout->addWidget(mfg_label);
+        layout->addLayout(mfg_row);
+        connect(mfg_button, &QPushButton::clicked, this, [this] { DownloadMfgUnlocker(); });
+    }
 
     connect(download_button, &QPushButton::clicked, this, [this] { Download(); });
     connect(folder_button, &QPushButton::clicked, this, [] {
@@ -388,6 +453,20 @@ void NvidiaDlssPanel::Refresh() {
         }
         download_button->setText(Tr("Download from NVIDIA (about %1 MB)").arg(megabytes));
         download_button->setVisible(!ready);
+        const bool unlocker = HasMfgUnlocker();
+        const QString link = QStringLiteral("<a href=\"%1\">MFG Unlocker</a>")
+                                 .arg(QString::fromLatin1(MFG_PAGE));
+        mfg_label->setText(
+            unlocker
+                ? Tr("<b>Multi frame generation:</b> the community %1 %2 is installed, for 3x and "
+                     "4x on GeForce RTX 40 and older cards (used when 3x or 4x is chosen).")
+                      .arg(link, QString::fromLatin1(MFG_VERSION))
+                : Tr("<b>Multi frame generation:</b> NVIDIA allows 3x and 4x on GeForce RTX 50 "
+                     "cards only. On RTX 40 and older, the community %1 (by dashdogy, not "
+                     "NVIDIA) lifts that limit.")
+                      .arg(link));
+        mfg_button->setText(Tr("Download the MFG Unlocker (about 3.5 MB)"));
+        mfg_button->setVisible(!unlocker);
         return;
     }
     const bool has_loader = !files.interposer.empty();
@@ -602,6 +681,120 @@ void NvidiaDlssPanel::Download() {
                                       "time a game starts.")
                                  : Tr("NVIDIA DLSS is ready. It is used the next time a game "
                                       "starts."));
+}
+
+void NvidiaDlssPanel::DownloadMfgUnlocker() {
+    const std::filesystem::path target = Streamline::MfgUnlockerPath();
+    const auto fail = [this](const std::string& error) {
+        LOG_ERROR(Frontend, "MFG Unlocker download failed: {}", error);
+        QMessageBox::warning(this, Tr("MFG Unlocker"),
+                             Tr("Could not download the MFG Unlocker: %1")
+                                 .arg(QString::fromStdString(error)));
+        Refresh();
+    };
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(Tr("Download the MFG Unlocker"));
+    QVBoxLayout* layout = new QVBoxLayout(&dialog);
+    QLabel* intro = new QLabel(
+        Tr("Fortune's Eden will download the MFG Unlocker %1 (MFGUnlocker.dll) from <a "
+           "href=\"%2\">its GitHub releases</a> into %3.<br><br>It is a community tool by "
+           "dashdogy, not made or supported by NVIDIA or Fortune's Eden. It lets NVIDIA DLSS frame "
+           "generation make 3x and 4x on GeForce RTX 40 and older cards by changing the limit "
+           "NVIDIA's frame generation reports. It is loaded only when NVIDIA DLSS frame "
+           "generation is set to 3x or 4x, and only this release (its checksum is checked). Its "
+           "own menu opens with Backspace. Use it at your own risk; to remove it, delete the "
+           "file.<br><br>Its licence:")
+            .arg(QString::fromLatin1(MFG_VERSION), QString::fromLatin1(MFG_PAGE),
+                 PathText(target)),
+        &dialog);
+    intro->setWordWrap(true);
+    intro->setOpenExternalLinks(true);
+    QPlainTextEdit* licence_text = new QPlainTextEdit(QString::fromLatin1(MFG_LICENCE), &dialog);
+    licence_text->setReadOnly(true);
+    licence_text->setMinimumSize(560, 240);
+    QDialogButtonBox* buttons = new QDialogButtonBox(&dialog);
+    buttons->addButton(Tr("Download"), QDialogButtonBox::AcceptRole);
+    buttons->addButton(QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(intro);
+    layout->addWidget(licence_text, 1);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QProgressDialog progress(Tr("Downloading the MFG Unlocker..."), Tr("Cancel"), 0, 1000, this);
+    progress.setWindowTitle(Tr("MFG Unlocker"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    QApplication::processEvents();
+    RemoteZip zip{ZIP_HOST, MFG_ZIP_PATH};
+    if (!zip.Open()) {
+        progress.close();
+        fail(zip.error);
+        return;
+    }
+    const auto [name, entry] = zip.FindEnding("MFGUnlocker.dll");
+    if (!entry) {
+        progress.close();
+        fail("MFGUnlocker.dll is not in the release");
+        return;
+    }
+    const u64 total = entry->compressed;
+    const std::optional<std::string> contents = zip.Read(*entry, [&](u64 received) {
+        progress.setValue(static_cast<int>(received * 1000 / std::max<u64>(total, 1)));
+        QApplication::processEvents();
+        return !progress.wasCanceled();
+    });
+    if (!contents) {
+        progress.close();
+        if (!zip.canceled) {
+            fail(zip.error);
+        }
+        return;
+    }
+    const QByteArray digest =
+        QCryptographicHash::hash(QByteArray::fromRawData(contents->data(),
+                                                         static_cast<qsizetype>(contents->size())),
+                                 QCryptographicHash::Sha256)
+            .toHex();
+    if (digest != QByteArray(Streamline::MfgUnlockerSha256)) {
+        progress.close();
+        fail("the download isn't the expected release (checksum)");
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(target.parent_path(), ec);
+    std::filesystem::path partial = target;
+    partial += L".download";
+    {
+        std::ofstream file(partial, std::ios::binary | std::ios::trunc);
+        file.write(contents->data(), static_cast<std::streamsize>(contents->size()));
+        if (!file) {
+            progress.close();
+            fail("could not write " + Common::FS::PathToUTF8String(partial));
+            return;
+        }
+    }
+    std::filesystem::rename(partial, target, ec);
+    if (ec) {
+        std::filesystem::remove(partial, ec);
+        progress.close();
+        fail("could not save " + Common::FS::PathToUTF8String(target));
+        return;
+    }
+    LOG_INFO(Frontend, "Downloaded the MFG Unlocker {} to {}", MFG_VERSION,
+             Common::FS::PathToUTF8String(target));
+    progress.setValue(1000);
+    progress.close();
+    Refresh();
+    QMessageBox::information(
+        this, Tr("MFG Unlocker"),
+        Tr("The MFG Unlocker is ready. Choose 3x or 4x for NVIDIA DLSS multi frame generation; it "
+           "is used the next time a game starts."));
 }
 
 #endif

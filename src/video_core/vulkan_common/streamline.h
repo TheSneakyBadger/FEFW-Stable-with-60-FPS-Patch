@@ -38,6 +38,15 @@ struct DlssFiles {
 /// The user folder's "streamline" folder.
 [[nodiscard]] std::filesystem::path UserFolder();
 
+/// The community MFG Unlocker (dashdogy, MIT licence), which lifts NVIDIA's 2x limit on DLSS
+/// frame generation on GeForce RTX 40 and older cards: where Fortune's Eden keeps it (the
+/// Streamline folder's "mfg-unlocker" folder). Downloaded from Settings, never shipped.
+[[nodiscard]] std::filesystem::path MfgUnlockerPath();
+
+/// Its SHA-256 (the release Fortune's Eden downloads); a file that doesn't match isn't loaded.
+inline constexpr const char* MfgUnlockerSha256 =
+    "5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74";
+
 /// Streamline's own modules carry a second, Streamline-only signature.
 [[nodiscard]] bool IsStreamlineModule(const std::filesystem::path& path);
 
