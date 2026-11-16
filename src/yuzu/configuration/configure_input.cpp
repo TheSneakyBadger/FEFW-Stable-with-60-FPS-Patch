@@ -224,9 +224,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     button_icons_combo->addItem(tr("PlayStation"),
                                 static_cast<int>(Settings::FefwButtonIcons::PlayStation));
     button_icons_combo->setToolTip(
-        tr("The button icons Fortune's Weave shows. They follow the button's position, as "
-           "controllers are mapped: with Xbox icons, A (the bottom button) shows where the game "
-           "showed B. Takes effect when the game starts."));
+        tr("The button icons Fortune's Weave shows. Each shows the controller button Player 1 has "
+           "it on, so they follow your mapping. Takes effect when the game starts."));
     button_icons_combo->setCurrentIndex(button_icons_combo->findData(
         static_cast<int>(Settings::values.fefw_button_icons.GetValue())));
     button_icons_row->addWidget(button_icons_combo);
