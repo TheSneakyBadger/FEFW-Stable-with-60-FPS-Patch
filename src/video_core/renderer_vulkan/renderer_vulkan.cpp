@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <thread>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -245,6 +246,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
                      framebuffers[0].width, framebuffers[0].height);
         }
     }
+    PaceForFrameGeneration();
     const auto frame_wait_start = std::chrono::steady_clock::now();
     Frame* frame = present_manager.GetRenderFrame();
     // Frame generation's pacing doesn't count time spent here waiting for a free frame.
@@ -301,6 +303,43 @@ VkSurfaceKHR RendererVulkan::SwapchainSurface() {
     }
 #endif
     return *surface;
+}
+
+void RendererVulkan::PaceForFrameGeneration() {
+    // While frame generation makes frames: no more of the game's frames than the display can show
+    // with the frames made between them (165 Hz at 3x: 55 a second). Faster, the display (or a
+    // frame rate cap) drops some of them and the motion stutters; this thread waiting holds the
+    // emulated GPU and the game back, and in 60 FPS mode the game's speed follows.
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point now = Clock::now();
+    const f32 refresh = Settings::DisplayRefreshRate();
+    const bool active = Settings::values.frame_generation.GetValue() !=
+                            Settings::FrameGeneration::Off &&
+                        Settings::values.mfg_frame_cap.GetValue() ==
+                            Settings::MfgFrameCap::Display &&
+                        Settings::ActiveFrameGeneration() != nullptr && refresh >= 30.0f;
+    if (!active || !fg_pace_last) {
+        fg_pace_last = now;
+        return;
+    }
+    const f32 shown = static_cast<f32>(Settings::values.mfg_multiplier.GetValue()) + 2.0f;
+    // A few below the refresh rate (as frame rate caps for variable refresh are set), so the
+    // frames always fit.
+    const auto interval = std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<f32>(shown / (refresh - 3.0f)));
+    Clock::time_point target = *fg_pace_last + interval;
+    if (target < now - interval) {
+        // Far behind (a stall): start again from now rather than catching up in a burst.
+        target = now;
+    }
+    const Clock::time_point coarse = target - std::chrono::microseconds{1500};
+    if (now < coarse) {
+        std::this_thread::sleep_until(coarse);
+    }
+    while (Clock::now() < target) {
+        std::this_thread::yield();
+    }
+    fg_pace_last = (std::max)(target, now);
 }
 
 bool RendererVulkan::FrameGenHeldOff(std::chrono::steady_clock::time_point now) {

@@ -85,6 +85,10 @@ private:
 
     /// Whether frame generation is held off for this game frame (the card is behind).
     bool FrameGenHeldOff(std::chrono::steady_clock::time_point now);
+    /// With frame generation on: holds the game's frames to the display's refresh rate divided
+    /// by the frames shown for each.
+    void PaceForFrameGeneration();
+    std::optional<std::chrono::steady_clock::time_point> fg_pace_last;
     void GenerateFsrFrame(Frame* frame, DAddr presented, u32 presented_width,
                           u32 presented_height);
 

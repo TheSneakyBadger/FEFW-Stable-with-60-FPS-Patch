@@ -419,6 +419,18 @@ void SetActiveFrameGeneration(const char* name) {
     active_frame_generation_time.store(SteadyMilliseconds(), std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<f32> display_refresh_rate{0.0f};
+}
+
+f32 DisplayRefreshRate() {
+    return display_refresh_rate.load(std::memory_order_relaxed);
+}
+
+void SetDisplayRefreshRate(f32 hz) {
+    display_refresh_rate.store(hz, std::memory_order_relaxed);
+}
+
 bool HdrOutputActive() {
     return hdr_output_active.load(std::memory_order_relaxed);
 }
