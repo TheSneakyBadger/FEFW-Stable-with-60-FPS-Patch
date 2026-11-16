@@ -298,6 +298,20 @@ u32 TextureCache<P>::RunGarbageCollector() {
             ++num_iterations;
             return false;
         }
+        // Fortune's Eden: the loading screen sweep keeps the GPU-drawn images used in the 30 s
+        // before the load began. A battle's attack scenes read map data too, so they can count
+        // as a loading screen mid-battle (since v1.6.8.8, #55), and the sweep then freed the
+        // battle map's own GPU-drawn images that the attack scene didn't use: back on the map
+        // they came back without what was drawn, as orange or yellow blocks and broken paths
+        // around the units, until the battle ended (#60). The previous scene's render targets
+        // go in the 30 s walk instead, unused since this scene began.
+        static constexpr u64 SWEEP_KEEP_RECENT_FRAMES = 1800;
+        if (scene_sweep && keeps_gpu_contents && !aggressive_mode &&
+            image.last_used_frame + SWEEP_KEEP_RECENT_FRAMES >= scene_sweep_from) {
+            ++num_iterations;
+            ++scene_sweep_kept;
+            return false;
+        }
         static constexpr u64 DRAWN_ONCE_READ_FRAMES = 600;
         static constexpr u64 DRAWN_ONCE_MAX_BYTES = 16_MiB;
         if (keeps_gpu_contents && !aggressive_mode &&
@@ -354,6 +368,8 @@ u32 TextureCache<P>::RunGarbageCollector() {
     // images kept for good. Shared ones the new scene uses were touched in the 2 s after it.
     if (scene_sweep_below != 0) {
         const u64 below = std::exchange(scene_sweep_below, 0);
+        scene_sweep_from = below;
+        scene_sweep_kept = 0;
         high_priority_mode = true;
         evict_old_costly = true;
         scene_sweep = true;
@@ -368,9 +384,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
         if (!scene_sweep_is_age) {
             LOG_INFO(HW_GPU,
                      "Loading screen: {} images from the previous scene freed ({} MiB) in {:.0f} "
-                     "ms, memory {} -> {} MiB",
+                     "ms, memory {} -> {} MiB ({} GPU-drawn images used in the 30 s before kept)",
                      num_deleted, freed_bytes >> 20, ms, used_before >> 20,
-                     total_used_memory >> 20);
+                     total_used_memory >> 20, scene_sweep_kept);
         } else if (num_deleted != 0) {
             LOG_INFO(HW_GPU,
                      "{} images unused for 5 minutes freed ({} MiB) in {:.0f} ms, memory {} -> {} "
