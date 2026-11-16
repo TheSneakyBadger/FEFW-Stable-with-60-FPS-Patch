@@ -4,6 +4,7 @@
 #include "yuzu/fefw_home.h"
 
 #include <algorithm>
+#include <string>
 #include <string_view>
 
 #include <fmt/format.h>
@@ -701,12 +702,20 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
     }
     game_path = item->data(GameListItemPath::FullPathRole).toString();
 
-    // The game's own title logo, big, in place of the icon and the written title (read once).
-    if (logo_path != game_path) {
+    // The game's icon at its own size (256 px), at the screen's pixel density (#68). Without it
+    // (the game list puts its small stand-in there when it can't read the icon), the game's own
+    // title logo in place of the icon and the written title, read once.
+    const QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
+    const bool has_icon = !picture.isNull() && std::min(picture.width(), picture.height()) >= 128;
+    if (has_icon) {
+        icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
+        logo_path.clear();
+        logo = {};
+    } else if (logo_path != game_path) {
         logo_path = game_path;
         logo = ReadLogo(game_path);
-        LOG_INFO(Frontend, "Home screen: title logo {}",
-                 logo.isNull() ? "not found, showing the icon"
+        LOG_INFO(Frontend, "Home screen: no game icon; title logo {}",
+                 logo.isNull() ? std::string{"not found either"}
                                : fmt::format("{}x{}", logo.width(), logo.height()));
         if (!logo.isNull()) {
             const qreal ratio = logo_label->devicePixelRatioF();
@@ -714,21 +723,15 @@ void FefwHome::Refresh(const QStandardItemModel& model) {
                 logo.scaledToWidth(qRound(LogoWidth * ratio), Qt::SmoothTransformation));
             pixmap.setDevicePixelRatio(ratio);
             logo_label->setPixmap(pixmap);
+        } else if (!picture.isNull()) {
+            icon_label->setPixmap(
+                Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
         }
-        logo_label->setVisible(!logo.isNull());
-        icon_label->setVisible(logo.isNull());
-        title_block->setVisible(logo.isNull());
     }
-
-    // The icon at its own size (256 px for most games), not the list's 64 px one, and at the
-    // screen's pixel density (#68).
-    QPixmap picture = item->data(GameListItemPath::FullIconRole).value<QPixmap>();
-    if (picture.isNull()) {
-        picture = item->data(Qt::DecorationRole).value<QPixmap>();
-    }
-    if (!picture.isNull()) {
-        icon_label->setPixmap(Rounded(picture, IconSize, 30, icon_label->devicePixelRatioF()));
-    }
+    const bool show_logo = !has_icon && !logo.isNull();
+    logo_label->setVisible(show_logo);
+    icon_label->setVisible(!show_logo);
+    title_block->setVisible(!show_logo);
     const QString title = item->data(GameListItemPath::TitleRole).toString();
     if (!title.isEmpty()) {
         title_label->setText(title);
