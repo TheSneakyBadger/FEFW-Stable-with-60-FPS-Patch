@@ -4,13 +4,16 @@
 #include "core/file_sys/fefw_button_icons.h"
 
 #include <algorithm>
+#include <climits>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <tuple>
 
@@ -456,60 +459,132 @@ Picture Solid(const Picture& glyph) {
     return solid;
 }
 
-const std::vector<u8>& Labels() {
-    static const std::vector<u8> labels = [] {
-        auto bytes = Common::Compression::DecompressDataZSTD(LabelMasksZstd);
-        if (bytes.size() != LabelMasksSize) {
+/// The label characters (fefw_button_labels.h), unpacked once.
+const std::vector<u8>& LabelData() {
+    static const std::vector<u8> data = [] {
+        auto bytes = Common::Compression::DecompressDataZSTD(LabelGlyphsZstd);
+        if (bytes.size() != LabelGlyphsSize) {
             bytes.clear();
         }
         return bytes;
     }();
-    return labels;
+    return data;
 }
 
-/// Cuts `text` (one of LabelMasks) out of `base`, centred, `height_share` of its height at most
-/// and `width_share` of its width.
+/// A label's coverage, cropped to its ink.
+struct Mask {
+    int width = 0;
+    int height = 0;
+    std::vector<float> pixels;
+};
+
+/// Sets `text` in the label characters (printable ASCII; anything else is skipped).
+Mask SetText(std::string_view text) {
+    const auto& data = LabelData();
+    Mask mask;
+    if (data.empty()) {
+        return mask;
+    }
+    const int line = static_cast<int>(LabelLineHeight);
+    // The pen's run first, for the width.
+    int pen = 0, ink_left = INT32_MAX, ink_right = INT32_MIN;
+    std::vector<std::pair<const LabelGlyph*, int>> placed;
+    for (const char c : text) {
+        if (c == ' ') {
+            pen += LabelSpaceAdvance;
+            continue;
+        }
+        const auto it = std::find_if(LabelGlyphs.begin(), LabelGlyphs.end(),
+                                     [c](const LabelGlyph& g) { return g.code == static_cast<char32_t>(c); });
+        if (it == LabelGlyphs.end()) {
+            continue;
+        }
+        const int x = pen + it->left;
+        placed.emplace_back(&*it, x);
+        ink_left = std::min(ink_left, x);
+        ink_right = std::max(ink_right, x + static_cast<int>(it->width));
+        pen += it->advance;
+    }
+    if (placed.empty()) {
+        return mask;
+    }
+    std::vector<float> line_pixels(static_cast<size_t>(ink_right - ink_left) * line, 0.0f);
+    const int line_width = ink_right - ink_left;
+    for (const auto& [glyph, x] : placed) {
+        for (int y = 0; y < line; ++y) {
+            for (int i = 0; i < static_cast<int>(glyph->width); ++i) {
+                float& v = line_pixels[static_cast<size_t>(y) * line_width + (x - ink_left + i)];
+                v = std::max(v, data[glyph->offset + static_cast<size_t>(y) * glyph->width + i] /
+                                    255.0f);
+            }
+        }
+    }
+    // Crop to the inked rows.
+    int top = line, bottom = 0;
+    for (int y = 0; y < line; ++y) {
+        for (int x = 0; x < line_width; ++x) {
+            if (line_pixels[static_cast<size_t>(y) * line_width + x] > 0.03f) {
+                top = std::min(top, y);
+                bottom = std::max(bottom, y + 1);
+                break;
+            }
+        }
+    }
+    if (bottom <= top) {
+        return mask;
+    }
+    mask.width = line_width;
+    mask.height = bottom - top;
+    mask.pixels.assign(line_pixels.begin() + static_cast<ptrdiff_t>(top) * line_width,
+                       line_pixels.begin() + static_cast<ptrdiff_t>(bottom) * line_width);
+    return mask;
+}
+
+/// Cuts `text` out of `base`, centred, `height_share` of its height at most and `width_share` of
+/// its width.
 Picture CutLabel(const Picture& base, std::string_view text, float height_share, float width_share,
                  float lower_by = 0.0f) {
-    const auto& labels = Labels();
-    const auto it = std::find_if(LabelMasks.begin(), LabelMasks.end(),
-                                 [&](const LabelMask& m) { return m.text == text; });
-    if (labels.empty() || it == LabelMasks.end()) {
+    const Mask label = SetText(text);
+    if (label.pixels.empty()) {
         return base;
     }
+    const float lw = static_cast<float>(label.width), lh = static_cast<float>(label.height);
     const Box box = Bounds(base);
     float th = box.Height() * height_share;
-    float tw = th * it->width / it->height;
+    float tw = th * lw / lh;
     if (tw > box.Width() * width_share) {
         tw = box.Width() * width_share;
-        th = tw * it->height / it->width;
+        th = tw * lh / lw;
     }
-    const float left = (box.x0 + box.x1) / 2.0f - tw / 2.0f;
-    const float top = (box.y0 + box.y1) / 2.0f + lower_by * box.Height() - th / 2.0f;
-    const float sx = it->width / tw;
-    const float sy = it->height / th;
+    const float left = static_cast<float>(box.x0 + box.x1) / 2.0f - tw / 2.0f;
+    const float top =
+        static_cast<float>(box.y0 + box.y1) / 2.0f + lower_by * box.Height() - th / 2.0f;
+    const float sx = lw / tw;
+    const float sy = lh / th;
     Picture out = base;
     // Each pixel takes the label's coverage over the part of the label it shows (an area average).
     for (int y = 0; y < out.height; ++y) {
-        const float my0 = (y - top) * sy, my1 = (y + 1 - top) * sy;
-        if (my1 <= 0 || my0 >= it->height) {
+        const float my0 = (static_cast<float>(y) - top) * sy;
+        const float my1 = (static_cast<float>(y + 1) - top) * sy;
+        if (my1 <= 0 || my0 >= lh) {
             continue;
         }
         for (int x = 0; x < out.width; ++x) {
-            const float mx0 = (x - left) * sx, mx1 = (x + 1 - left) * sx;
-            if (mx1 <= 0 || mx0 >= it->width) {
+            const float mx0 = (static_cast<float>(x) - left) * sx;
+            const float mx1 = (static_cast<float>(x + 1) - left) * sx;
+            if (mx1 <= 0 || mx0 >= lw) {
                 continue;
             }
             float sum = 0.0f;
             for (int my = std::max(0, static_cast<int>(my0));
-                 my < std::min<int>(it->height, static_cast<int>(std::ceil(my1))); ++my) {
+                 my < std::min(label.height, static_cast<int>(std::ceil(my1))); ++my) {
                 const float wy = std::min(static_cast<float>(my + 1), my1) -
                                  std::max(static_cast<float>(my), my0);
                 for (int mx = std::max(0, static_cast<int>(mx0));
-                     mx < std::min<int>(it->width, static_cast<int>(std::ceil(mx1))); ++mx) {
+                     mx < std::min(label.width, static_cast<int>(std::ceil(mx1))); ++mx) {
                     const float wx = std::min(static_cast<float>(mx + 1), mx1) -
                                      std::max(static_cast<float>(mx), mx0);
-                    sum += wx * wy * labels[it->offset + my * it->width + mx] / 255.0f;
+                    sum += wx * wy * label.pixels[static_cast<size_t>(my) * label.width + mx];
                 }
             }
             const float pixel_area = sx * sy;
@@ -518,6 +593,59 @@ Picture CutLabel(const Picture& base, std::string_view text, float height_share,
         }
     }
     return out;
+}
+
+std::mutex mouse_mode_keys_mutex;
+std::string mouse_mode_keys = "Ctrl+Return";
+std::array<Face, 4> face_buttons{Face::East, Face::South, Face::North, Face::West};
+
+std::array<Face, 4> FaceButtons() {
+    std::scoped_lock lock{mouse_mode_keys_mutex};
+    return face_buttons;
+}
+
+/// The mouse-mode shortcut's keys as two labels, for the SL and SR icons: all but the last key,
+/// and the last one. Empty when there is no shortcut.
+std::pair<std::string, std::string> MouseModeLabels() {
+    std::string keys;
+    {
+        std::scoped_lock lock{mouse_mode_keys_mutex};
+        keys = mouse_mode_keys;
+    }
+    // Only the first of several shortcuts ("Ctrl+M, Ctrl+N").
+    if (const auto comma = keys.find(", "); comma != std::string::npos) {
+        keys.resize(comma);
+    }
+    std::vector<std::string> parts;
+    std::string part;
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] == '+' && !part.empty()) {
+            parts.push_back(part);
+            part.clear();
+        } else {
+            part += keys[i]; // A '+' at the start of a part is the + key itself
+        }
+    }
+    if (!part.empty()) {
+        parts.push_back(part);
+    }
+    for (auto& name : parts) {
+        if (name == "Return") {
+            name = "Enter";
+        } else if (name == "Escape") {
+            name = "Esc";
+        } else if (name == "Meta") {
+            name = "Win";
+        }
+    }
+    if (parts.empty()) {
+        return {};
+    }
+    std::string first;
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        first += (i == 0 ? "" : "+") + parts[i];
+    }
+    return {first, parts.back()};
 }
 
 float Segment(float px, float py, float ax, float ay, float bx, float by) {
@@ -629,29 +757,50 @@ bool Redraw(std::vector<u8>& bytes, Settings::FefwButtonIcons icons) {
     const Picture zl = Solid(font.Get(ButtonZL)), zr = Solid(font.Get(ButtonZR));
     const Picture plus = Solid(font.Get(ButtonPlus)), minus = Solid(font.Get(ButtonMinus));
     const bool xbox = icons == Settings::FefwButtonIcons::Xbox;
-    if (xbox) {
-        // Xbox's letters by position: its A is at the bottom, where Nintendo's B is.
-        font.Put(ButtonA, b);
-        font.Put(ButtonB, a);
-        font.Put(ButtonX, y);
-        font.Put(ButtonY, x);
-    } else {
-        const Picture round = Solid(a);
-        font.Put(ButtonA, CutSymbol(round, Symbol::Circle));
-        font.Put(ButtonB, CutSymbol(round, Symbol::Cross));
-        font.Put(ButtonX, CutSymbol(round, Symbol::Triangle));
-        font.Put(ButtonY, CutSymbol(round, Symbol::Square));
-    }
+    // Each of the game's A, B, X and Y as the controller button the player has it on: Xbox's
+    // letter or PlayStation's symbol for that place (Xbox A and PlayStation's cross at the bottom,
+    // Xbox B and the circle on the right, X and the square on the left, Y and the triangle on top).
+    const Picture round = Solid(a);
+    const auto icon = [&](Face face) {
+        switch (face) {
+        case Face::South:
+            return xbox ? a : CutSymbol(round, Symbol::Cross);
+        case Face::East:
+            return xbox ? b : CutSymbol(round, Symbol::Circle);
+        case Face::West:
+            return xbox ? x : CutSymbol(round, Symbol::Square);
+        case Face::North:
+        default:
+            return xbox ? y : CutSymbol(round, Symbol::Triangle);
+        }
+    };
+    const auto faces = FaceButtons();
+    font.Put(ButtonA, icon(faces[0]));
+    font.Put(ButtonB, icon(faces[1]));
+    font.Put(ButtonX, icon(faces[2]));
+    font.Put(ButtonY, icon(faces[3]));
     font.Put(ButtonL, CutLabel(l, xbox ? "LB" : "L1", 0.42f, 0.78f));
     font.Put(ButtonR, CutLabel(r, xbox ? "RB" : "R1", 0.42f, 0.78f));
     font.Put(ButtonZL, CutLabel(zl, xbox ? "LT" : "L2", 0.40f, 0.70f, 0.06f));
     font.Put(ButtonZR, CutLabel(zr, xbox ? "RT" : "R2", 0.40f, 0.70f, 0.06f));
     font.Put(ButtonPlus, CutSymbol(plus, Symbol::Menu));
     font.Put(ButtonMinus, CutSymbol(minus, xbox ? Symbol::View : Symbol::Create));
-    // SL + SR (switching mouse mode) as Fortune's Eden's Ctrl + Enter.
-    if (font.Has(ButtonSL) && font.Has(ButtonSR)) {
-        font.Put(ButtonSL, CutLabel(Solid(font.Get(ButtonSL)), "Ctrl", 0.40f, 0.80f));
-        font.Put(ButtonSR, CutSymbol(Solid(font.Get(ButtonSR)), Symbol::Enter));
+    // SL + SR (switching mouse mode) as Fortune's Eden's shortcut for it: its keys before the last
+    // on SL, the last on SR (alone on SL, with SR blank, for a single key).
+    if (const auto [first, last] = MouseModeLabels();
+        !last.empty() && font.Has(ButtonSL) && font.Has(ButtonSR)) {
+        const Picture sl = Solid(font.Get(ButtonSL)), sr = Solid(font.Get(ButtonSR));
+        const auto key = [](const Picture& base, const std::string& name) {
+            return name == "Enter" ? CutSymbol(base, Symbol::Enter)
+                                   : CutLabel(base, name, 0.40f, 0.82f);
+        };
+        if (first.empty()) {
+            font.Put(ButtonSL, key(sl, last));
+            font.Put(ButtonSR, sr);
+        } else {
+            font.Put(ButtonSL, key(sl, first));
+            font.Put(ButtonSR, key(sr, last));
+        }
     }
     for (const auto& [to, from] : DpadCopies) {
         if (font.Has(to) && font.Has(from)) {
@@ -663,6 +812,16 @@ bool Redraw(std::vector<u8>& bytes, Settings::FefwButtonIcons icons) {
 }
 
 } // Anonymous namespace
+
+void SetMouseModeKeys(std::string keys) {
+    std::scoped_lock lock{mouse_mode_keys_mutex};
+    mouse_mode_keys = std::move(keys);
+}
+
+void SetFaceButtons(std::array<Face, 4> a_b_x_y) {
+    std::scoped_lock lock{mouse_mode_keys_mutex};
+    face_buttons = a_b_x_y;
+}
 
 bool Active() {
     return Settings::values.fefw_button_icons.GetValue() != Settings::FefwButtonIcons::Switch;

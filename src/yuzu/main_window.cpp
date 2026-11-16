@@ -160,6 +160,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 
 #include "core/file_sys/card_image.h"
 #include "core/file_sys/common_funcs.h"
+#include "core/file_sys/fefw_button_icons.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/savedata_factory.h"
 
@@ -173,6 +174,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "input_common/drivers/virtual_amiibo.h"
+#include "input_common/main.h"
 
 // Video Core //
 #include "video_core/gpu.h"
@@ -328,6 +330,53 @@ __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
 #endif
+
+
+namespace {
+/// Tells the game's button icons (Xbox and PlayStation) which controller button Player 1 has A,
+/// B, X and Y on and which keys switch mouse mode, before a game starts.
+void SetFefwButtonIcons(const InputCommon::InputSubsystem& input, HotkeyRegistry& hotkeys) {
+    using FileSys::FefwButtonIcons::Face;
+    FileSys::FefwButtonIcons::SetMouseModeKeys(
+        hotkeys.GetKeySequence("Main Window", "Toggle Mouse Mode")
+            .toString(QKeySequence::PortableText)
+            .toStdString());
+
+    std::array<Face, 4> faces{Face::East, Face::South, Face::North, Face::West};
+    const auto& players = Settings::values.players.GetValue();
+    const auto& player = !players[0].connected && players[8].connected ? players[8] : players[0];
+    // The controller's own mapping: A on the right, B at the bottom, X on top, Y on the left.
+    // Each of Player 1's A, B, X and Y that is one of those four buttons shows that place.
+    const Common::ParamPackage device{player.buttons[Settings::NativeButton::A]};
+    if (device.Get("engine", "") == "sdl" && device.Has("guid")) {
+        const auto mapping = input.GetButtonMappingForDevice(device);
+        const auto same = [](const Common::ParamPackage& p, const Common::ParamPackage& q) {
+            for (const char* key : {"engine", "guid", "port", "button", "hat", "direction", "axis"}) {
+                if (p.Has(key) != q.Has(key) || p.Get(key, "") != q.Get(key, "")) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        constexpr std::array<std::pair<Settings::NativeButton::Values, Face>, 4> places{{
+            {Settings::NativeButton::A, Face::East},
+            {Settings::NativeButton::B, Face::South},
+            {Settings::NativeButton::X, Face::North},
+            {Settings::NativeButton::Y, Face::West},
+        }};
+        for (size_t i = 0; i < faces.size(); ++i) {
+            const Common::ParamPackage bound{player.buttons[i]};
+            for (const auto& [button, face] : places) {
+                const auto it = mapping.find(button);
+                if (it != mapping.end() && same(bound, it->second)) {
+                    faces[i] = face;
+                }
+            }
+        }
+    }
+    FileSys::FefwButtonIcons::SetFaceButtons(faces);
+}
+} // Anonymous namespace
 
 constexpr int default_mouse_hide_timeout = 2500;
 constexpr int default_input_update_timeout = 1;
@@ -2031,6 +2080,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
     config->SaveAllValues();
+    SetFefwButtonIcons(*input_subsystem, hotkey_registry);
 
 #ifdef EGLANTINE_STREAMLINE
     // NVIDIA's Streamline can't be set up again once its frame generation has run in this process
