@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <optional>
 
@@ -509,6 +510,10 @@ private:
 
     /// The launch screen above the game list (it holds the list).
     FefwHome* fefw_home = nullptr;
+    /// When the last game stopped: Play from the home screen or the game list is ignored for a
+    /// moment after (#67).
+    std::chrono::steady_clock::time_point fefw_game_stopped_at{};
+    bool FefwJustStopped();
 
 #ifdef ENABLE_UPDATE_CHECKER
     QFuture<std::optional<Common::Net::Release>> update_future;

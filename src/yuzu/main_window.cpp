@@ -1562,8 +1562,11 @@ void MainWindow::ConnectWidgetEvents() {
         multiplayer_state->UpdateGameList(game_list->GetModel());
         fefw_home->Refresh(*game_list->GetModel());
     });
-    connect(fefw_home, &FefwHome::PlayRequested, this,
-            [this](const QString& path) { BootGameFromList(path, StartGameType::Normal); });
+    connect(fefw_home, &FefwHome::PlayRequested, this, [this](const QString& path) {
+        if (!FefwJustStopped()) {
+            BootGameFromList(path, StartGameType::Normal);
+        }
+    });
     connect(fefw_home, &FefwHome::GameSettingsRequested, this,
             [this](u64 title_id, const QString& path) {
                 OpenPerGameConfiguration(title_id, path.toStdString());
@@ -2314,6 +2317,7 @@ void MainWindow::OnEmulationStopped() {
     }
 
     emulation_running = false;
+    fefw_game_stopped_at = std::chrono::steady_clock::now();
 
     discord_rpc->Update();
     Common::FeralGamemode::Stop();
@@ -2471,7 +2475,22 @@ void MainWindow::UpdateRecentFiles() {
     ui->menu_recent_files->setEnabled(num_recent_files != 0);
 }
 
+// Fortune's Eden: a game stopped (F5, or the stop hotkey on a controller) leaves the home screen
+// with Play focused, and a controller button or key still held, or pressed as the game stopped,
+// pressed Play and started the game again (#67). Play is ignored for 1.5 s after a stop.
+bool MainWindow::FefwJustStopped() {
+    if (fefw_game_stopped_at == std::chrono::steady_clock::time_point{} ||
+        std::chrono::steady_clock::now() - fefw_game_stopped_at >= std::chrono::milliseconds{1500}) {
+        return false;
+    }
+    LOG_INFO(Frontend, "Play ignored: the game stopped less than 1.5 s ago");
+    return true;
+}
+
 void MainWindow::OnGameListLoadFile(QString game_path, u64 program_id) {
+    if (FefwJustStopped()) {
+        return;
+    }
     auto params = ApplicationAppletParameters();
     params.program_id = program_id;
 
