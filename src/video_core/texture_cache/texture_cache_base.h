@@ -7,6 +7,8 @@
 #pragma once
 
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <utility>
 #include <atomic>
 #include <deque>
@@ -87,6 +89,8 @@ struct AsyncDecodeContext {
     /// size); failed: it couldn't be read.
     bool sized_by_data{};
     bool failed{};
+    /// Signalled (with the mutex held) when complete is set, for a draw waiting on it.
+    std::condition_variable ready;
 };
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
@@ -504,6 +508,11 @@ private:
     void QueueAsyncDecode(Image& image, ImageId image_id);
     void TickAsyncDecode();
 
+    /// Fortune's Eden: a texture a draw is about to use that is still being read from the texture
+    /// cache on disk is waited for (within this frame's budget) and uploaded, instead of drawn
+    /// black for the frames until it's ready.
+    void WaitDiskCacheLoad(Image& image, ImageId image_id);
+
     void QueueAsyncUnswizzle(Image& image, ImageId image_id);
     void TickAsyncUnswizzle();
 
@@ -708,6 +717,11 @@ private:
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
+    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed, 4 at a time).
+    Common::ThreadWorker disk_cache_worker{4, "TextureDiskRead", {},
+                                           Common::ThreadPlacement::Efficiency};
+    /// What draws may still wait this frame for a texture being read from disk.
+    std::chrono::nanoseconds disk_cache_wait_left{};
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;
