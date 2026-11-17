@@ -44,10 +44,12 @@
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/loader/loader.h"
+#include "qt_common/config/uisettings.h"
 #include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #include "yuzu/configuration/nvidia_dlss_panel.h"
+#include "yuzu/fefw_dldsr.h"
 #endif
 #include "qt_common/game_list/game_list_p.h"
 
@@ -571,6 +573,26 @@ void FefwHome::BuildGamePage(QWidget* page) {
         cap_layout->addWidget(mfg_cap_spin);
     }
     choices->addWidget(mfg_cap_column);
+    // DLDSR in fullscreen: shown once the driver offers its resolutions (UpdateStatusLine).
+    dldsr_box = new QComboBox(right);
+    dldsr_box->setCursor(Qt::PointingHandCursor);
+    dldsr_box->setMinimumWidth(110);
+    dldsr_box->setToolTip(
+        tr("In fullscreen, plays at a DLDSR resolution: the game is drawn larger than your monitor "
+           "and NVIDIA's AI filter scales it down, so it looks sharper. Works with DLSS and DLAA "
+           "(DLSS Quality is a good match). Shown once DLDSR is turned on in the NVIDIA app "
+           "(Graphics, DSR - Factors). Takes more of your graphics card. The desktop goes back "
+           "to its own resolution when you leave fullscreen or switch to another window."));
+    dldsr_column = new QWidget(right);
+    {
+        QVBoxLayout* const dldsr_layout = new QVBoxLayout(dldsr_column);
+        dldsr_layout->setContentsMargins(0, 0, 0, 0);
+        dldsr_layout->setSpacing(4);
+        dldsr_layout->addWidget(caption(tr("DLDSR (fullscreen)")));
+        dldsr_layout->addWidget(dldsr_box);
+    }
+    dldsr_column->hide();
+    choices->addWidget(dldsr_column);
     choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
@@ -686,6 +708,13 @@ void FefwHome::BuildGamePage(QWidget* page) {
             static_cast<Settings::TextureDiskCache>(texture_cache_box->itemData(index).toInt());
         if (index >= 0 && Settings::values.texture_disk_cache.GetValue() != size) {
             Settings::values.texture_disk_cache.SetValue(size);
+            emit SettingChanged();
+        }
+    });
+    connect(dldsr_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const u32 factor = dldsr_box->itemData(index).toUInt();
+        if (index >= 0 && UISettings::values.fefw_dldsr.GetValue() != factor) {
+            UISettings::values.fefw_dldsr.SetValue(factor);
             emit SettingChanged();
         }
     });
@@ -929,6 +958,21 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
+    // DLDSR: the factors the driver offers on this monitor (none: the choice is hidden).
+    {
+        const std::vector<u32> factors = FefwDldsr::AvailableFactors(this);
+        const QSignalBlocker dldsr_blocker{dldsr_box};
+        dldsr_box->clear();
+        dldsr_box->addItem(tr("Off"), 0U);
+        for (const u32 factor : factors) {
+            dldsr_box->addItem(QStringLiteral("%1.%2x").arg(factor / 100).arg(
+                                   factor % 100, 2, 10, QLatin1Char('0')),
+                               factor);
+        }
+        const int current = dldsr_box->findData(UISettings::values.fefw_dldsr.GetValue());
+        dldsr_box->setCurrentIndex(current >= 0 ? current : 0);
+        dldsr_column->setVisible(!factors.empty());
+    }
     const QSignalBlocker texture_cache_blocker{texture_cache_box};
     texture_cache_box->setCurrentIndex(texture_cache_box->findData(
         static_cast<int>(Settings::values.texture_disk_cache.GetValue())));

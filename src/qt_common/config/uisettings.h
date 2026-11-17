@@ -94,6 +94,8 @@ struct Values {
 
     Setting<bool> single_window_mode{linkage, true, "singleWindowMode", Category::Ui};
     Setting<bool> fullscreen{linkage, false, "fullscreen", Category::Ui};
+    /// Fortune's Eden: the DLDSR factor used in fullscreen (the pixel count times 100; 0: off).
+    Setting<u32> fefw_dldsr{linkage, 0, "fefw_dldsr", Category::Ui};
     Setting<bool> show_filter_bar{linkage, true, "showFilterBar", Category::Ui};
     Setting<bool> show_status_bar{linkage, true, "showStatusBar", Category::Ui};
 
