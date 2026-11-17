@@ -1008,6 +1008,15 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
     }
 }
 
+bool TextureCacheRuntime::WantsGuestHash(const Image& image) const {
+    return bc_encoder_pass && IsPixelFormatASTC(image.info.format) &&
+           WillUseGpuBcnTranscode(device, image.info) && FefwTextureDiskCache::Enabled();
+}
+
+void TextureCacheRuntime::SetGuestHash(u64 hash) {
+    next_guest_hash = hash;
+}
+
 TextureCacheRuntime::~TextureCacheRuntime() {
     // Converted textures still being read back aren't stored; queued writes are finished.
     FefwTextureDiskCache::Stop();
@@ -4058,9 +4067,9 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     // Fortune's Eden: a texture converted before (in this session or an earlier one) is loaded
     // from the texture cache on disk instead of decoded and encoded again.
     std::optional<FefwTextureDiskCache::Key> disk_key;
-    if (FefwTextureDiskCache::Enabled() && map.mapped_span.size() >= image.guest_size_bytes) {
-        u64 hash = Common::CityHash64(reinterpret_cast<const char*>(map.mapped_span.data()),
-                                      image.guest_size_bytes);
+    const std::optional<u64> guest_hash = std::exchange(next_guest_hash, std::nullopt);
+    if (guest_hash && FefwTextureDiskCache::Enabled()) {
+        u64 hash = *guest_hash;
         // The swizzle parameters field by field (the struct has padding).
         for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
             const std::array<u64, 8> fields{
