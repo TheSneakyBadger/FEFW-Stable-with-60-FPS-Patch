@@ -6,6 +6,7 @@ No games, keys, firmware or saves are included.
 
 | File | For | SHA-256 |
 |---|---|---|
+| `FEFW-Test-v1.7.4-test76d.zip` | test76c, with GPU-drawn images freed after 5 minutes unused only when video memory runs short (keeps a sky the game drew once safe, #64). The program says v1.7.4. Source: [`source-v1.7.4-test76d`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76d) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.4-test76c.zip` | test76a plus: GPU-drawn images unused for 5 minutes are freed even without a loading screen, so long sessions don't squeeze out the game's textures (#63); the volume setting is back in Settings > Audio (#72). The program says v1.7.4. Source: [`source-v1.7.4-test76c`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76c) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.4-test76a.zip` | v1.7.4 plus: when many new textures appear at once, their conversion uses spare video memory instead of waiting for the graphics card (#63). The program says v1.7.4. Source: [`source-v1.7.4-test76a`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76a) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.1-test70c.zip` | test70b plus: BC7 is turned off only after two starts in a row that never got going, not one (#71). The program says v1.7.1. Source: [`source-v1.7.1-test70c`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.1-test70c) | see `SHA256.txt` |
