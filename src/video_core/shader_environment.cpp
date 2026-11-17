@@ -429,6 +429,64 @@ private:
     GPUVAddr page_end{};
 };
 
+// EDEN_SHADER_DUMP=<folder>: writes each native program of a stage this build rejects outright
+// (header and captured instructions) as rejected-stage-<stage>-<address>.bin, so it can be
+// looked at without the game. From Lichii's EDEN_NX2_SHADER_DUMP.
+void DumpRejectedNativeProgram(Tegra::MemoryManager& gpu_memory, GPUVAddr program_base,
+                               u32 program) {
+    const char* const directory = std::getenv("EDEN_SHADER_DUMP");
+    if (!directory || !gpu_memory.IsFullyMappedRange(program_base, 128)) {
+        return;
+    }
+    using Shader::Ampere::Instruction;
+    constexpr u32 MaxCaptureInstructions = 4096;
+    std::array<u8, 128> header{};
+    gpu_memory.ReadBlock(program_base, header.data(), header.size());
+    std::vector<Instruction> instructions;
+    Shader::Ampere::ProgramCaptureState capture;
+    auto status = Shader::Ampere::ProgramCaptureState::Result::Continue;
+    NativeInstructionReader reader{gpu_memory};
+    for (u32 index = 0; index < MaxCaptureInstructions; ++index) {
+        const GPUVAddr address = program_base + header.size() + index * sizeof(Instruction);
+        Instruction instruction;
+        if (!reader.TryRead(address, instruction)) {
+            if (!gpu_memory.IsFullyMappedRange(address, sizeof(instruction))) {
+                break;
+            }
+            gpu_memory.ReadBlock(address, &instruction, sizeof(instruction));
+        }
+        instructions.push_back(instruction);
+        status = capture.Observe(instruction, index);
+        if (status != Shader::Ampere::ProgramCaptureState::Result::Continue) {
+            break;
+        }
+    }
+    const auto folder = std::filesystem::path{directory};
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    if (error) {
+        LOG_ERROR(Shader, "Cannot create rejected shader dump folder: {}", error.message());
+        return;
+    }
+    const auto path =
+        folder / fmt::format("rejected-stage-{}-{:x}.bin", program, program_base);
+    if (std::filesystem::exists(path, error)) {
+        return; // every frame meets the same rejected program again
+    }
+    std::ofstream dump(path, std::ios::binary);
+    dump.write(reinterpret_cast<const char*>(header.data()), header.size());
+    dump.write(reinterpret_cast<const char*>(instructions.data()),
+               instructions.size() * sizeof(Instruction));
+    dump.close();
+    if (dump) {
+        LOG_INFO(Shader, "Captured rejected native stage {} at {:#x}: {} instructions, complete={}, {}",
+                 program, program_base, instructions.size(),
+                 status == Shader::Ampere::ProgramCaptureState::Result::Complete, path.string());
+    } else {
+        LOG_ERROR(Shader, "Cannot write rejected shader dump {}", path.string());
+    }
+}
+
 } // Anonymous namespace
 
 // A native program is captured and lowered once, when the shader cache first meets it. The
@@ -525,8 +583,9 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(
     const u64 native_program_key = Shader::Ampere::NativeProgramKey(native);
     // EDEN_NATIVE_FRONTEND selects, per program and before any IR exists, whether the native Ampere
     // frontend translates it. The default (unset or "lower") leaves the lowering path untouched.
+    // The native Ampere frontend has no geometry stage: geometry programs are always lowered.
     if (const auto frontend_mode = Shader::Ampere::SelectedFrontendMode();
-        frontend_mode != Shader::Ampere::FrontendMode::Lower) {
+        frontend_mode != Shader::Ampere::FrontendMode::Lower && !native_geometry) {
         std::string reject;
         u32 reject_index = 0;
         Shader::Ampere::ProgramInfo program_info;
@@ -563,7 +622,8 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(
                         native_program_key, reject_index * sizeof(Instruction), reject);
         }
     }
-    auto lowered = Shader::Ampere::LowerToMaxwell(native, verified_traps, true);
+    auto lowered = Shader::Ampere::LowerToMaxwell(native, verified_traps, true, native_geometry,
+                                                  program_base + native_header_size);
     if (!lowered) {
         if (lowered.error_offset / sizeof(Instruction) < native.size()) {
             const auto& words = native[lowered.error_offset / sizeof(Instruction)].words;
@@ -608,10 +668,21 @@ GraphicsEnvironment::GraphicsEnvironment(Tegra::Engines::Maxwell3D& maxwell3d_,
     initial_offset = sizeof(sph);
     texture_bound = maxwell3d->regs.bindless_texture_const_buffer_slot;
     if (maxwell3d->GetNativeMacroEngine().native_turing) {
-        if (program != Maxwell::ShaderType::VertexB && program != Maxwell::ShaderType::Pixel) {
+        // Geometry programs are lowered too (ported from Lichii/Orchid); EDEN_NATIVE_GEOMETRY=0
+        // rejects them as before.
+        static const bool geometry_enabled = [] {
+            const char* const value = std::getenv("EDEN_NATIVE_GEOMETRY");
+            return !value || std::string_view{value} != "0";
+        }();
+        native_geometry = program == Maxwell::ShaderType::Geometry && geometry_enabled;
+        if (program != Maxwell::ShaderType::VertexB && program != Maxwell::ShaderType::Pixel &&
+            !native_geometry) {
+            DumpRejectedNativeProgram(*gpu_memory, program_base, static_cast<u32>(program));
             throw Shader::RuntimeError("Unsupported native graphics shader stage {}", static_cast<u32>(program));
         }
-        stage = program == Maxwell::ShaderType::VertexB ? Shader::Stage::VertexB : Shader::Stage::Fragment;
+        stage = program == Maxwell::ShaderType::VertexB ? Shader::Stage::VertexB
+              : native_geometry                         ? Shader::Stage::Geometry
+                                                        : Shader::Stage::Fragment;
         // The capture reads constant-buffer tables through ReadCbufValue, which indexes the stage's buffers.
         switch (program) {
         case Maxwell::ShaderType::TessellationInit:
