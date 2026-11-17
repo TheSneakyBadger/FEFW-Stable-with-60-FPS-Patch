@@ -93,11 +93,15 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         // 2.4 GB and 0.8 GB below it. Long sessions crept towards the limit (where other
         // allocations and the driver push it over and performance drops); this keeps a margin
         // that grows with the card. 8 GB cards change little.
-        // Fortune's Eden: on cards with 10 GiB or more to use, faster above 85% and hard above
+        // Fortune's Eden: on cards with 7 GiB or more to use, faster above 85% and hard above
         // 92%. At 70%, a 16 GB card cleaned up with 3 GB still free, and the textures of an area
         // visited a minute before were converted again on the way back (#63). The margin left
         // (about 1 GB there) still covers the driver's and frame generation's own allocations.
-        const bool large_card = device_local_memory >= static_cast<s64>(10_GiB);
+        // The limit here is what may be used (Conservative: about 75% of the card), so a 10 GB
+        // card has about 7.5 GiB and a 12 GB one 9 GiB: those count as large too (#63, an RTX
+        // 4080 Laptop with 12 GB cleaned up from 6.3 GB, evicting and reloading 3,500 textures a
+        // minute on battle maps). 8 GB cards (about 6 GiB) don't.
+        const bool large_card = device_local_memory >= static_cast<s64>(7_GiB);
         expected_memory = (std::min)(expected_memory,
                                      static_cast<u64>(device_local_memory) / 20 *
                                          (large_card ? 17 : 14));
