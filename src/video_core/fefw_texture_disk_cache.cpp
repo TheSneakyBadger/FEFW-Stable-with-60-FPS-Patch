@@ -168,11 +168,11 @@ void WorkerLoop() {
 
 } // Anonymous namespace
 
-bool OnHardDrive(const std::filesystem::path& folder) {
+bool OnHardDrive(const std::filesystem::path& cache_folder) {
 #ifdef _WIN32
     // The volume the folder is on, and whether its disk has a seek penalty (spins).
     wchar_t volume[MAX_PATH]{};
-    if (!GetVolumePathNameW(folder.c_str(), volume, MAX_PATH)) {
+    if (!GetVolumePathNameW(cache_folder.c_str(), volume, MAX_PATH)) {
         return false;
     }
     std::wstring device = volume;
@@ -203,7 +203,8 @@ bool OnHardDrive(const std::filesystem::path& folder) {
     // /sys/dev/block/MAJOR:MINOR is the disk, or a partition inside the disk's folder.
     struct stat info {};
     std::error_code ec;
-    const fs::path existing = fs::exists(folder, ec) ? folder : folder.parent_path();
+    const fs::path existing = fs::exists(cache_folder, ec) ? cache_folder
+                                                         : cache_folder.parent_path();
     if (stat(existing.c_str(), &info) != 0) {
         return false;
     }
