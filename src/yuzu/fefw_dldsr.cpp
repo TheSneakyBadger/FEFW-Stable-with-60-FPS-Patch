@@ -150,7 +150,15 @@ std::vector<u32> AvailableFactors(QWidget* window) {
                                         factor / 100, factor % 100));
         }
     });
-    std::ranges::sort(factors);
+    // Only DLDSR's two factors are offered (the older DSR's others are left out).
+    std::vector<u32> dldsr;
+    for (const u32 wanted : {178U, 225U}) {
+        if (std::ranges::any_of(factors, [wanted](u32 factor) {
+                return (factor > wanted ? factor - wanted : wanted - factor) <= 2;
+            })) {
+            dldsr.push_back(wanted);
+        }
+    }
     // Once a run (the main screen asks each time it updates).
     static bool logged = false;
     if (!logged) {
@@ -159,7 +167,7 @@ std::vector<u32> AvailableFactors(QWidget* window) {
                  Narrow(info->szDevice), desktop->dmPelsWidth, desktop->dmPelsHeight,
                  sizes.empty() ? std::string{"none"} : fmt::format("{}", fmt::join(sizes, ", ")));
     }
-    return factors;
+    return dldsr;
 }
 
 void Apply(QWidget* window, u32 factor, bool borderless) {
