@@ -3946,7 +3946,15 @@ u64 TextureCacheRuntime::TranscodeMemoryLimit() {
         }
     }
     const u64 reserve = (std::max)(u64{1} << 30, total_budget / 6);
-    const u64 spare = headroom > reserve ? headroom - reserve : 0;
+    u64 spare = headroom > reserve ? headroom - reserve : 0;
+    // And below the texture cache's faster cleanup level (70% of the card; the cache counts the
+    // same driver-reported use, decode images included), less 256 MiB. Measured only against
+    // the driver's budget, a burst took the cache over its levels into faster and hard cleanups
+    // that evicted the game's textures, which then came back as more bursts (test76c, #63: 3
+    // hard cleanups of 120-170 ms and worse stutter in 10 minutes of towns).
+    const u64 cache_level = device.GetDeviceLocalMemory() / 10 * 7;
+    const u64 cache_use = device.GetDeviceMemoryInUse() + (u64{256} << 20);
+    spare = (std::min)(spare, cache_level > cache_use ? cache_level - cache_use : 0);
     // The decode images already made are in the driver's usage: the limit is what they use now
     // plus what's spare.
     const u64 in_use = pending_transcode_bytes + free_transcode_bytes;
@@ -3956,8 +3964,10 @@ u64 TextureCacheRuntime::TranscodeMemoryLimit() {
         ++logged;
         LOG_INFO(Render_Vulkan,
                  "ASTC re-compression: up to {} MiB of decode images in flight while video memory "
-                 "is spare ({} MiB free of {} MiB; cap {} MiB)",
-                 transcode_limit >> 20, headroom >> 20, total_budget >> 20, cap >> 20);
+                 "is spare ({} MiB free of {} MiB, {} MiB below the texture cache's faster "
+                 "cleanup; cap {} MiB)",
+                 transcode_limit >> 20, headroom >> 20, total_budget >> 20,
+                 cache_level > cache_use ? (cache_level - cache_use) >> 20 : 0, cap >> 20);
     }
     return transcode_limit;
 }
