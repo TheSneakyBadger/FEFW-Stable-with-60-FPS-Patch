@@ -6,6 +6,7 @@ No games, keys, firmware or saves are included.
 
 | File | For | SHA-256 |
 |---|---|---|
+| `FEFW-Test-v1.7.4-test76f.zip` | test76e, with images the game drew once also freed after 5 minutes unused when video memory runs short (a dungeon's images stayed after leaving it, #63). The program says v1.7.4. Source: [`source-v1.7.4-test76f`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76f) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.4-test76e.zip` | test76d, with bursts of new textures kept below the texture cache's cleanup level (test76c's bursts set off cleanups that evicted textures, #63). The program says v1.7.4. Source: [`source-v1.7.4-test76e`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76e) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.4-test76d.zip` | test76c, with GPU-drawn images freed after 5 minutes unused only when video memory runs short (keeps a sky the game drew once safe, #64). The program says v1.7.4. Source: [`source-v1.7.4-test76d`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76d) | see `SHA256.txt` |
 | `FEFW-Test-v1.7.4-test76c.zip` | test76a plus: GPU-drawn images unused for 5 minutes are freed even without a loading screen, so long sessions don't squeeze out the game's textures (#63); the volume setting is back in Settings > Audio (#72). The program says v1.7.4. Source: [`source-v1.7.4-test76c`](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/tree/source-v1.7.4-test76c) | see `SHA256.txt` |
