@@ -14,10 +14,12 @@
 #include <chrono>
 #include <utility>
 #include <cstdlib>
+#include <cstring>
 #include "common/container/unordered_map.h"
 #include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
+#include "common/cityhash.h"
 #include "common/fefw_scene_load.h"
 #include "common/settings.h"
 #include "common/slot_vector.h"
@@ -2144,6 +2146,24 @@ void TextureCache<P>::UploadImageContents(Image& image, StagingBuffer& staging) 
     const GPUVAddr gpu_addr = image.gpu_addr;
 
     if (True(image.flags & ImageFlagBits::AcceleratedUpload)) {
+        // Fortune's Eden: for the texture cache on disk, the guest bytes are hashed as they are
+        // read, not from the staging buffer (write-combined: reading it back cost up to a second
+        // in a burst of new textures, test77d).
+        if constexpr (requires { runtime.WantsGuestHash(image); }) {
+            if (runtime.WantsGuestHash(image)) {
+                thread_local std::vector<u8> guest_bytes;
+                guest_bytes.resize(mapped_span.size_bytes());
+                gpu_memory->ReadBlock(gpu_addr, guest_bytes.data(), guest_bytes.size(),
+                                      VideoCommon::CacheType::NoTextureCache);
+                std::memcpy(mapped_span.data(), guest_bytes.data(), guest_bytes.size());
+                runtime.SetGuestHash(Common::CityHash64(
+                    reinterpret_cast<const char*>(guest_bytes.data()),
+                    (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size())));
+                const auto uploads = FullUploadSwizzles(image.info);
+                runtime.AccelerateImageUpload(image, staging, uploads, 0, 0);
+                return;
+            }
+        }
         gpu_memory->ReadBlock(gpu_addr, mapped_span.data(), mapped_span.size_bytes(),
                               VideoCommon::CacheType::NoTextureCache);
         const auto uploads = FullUploadSwizzles(image.info);

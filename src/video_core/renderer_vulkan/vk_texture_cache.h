@@ -63,6 +63,11 @@ public:
                                  ComputePassDescriptorQueue& compute_pass_descriptor_queue);
     ~TextureCacheRuntime();
 
+    /// Fortune's Eden: whether the texture cache on disk needs this image's guest bytes hashed
+    /// (as they are read), and the hash for the upload that follows.
+    [[nodiscard]] bool WantsGuestHash(const Image& image) const;
+    void SetGuestHash(u64 hash);
+
     void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);
@@ -265,6 +270,7 @@ public:
     std::deque<PendingDiskSave> pending_disk_saves;
     u64 pending_disk_save_bytes = 0;
     u64 disk_cache_log_frame = 0;
+    std::optional<u64> next_guest_hash;
     u64 pending_transcode_bytes = 0;
     u64 free_transcode_bytes = 0;
     u64 diagnostics_frame = 0;
