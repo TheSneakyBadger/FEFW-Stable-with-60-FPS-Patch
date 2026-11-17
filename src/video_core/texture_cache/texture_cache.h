@@ -293,8 +293,18 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // loading screen sweep frees most of it). With only the rule below, the sky still went
         // black after a minute in a Dagsion shop on the reporter's PC (#64), while turning the
         // 30 s walk off (EDEN_TC_OLD_GPU_AGE=0) fixed it. In the hard mode they still go.
+        // Fortune's Eden: "the current scene" is at most the last 5 minutes. A loading screen
+        // isn't always seen (none in the last 58 minutes of a 75-minute session, #63), and
+        // without one every image used since the last was kept until the hard limit: 2.2 GB of
+        // GPU-drawn images, 1.6 GB unused for a minute, while the game's textures were evicted
+        // and loaded again (worse stutter the longer the session).
+        static constexpr u64 CURRENT_SCENE_MAX_FRAMES = 18000;
+        const u64 current_scene_start =
+            frame_tick > CURRENT_SCENE_MAX_FRAMES
+                ? (std::max)(scene_start_frame, frame_tick - CURRENT_SCENE_MAX_FRAMES)
+                : scene_start_frame;
         if (evict_old_gpu && keeps_gpu_contents && !aggressive_mode &&
-            image.last_used_frame >= scene_start_frame) {
+            image.last_used_frame >= current_scene_start) {
             ++num_iterations;
             return false;
         }
