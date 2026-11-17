@@ -2458,6 +2458,11 @@ void TextureCache<P>::QueueAsyncUnswizzle(Image& image, ImageId image_id) {
 template <class P>
 void TextureCache<P>::TickAsyncDecode() {
     bool has_uploads{};
+    // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
+    // frame; the rest wait for the next frames. Loading an area finished hundreds at once, and
+    // uploading them all in one frame took up to a second (test77f).
+    static constexpr u64 DISK_CACHE_UPLOAD_BUDGET = 32ULL << 20;
+    u64 disk_cache_uploaded = 0;
     auto i = async_decodes.begin();
     while (i != async_decodes.end()) {
         auto* async_decode = i->get();
@@ -2483,6 +2488,13 @@ void TextureCache<P>::TickAsyncDecode() {
             continue;
         }
         if (async_decode->sized_by_data) {
+            if (disk_cache_uploaded != 0 &&
+                disk_cache_uploaded + async_decode->decoded_data.size() > DISK_CACHE_UPLOAD_BUDGET) {
+                lock.unlock();
+                ++i;
+                continue;
+            }
+            disk_cache_uploaded += async_decode->decoded_data.size();
             auto staging = runtime.UploadStagingBuffer(async_decode->decoded_data.size());
             std::memcpy(staging.mapped_span.data(), async_decode->decoded_data.data(),
                         async_decode->decoded_data.size());
