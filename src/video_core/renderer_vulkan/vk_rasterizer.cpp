@@ -861,7 +861,12 @@ void RasterizerVulkan::InvalidateRegion(DAddr addr, u64 size, VideoCommon::Cache
 
 void RasterizerVulkan::InnerInvalidation(std::span<const std::pair<DAddr, std::size_t>> sequences) {
     VideoCommon::BackStats::CountInvalidations(VideoCommon::BackStats::shared.flush_caching, sequences);
-    {
+    // The GPU's own cached writes (constant buffer data, every draw): most land where no image was
+    // ever registered, which the page filter tells without the texture cache's lock (from Lichii).
+    const bool touches_images = std::ranges::any_of(sequences, [this](const auto& sequence) {
+        return texture_cache.page_filter.Any(sequence.first, sequence.second);
+    });
+    if (touches_images) {
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
         std::scoped_lock lock{texture_cache.mutex};
         lock_timer.Acquired();
@@ -1013,12 +1018,26 @@ void RasterizerVulkan::OnHeldWrite(DAddr addr, u64 size) {
 bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
     DEBUG_ASSERT(addr != 0 || size != 0);
     const int fast_mode = CpuWriteFastMode();
+    // A held write still reaches the texture cache, so the images over it don't download their
+    // older bytes over it before it is applied (from Orchid cc04f48b). Pages no image was ever
+    // registered on hold nothing to update and skip the texture cache's lock (Lichii 54caf03b).
+    const auto write_textures = [&] {
+        if (!texture_cache.page_filter.Any(addr, size)) {
+            return;
+        }
+        const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
+        std::scoped_lock lock{texture_cache.mutex};
+        lock_timer.Acquired();
+        texture_cache.WriteMemory(addr, size);
+    };
     if (fast_mode == 1 && CpuWriteHoldAll() && buffer_cache.IsRegisteredWithoutLock(addr, size)) {
+        write_textures();
         CountCpuWrite(true);
         return true;
     }
     if (fast_mode != 0 && buffer_cache.IsHeldWithoutLock(addr, size)) {
         if (fast_mode != 2) {
+            write_textures();
             CountCpuWrite(true);
             return true;
         }
@@ -1037,25 +1056,25 @@ bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
             }
             pipeline_cache.InvalidateRegion(addr, size);
         }
+        if (held) {
+            write_textures();
+        }
         CountCpuWrite(true);
         return held;
     }
     if (fast_mode != 0) {
         CountCpuWrite(false);
     }
+    bool held;
     {
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
         std::scoped_lock lock{buffer_cache.mutex};
         lock_timer.Acquired();
-        if (buffer_cache.OnCPUWrite(addr, size)) {
-            return true;
-        }
+        held = buffer_cache.OnCPUWrite(addr, size);
     }
-    {
-        const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
-        std::scoped_lock lock{texture_cache.mutex};
-        lock_timer.Acquired();
-        texture_cache.WriteMemory(addr, size);
+    write_textures();
+    if (held) {
+        return true;
     }
     pipeline_cache.InvalidateRegion(addr, size);
     return false;

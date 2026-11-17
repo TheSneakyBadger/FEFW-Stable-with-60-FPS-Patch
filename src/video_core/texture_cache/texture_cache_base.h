@@ -18,6 +18,7 @@
 // TODO: find out which don't require stable iters
 #include <unordered_map>
 #include "common/container/unordered_map.h"
+#include "video_core/page_filter.h"
 #include "common/container/unordered_set.h"
 #include <vector>
 #include <boost/container/small_vector.hpp>
@@ -88,6 +89,9 @@ using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Co
 
 class TextureCacheChannelInfo : public ChannelInfo {
 public:
+    /// Device pages this cache ever registered images on: writes elsewhere skip its lock (Lichii).
+    VideoCommon::PageFilter page_filter;
+
     TextureCacheChannelInfo() = delete;
     TextureCacheChannelInfo(Tegra::Control::ChannelState& state) noexcept;
     TextureCacheChannelInfo(const TextureCacheChannelInfo& state) = delete;
