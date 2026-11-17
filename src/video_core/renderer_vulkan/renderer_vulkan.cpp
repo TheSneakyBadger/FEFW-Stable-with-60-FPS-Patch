@@ -412,6 +412,8 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
     Fsr3FrameGenerator* const generator = rasterizer.FrameGenerator();
     if (!generator) {
         fsr_fg_last_composite.reset();
+        dlssg_tagged_last = false;
+        dlssg_ride = 0;
         return;
     }
     // The game's frame interval (smoothed): the generated frame goes halfway through it.
@@ -441,14 +443,18 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                  "{} game frames without one; game frames {:.1f} ms apart; {:.0f} ms waiting "
                  "for free frames; {:.2f} UI layers a frame; {} frames presented after the game "
                  "started the next, {} not matched to a game frame, {} given the newest motion; UI "
-                 "copies made again {}; held off for {} game frames ({} times) with a backlog",
+                 "copies made again {}; held off for {} game frames ({} times) with a backlog; NVIDIA "
+                 "DLSS rode through {} gaps ({} frames)",
 
                  fsr_fg_made, fsr_fg_ui, fsr_fg_skipped, fsr_fg_interval_ms,
                  fsr_fg_minute_wait_ms,
                  fsr_fg_made ? static_cast<f32>(fsr_fg_ui_layers) / static_cast<f32>(fsr_fg_made)
                              : 0.0f,
                  fsr_fg_late, fsr_fg_unknown, fsr_fg_fallback,
-                 generator->TakeUiCopiesRecreated(), fg_backoff.skipped, fg_backoff.holds);
+                 generator->TakeUiCopiesRecreated(), fg_backoff.skipped, fg_backoff.holds,
+                 dlssg_rides, dlssg_ride_frames);
+        dlssg_rides = 0;
+        dlssg_ride_frames = 0;
         fg_backoff.skipped = 0;
         fg_backoff.holds = 0;
         fsr_fg_fallback = 0;
@@ -497,18 +503,71 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         Streamline::IsFrameGenerationAvailable()) {
         frame->sl_frame_gen = true;
         frame->sl_index = ++dlssg_index;
+        // Up to this many frames without motion in a row are ridden through (about 0.1 s at 60):
+        // switching frame generation off and on restarts NVIDIA's frame timing, a hitch of its
+        // own. Longer gaps (menus, loading screens, movies) switch it off as before; a backlog
+        // hold (held) always does. EDEN_DLSSG_RIDE=0: off.
+        static const u32 ride_limit = [] {
+            const char* const value = std::getenv("EDEN_DLSSG_RIDE");
+            return value ? static_cast<u32>(std::clamp(std::atoi(value), 0, 30)) : 6U;
+        }();
+        const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+        const auto picture_rect = [&] {
+            const s32 left = static_cast<s32>((std::min)(layout.screen.left, frame->width));
+            const s32 top = static_cast<s32>((std::min)(layout.screen.top, frame->height));
+            const u32 width =
+                (std::min)(layout.screen.GetWidth(), frame->width - static_cast<u32>(left));
+            const u32 height =
+                (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
+            return VkRect2D{.offset = {left, top}, .extent = {width, height}};
+        };
+        const auto tag = [&](const Fsr3FrameGenerator::DlssImages& images, bool reset) {
+            const auto image = [](const Fsr3FrameGenerator::Image& in) {
+                return Streamline::FrameGenImage{in.image, in.view, in.format, in.size};
+            };
+            const Streamline::FrameGenInputs inputs{
+                .index = frame->sl_index,
+                .depth = image(images.depth),
+                .motion_vectors = image(images.motion_vectors),
+                .hudless = image(images.hudless),
+                .ui_alpha = image(images.ui_alpha),
+                .backbuffer_rect = picture_rect(),
+                .jitter = images.jitter,
+                .reset = reset,
+            };
+            scheduler.Record([inputs](vk::CommandBuffer cmdbuf) {
+                Streamline::FrameGenTagFrame(*cmdbuf, inputs);
+            });
+            // Streamline records its own copies and state on the command buffer.
+            scheduler.InvalidateState();
+            frame->sl_tagged = true;
+        };
         if (!prepared || !frame->storage_view || held) {
             ++fsr_fg_skipped;
             generator->Skip(game_frame.seq);
+            // A short gap in play: the last frame's inputs again, with a reset (no frame is
+            // made from them, and none across the gap), so frame generation stays on.
+            if (!held && frame->storage_view && dlssg_tagged_last &&
+                dlssg_last_generator == generator && dlssg_ride < ride_limit &&
+                generator->LastDlssImages().hudless.image != VK_NULL_HANDLE) {
+                if (dlssg_ride == 0) {
+                    ++dlssg_rides;
+                }
+                ++dlssg_ride;
+                ++dlssg_ride_frames;
+                dlssg_reset_next = true;
+                tag(generator->LastDlssImages(), true);
+                return;
+            }
+            dlssg_tagged_last = false;
+            dlssg_ride = 0;
             return;
         }
-        const Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
-        const s32 left = static_cast<s32>((std::min)(layout.screen.left, frame->width));
-        const s32 top = static_cast<s32>((std::min)(layout.screen.top, frame->height));
-        const u32 width =
-            (std::min)(layout.screen.GetWidth(), frame->width - static_cast<u32>(left));
-        const u32 height =
-            (std::min)(layout.screen.GetHeight(), frame->height - static_cast<u32>(top));
+        const VkRect2D rect = picture_rect();
+        const s32 left = rect.offset.x;
+        const s32 top = rect.offset.y;
+        const u32 width = rect.extent.width;
+        const u32 height = rect.extent.height;
         const VkFormat format = present_manager.SwapchainImageFormat();
         const u32 transfer_function = format == VK_FORMAT_A2B10G10R10_UNORM_PACK32   ? 1U
                                       : format == VK_FORMAT_R16G16B16A16_SFLOAT ? 2U
@@ -534,25 +593,12 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
             .dlss = true,
         });
         const Fsr3FrameGenerator::DlssImages& images = generator->LastDlssImages();
-        const auto image = [](const Fsr3FrameGenerator::Image& in) {
-            return Streamline::FrameGenImage{in.image, in.view, in.format, in.size};
-        };
-        const Streamline::FrameGenInputs inputs{
-            .index = frame->sl_index,
-            .depth = image(images.depth),
-            .motion_vectors = image(images.motion_vectors),
-            .hudless = image(images.hudless),
-            .ui_alpha = image(images.ui_alpha),
-            .backbuffer_rect = {.offset = {left, top}, .extent = {width, height}},
-            .jitter = images.jitter,
-            .reset = images.reset,
-        };
-        scheduler.Record([inputs](vk::CommandBuffer cmdbuf) {
-            Streamline::FrameGenTagFrame(*cmdbuf, inputs);
-        });
-        // Streamline records its own copies and state on the command buffer.
-        scheduler.InvalidateState();
-        frame->sl_tagged = true;
+        // The first frame after a ride has no history across the gap either.
+        tag(images, images.reset || dlssg_reset_next);
+        dlssg_reset_next = false;
+        dlssg_tagged_last = true;
+        dlssg_last_generator = generator;
+        dlssg_ride = 0;
         Settings::SetActiveFrameGeneration("NVIDIA DLSS");
         ++fsr_fg_made;
         if (++fsr_fg_generated == 1) {
