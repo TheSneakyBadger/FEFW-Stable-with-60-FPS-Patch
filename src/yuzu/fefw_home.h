@@ -87,6 +87,7 @@ private:
     QComboBox* texture_cache_box{};
     QComboBox* dldsr_box{};
     QWidget* dldsr_column{};
+    QLabel* dldsr_caption{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
     QCheckBox* hd_rumble_box{};
