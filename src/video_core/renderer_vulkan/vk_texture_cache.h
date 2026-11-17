@@ -68,6 +68,20 @@ public:
     [[nodiscard]] bool WantsGuestHash(const Image& image) const;
     void SetGuestHash(u64 hash);
 
+    /// A texture the texture cache on disk has: what to read (on the texture decode thread) and
+    /// how to upload it.
+    struct DiskCacheLoad {
+        FefwTextureDiskCache::Key key;
+        u64 size;
+        boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
+        [[nodiscard]] std::optional<std::vector<u8>> load() const {
+            return FefwTextureDiskCache::Load(key, size);
+        }
+    };
+    [[nodiscard]] std::optional<DiskCacheLoad> PlanDiskCacheLoad(
+        const Image& image, u64 guest_hash,
+        std::span<const VideoCommon::SwizzleParameters> swizzles) const;
+
     void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);

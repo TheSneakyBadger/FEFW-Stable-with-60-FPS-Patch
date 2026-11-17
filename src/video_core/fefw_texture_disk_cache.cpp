@@ -243,6 +243,12 @@ bool Enabled() {
     return enabled;
 }
 
+bool Contains(const Key& key) {
+    const u64 name = NameOf(key);
+    std::scoped_lock lock{mutex};
+    return enabled && index.contains(name);
+}
+
 std::optional<std::vector<u8>> Load(const Key& key, u64 size) {
     const u64 name = NameOf(key);
     fs::path path;

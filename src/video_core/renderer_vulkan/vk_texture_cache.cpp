@@ -4029,18 +4029,16 @@ void TextureCacheRuntime::RecycleTranscodes(bool wait_for_oldest) {
     }
 }
 
-void TextureCacheRuntime::TranscodeAstcToBcn(
-    Image& image, const StagingBufferRef& map,
-    std::span<const VideoCommon::SwizzleParameters> swizzles) {
-    const ImageInfo& info = image.info;
+namespace {
+/// The copies of every level of a texture the GPU encoded to BCn (BC1: 8 bytes a block, BC3 and
+/// BC7: 16), from one buffer; returns its size.
+u64 BcnCopies(const ImageInfo& info, bool bc3,
+              boost::container::small_vector<VideoCommon::BufferImageCopy, 16>& copies) {
     const u32 width = info.size.width;
     const u32 height = info.size.height;
     const u32 levels = static_cast<u32>(info.resources.levels);
     const u32 layers = static_cast<u32>(info.resources.layers);
-    // What the GPU encodes: every level in one buffer, then copied into the image.
-    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
     const u64 block_bytes = bc3 ? 16 : 8;
-    boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
     u64 total = 0;
     for (u32 level = 0; level < levels; ++level) {
         const u32 level_width = (std::max)(width >> level, 1U);
@@ -4063,38 +4061,67 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         });
         total += size;
     }
+    return total;
+}
 
-    // Fortune's Eden: a texture converted before (in this session or an earlier one) is loaded
-    // from the texture cache on disk instead of decoded and encoded again.
-    std::optional<FefwTextureDiskCache::Key> disk_key;
-    const std::optional<u64> guest_hash = std::exchange(next_guest_hash, std::nullopt);
-    if (guest_hash && FefwTextureDiskCache::Enabled()) {
-        u64 hash = *guest_hash;
-        // The swizzle parameters field by field (the struct has padding).
-        for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
-            const std::array<u64, 8> fields{
-                swizzle.num_tiles.width, swizzle.num_tiles.height, swizzle.num_tiles.depth,
-                swizzle.block.width,     swizzle.block.height,     swizzle.block.depth,
-                swizzle.buffer_offset,   static_cast<u64>(static_cast<s64>(swizzle.level)),
-            };
-            hash = Common::CityHash64WithSeed(reinterpret_cast<const char*>(fields.data()),
-                                              sizeof(fields), hash);
-        }
-        disk_key = FefwTextureDiskCache::Key{
-            .data_hash = hash,
-            .format = static_cast<u32>(info.format),
-            .width = width,
-            .height = height,
-            .levels = levels,
-            .layers = layers,
-            .encoding = Settings::AstcRecompressesToBc7() ? 7U : (bc3 ? 3U : 1U),
+FefwTextureDiskCache::Key DiskCacheKey(const ImageInfo& info, u64 guest_hash,
+                                       std::span<const VideoCommon::SwizzleParameters> swizzles,
+                                       bool bc3) {
+    u64 hash = guest_hash;
+    // The swizzle parameters field by field (the struct has padding).
+    for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
+        const std::array<u64, 8> fields{
+            swizzle.num_tiles.width, swizzle.num_tiles.height, swizzle.num_tiles.depth,
+            swizzle.block.width,     swizzle.block.height,     swizzle.block.depth,
+            swizzle.buffer_offset,   static_cast<u64>(static_cast<s64>(swizzle.level)),
         };
-        if (auto data = FefwTextureDiskCache::Load(*disk_key, total)) {
-            const auto upload = staging_buffer_pool.Request(total, MemoryUsage::Upload);
-            std::memcpy(upload.mapped_span.data(), data->data(), total);
-            image.UploadMemory(upload.buffer, upload.offset, copies);
-            return;
-        }
+        hash = Common::CityHash64WithSeed(reinterpret_cast<const char*>(fields.data()),
+                                          sizeof(fields), hash);
+    }
+    return FefwTextureDiskCache::Key{
+        .data_hash = hash,
+        .format = static_cast<u32>(info.format),
+        .width = info.size.width,
+        .height = info.size.height,
+        .levels = static_cast<u32>(info.resources.levels),
+        .layers = static_cast<u32>(info.resources.layers),
+        .encoding = Settings::AstcRecompressesToBc7() ? 7U : (bc3 ? 3U : 1U),
+    };
+}
+} // Anonymous namespace
+
+std::optional<TextureCacheRuntime::DiskCacheLoad> TextureCacheRuntime::PlanDiskCacheLoad(
+    const Image& image, u64 guest_hash,
+    std::span<const VideoCommon::SwizzleParameters> swizzles) const {
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    const FefwTextureDiskCache::Key key = DiskCacheKey(image.info, guest_hash, swizzles, bc3);
+    if (!FefwTextureDiskCache::Contains(key)) {
+        return std::nullopt;
+    }
+    DiskCacheLoad load{.key = key, .size = 0, .copies = {}};
+    load.size = BcnCopies(image.info, bc3, load.copies);
+    return load;
+}
+
+void TextureCacheRuntime::TranscodeAstcToBcn(
+    Image& image, const StagingBufferRef& map,
+    std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    const ImageInfo& info = image.info;
+    const u32 width = info.size.width;
+    const u32 height = info.size.height;
+    const u32 levels = static_cast<u32>(info.resources.levels);
+    const u32 layers = static_cast<u32>(info.resources.layers);
+    // What the GPU encodes: every level in one buffer, then copied into the image.
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
+    const u64 total = BcnCopies(info, bc3, copies);
+
+    // Fortune's Eden: the key for the texture cache on disk (the texture cache reads the ones
+    // it has on its decode thread, PlanDiskCacheLoad; this one isn't there yet).
+    std::optional<FefwTextureDiskCache::Key> disk_key;
+    if (const std::optional<u64> guest_hash = std::exchange(next_guest_hash, std::nullopt);
+        guest_hash && FefwTextureDiskCache::Enabled()) {
+        disk_key = DiskCacheKey(info, *guest_hash, swizzles, bc3);
     }
     FefwLoadStats::Add(FefwLoadStats::Get().astc_textures);
     constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
