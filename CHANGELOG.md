@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.5.3
+
+- **No more black textures for a split second when arriving somewhere you've been.** Textures from the texture cache on disk were read in the background and could be drawn a frame or two before they were ready, showing black. They're now read 4 at a time, and one the game is about to draw is uploaded first (waiting up to 4 ms a frame in all; most take 1–2 ms).
+
+Everything else is as in [v1.7.5.2](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.2).
+
 ## v1.7.5.2
 
 Smoother long sessions on 10 and 12 GB graphics cards, and steadier NVIDIA DLSS frame generation.
