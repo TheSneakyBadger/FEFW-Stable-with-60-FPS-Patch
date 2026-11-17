@@ -23,10 +23,10 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.5 and v1.7.5.1
+## What's new in v1.7.5 (and v1.7.5.1, v1.7.5.2)
 
 - **Much less stutter in places you've been before** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): textures, once converted for your graphics card, are kept on disk (**Texture cache on disk** on the home screen: 2 GB by default, or Off, 4 GB or 8 GB), so they load instead of being converted again. Most useful on cards with less video memory. On a hard drive it stays off (v1.7.5.1), as it would slow the game's own reads.
-- **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): video memory from earlier scenes and dungeons is cleaned up, cards with 10 GB or more keep more before cleaning up, and bursts of new textures no longer stall the frame.
+- **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): video memory from earlier scenes and dungeons is cleaned up, cards with 10 GB or more keep more loaded before cleaning up, and bursts of new textures no longer stall the frame.
 - **DLDSR in fullscreen:** with NVIDIA's DLDSR on, choose **1.78x** or **2.25x** on the home screen and fullscreen plays at that resolution, so DLSS or DLAA looks sharper still. On AMD cards it's **VSR**. The desktop goes back to its own resolution when you leave fullscreen or switch windows.
 - **Fixes ported from Lichii and Orchid:** geometry shaders are drawn instead of skipped, and texture and memory fixes, including for AMD cards.
 - **The Volume setting is back** in *Settings → Audio* ([#72](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/72)).

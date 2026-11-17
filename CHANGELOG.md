@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.7.5.2
+
+Smoother long sessions on 10 and 12 GB graphics cards, and steadier NVIDIA DLSS frame generation.
+
+- **No more stutter when selecting units on battle maps after a long session** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). v1.7.5 was meant to keep more textures loaded on cards with 10 GB or more, but it compared against the memory Fortune's Eden may use (about three quarters of the card), so only 16 GB cards got it. A 12 GB card started cleaning up with over 2.5 GB still unused, and on battle maps freed and reloaded about 3,500 textures a minute, which stuttered whenever a unit's portrait and menus were loaded. 10 and 12 GB cards now clean up from 85% too.
+- **NVIDIA DLSS frame generation stays on through short gaps.** When the game had no motion for a frame or two in the middle of play, DLSS frame generation switched off and straight back on, which restarts NVIDIA's frame pacing for a hitch of its own. It now rides through gaps of up to 6 frames. Menus, loading screens and movies still switch it off.
+
+Everything else is as in [v1.7.5.1](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.1).
+
 ## v1.7.5.1
 
 A fix for freezes on hard drives in v1.7.5.
