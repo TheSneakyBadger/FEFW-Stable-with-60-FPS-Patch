@@ -206,6 +206,9 @@ void Apply(QWidget* window, u32 factor, bool borderless) {
         LOG_INFO(Frontend, "DLDSR: {} at {}x{}, {} Hz ({}.{:02}x)", Narrow(info->szDevice),
                  mode->dmPelsWidth, mode->dmPelsHeight, mode->dmDisplayFrequency, factor / 100,
                  factor % 100);
+    } else if (active_device.empty()) {
+        LOG_INFO(Frontend, "DLDSR: {} already at {}x{}", Narrow(info->szDevice),
+                 mode->dmPelsWidth, mode->dmPelsHeight);
     }
     active_device = info->szDevice;
     // Qt and Windows (a display scale change) may still move the window after the switch.
