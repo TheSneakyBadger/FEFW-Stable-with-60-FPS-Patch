@@ -84,6 +84,7 @@ private:
     QSpinBox* mfg_cap_spin{};
     QWidget* mfg_cap_column{};
     QComboBox* button_icons_box{};
+    QComboBox* texture_cache_box{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
     QCheckBox* hd_rumble_box{};

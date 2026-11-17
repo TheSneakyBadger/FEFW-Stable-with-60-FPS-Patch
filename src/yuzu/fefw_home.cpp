@@ -490,6 +490,36 @@ void FefwHome::BuildGamePage(QWidget* page) {
     // RenHDrum ships for Windows only (renhdrum.dll); other builds keep the standard rumble.
     hd_rumble_box->hide();
 #endif
+    // The texture cache on disk, with a note on who it helps most.
+    texture_cache_box = new QComboBox(right);
+    for (const auto& [size, name] :
+         {std::pair{Settings::TextureDiskCache::Off, tr("Off")},
+          std::pair{Settings::TextureDiskCache::Gb2, tr("2 GB")},
+          std::pair{Settings::TextureDiskCache::Gb4, tr("4 GB")},
+          std::pair{Settings::TextureDiskCache::Gb8, tr("8 GB")}}) {
+        texture_cache_box->addItem(name, static_cast<int>(size));
+    }
+    texture_cache_box->setCursor(Qt::PointingHandCursor);
+    texture_cache_box->setMinimumWidth(110);
+    texture_cache_box->setToolTip(
+        tr("Keeps the game's textures, once converted for your graphics card, on disk (in "
+           "user/cache/textures), so a texture seen before is loaded instead of converted again. "
+           "The oldest are dropped once it's full. Takes effect when the game starts."));
+    {
+        QVBoxLayout* const column = new QVBoxLayout;
+        column->setSpacing(4);
+        column->addWidget(caption(tr("Texture cache on disk")));
+        column->addWidget(texture_cache_box);
+        QLabel* const note = new QLabel(
+            tr("Stores textures so places you've been load without stutter. Most useful on "
+               "graphics cards with less video memory."),
+            right);
+        note->setObjectName(QStringLiteral("fefwHomeCaption"));
+        note->setWordWrap(true);
+        note->setMaximumWidth(240);
+        column->addWidget(note);
+        switches->addLayout(column);
+    }
     switches->addStretch();
 
     // Second row: upscaling, frame generation and the button icons.
@@ -651,6 +681,14 @@ void FefwHome::BuildGamePage(QWidget* page) {
         }
     });
     connect(mfg_cap_spin, &QSpinBox::editingFinished, this, &FefwHome::SettingChanged);
+    connect(texture_cache_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto size =
+            static_cast<Settings::TextureDiskCache>(texture_cache_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.texture_disk_cache.GetValue() != size) {
+            Settings::values.texture_disk_cache.SetValue(size);
+            emit SettingChanged();
+        }
+    });
     connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
         const auto icons =
             static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
@@ -891,6 +929,9 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
+    const QSignalBlocker texture_cache_blocker{texture_cache_box};
+    texture_cache_box->setCurrentIndex(texture_cache_box->findData(
+        static_cast<int>(Settings::values.texture_disk_cache.GetValue())));
     const QSignalBlocker mfg_blocker{mfg_box};
     mfg_box->setCurrentIndex(
         mfg_box->findData(static_cast<int>(Settings::values.mfg_multiplier.GetValue())));

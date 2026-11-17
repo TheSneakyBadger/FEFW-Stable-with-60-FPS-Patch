@@ -426,6 +426,10 @@ struct Values {
     // starts.
     SwitchableSetting<MfgMultiplier, true> mfg_multiplier{linkage, MfgMultiplier::X2, "mfg_multiplier",
                                               Category::Renderer};
+    // Fortune's Eden: converted ASTC textures kept on disk (user/cache/textures), up to this
+    // size, so a texture seen before is loaded instead of converted again.
+    SwitchableSetting<TextureDiskCache, true> texture_disk_cache{
+        linkage, TextureDiskCache::Gb2, "texture_disk_cache", Category::Renderer};
     // With frame generation: the game's frame rate is held to the display's refresh rate divided
     // by the frames shown for each of the game's (165 Hz at 3x: 55 FPS), so every frame made is
     // shown at an even pace instead of some being dropped (stutter). Off: no limit.
