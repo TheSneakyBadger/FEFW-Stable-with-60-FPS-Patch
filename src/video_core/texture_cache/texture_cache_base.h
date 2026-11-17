@@ -18,6 +18,7 @@
 // TODO: find out which don't require stable iters
 #include <unordered_map>
 #include "common/container/unordered_map.h"
+#include "video_core/page_filter.h"
 #include "common/container/unordered_set.h"
 #include <vector>
 #include <boost/container/small_vector.hpp>
@@ -82,6 +83,10 @@ struct AsyncDecodeContext {
     std::atomic_bool complete;
     /// The image was deleted: drop the result instead of uploading it into the slot's next image.
     bool cancelled{};
+    /// Fortune's Eden: data from the texture cache on disk (BCn, sized by itself, not the guest
+    /// size); failed: it couldn't be read.
+    bool sized_by_data{};
+    bool failed{};
 };
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
@@ -164,6 +169,10 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     };
 
 public:
+    /// Device pages this cache ever registered or tracked images on: CPU writes and the GPU's own
+    /// cached writes elsewhere skip its lock (Lichii).
+    VideoCommon::PageFilter page_filter;
+
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
     ~TextureCache();
 

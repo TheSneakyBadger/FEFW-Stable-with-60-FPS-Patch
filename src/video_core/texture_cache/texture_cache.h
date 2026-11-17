@@ -14,10 +14,12 @@
 #include <chrono>
 #include <utility>
 #include <cstdlib>
+#include <cstring>
 #include "common/container/unordered_map.h"
 #include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
+#include "common/cityhash.h"
 #include "common/fefw_scene_load.h"
 #include "common/settings.h"
 #include "common/slot_vector.h"
@@ -91,8 +93,23 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         // 2.4 GB and 0.8 GB below it. Long sessions crept towards the limit (where other
         // allocations and the driver push it over and performance drops); this keeps a margin
         // that grows with the card. 8 GB cards change little.
-        expected_memory = (std::min)(expected_memory, static_cast<u64>(device_local_memory) / 10 * 7);
-        critical_memory = (std::min)(critical_memory, static_cast<u64>(device_local_memory) / 20 * 17);
+        // Fortune's Eden: on cards with 10 GiB or more to use, faster above 85% and hard above
+        // 92%. At 70%, a 16 GB card cleaned up with 3 GB still free, and the textures of an area
+        // visited a minute before were converted again on the way back (#63). The margin left
+        // (about 1 GB there) still covers the driver's and frame generation's own allocations.
+        const bool large_card = device_local_memory >= static_cast<s64>(10_GiB);
+        expected_memory = (std::min)(expected_memory,
+                                     static_cast<u64>(device_local_memory) / 20 *
+                                         (large_card ? 17 : 14));
+        critical_memory = (std::min)(critical_memory,
+                                     static_cast<u64>(device_local_memory) / 100 *
+                                         (large_card ? 92 : 85));
+        if (large_card) {
+            expected_memory = (std::max)(expected_memory,
+                                         static_cast<u64>(device_local_memory) / 20 * 17);
+            critical_memory = (std::max)(critical_memory,
+                                         static_cast<u64>(device_local_memory) / 100 * 92);
+        }
         critical_memory = (std::max)(critical_memory, expected_memory + 256_MiB);
     } else {
         expected_memory = DEFAULT_EXPECTED_MEMORY + 512_MiB;
@@ -246,7 +263,10 @@ u32 TextureCache<P>::RunGarbageCollector() {
              (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)))) {
             return false;
         }
-        --num_iterations;
+        // Images this pass can't evict don't use up its iterations (from Lichii 2834e34c): with
+        // the decrement first, 10 converted ASTC textures (CostlyLoad) at the old end of the LRU
+        // used up a normal pass, which ended having freed nothing while evictable images sat
+        // right behind them.
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
@@ -259,6 +279,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
             (!high_priority_mode && must_download)) {
             return false;
         }
+        --num_iterations;
         // An image the GPU drew into that can't be written back (BadOverlap, or not downloadable)
         // would come back from guest memory without what the GPU drew, which guest memory never
         // had. Fortune's Weave draws its sky colour table (256x256 R11G11B10) once and keeps
@@ -293,8 +314,23 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // loading screen sweep frees most of it). With only the rule below, the sky still went
         // black after a minute in a Dagsion shop on the reporter's PC (#64), while turning the
         // 30 s walk off (EDEN_TC_OLD_GPU_AGE=0) fixed it. In the hard mode they still go.
+        // Fortune's Eden: "the current scene" is at most the last 5 minutes. A loading screen
+        // isn't always seen (none in the last 58 minutes of a 75-minute session, #63), and
+        // without one every image used since the last was kept until the hard limit: 2.2 GB of
+        // GPU-drawn images, 1.6 GB unused for a minute, while the game's textures were evicted
+        // and loaded again (worse stutter the longer the session). Only over the expected level,
+        // where something has to go: below it they cost nothing, and an image the game drew once
+        // (a sky, #64) isn't put at risk for no gain.
+        static constexpr u64 CURRENT_SCENE_MAX_FRAMES = 18000;
+        const bool stale_over_expected =
+            high_priority_mode && frame_tick > CURRENT_SCENE_MAX_FRAMES &&
+            image.last_used_frame < frame_tick - CURRENT_SCENE_MAX_FRAMES;
+        const u64 current_scene_start =
+            high_priority_mode && frame_tick > CURRENT_SCENE_MAX_FRAMES
+                ? (std::max)(scene_start_frame, frame_tick - CURRENT_SCENE_MAX_FRAMES)
+                : scene_start_frame;
         if (evict_old_gpu && keeps_gpu_contents && !aggressive_mode &&
-            image.last_used_frame >= scene_start_frame) {
+            image.last_used_frame >= current_scene_start) {
             ++num_iterations;
             return false;
         }
@@ -314,7 +350,11 @@ u32 TextureCache<P>::RunGarbageCollector() {
         }
         static constexpr u64 DRAWN_ONCE_READ_FRAMES = 600;
         static constexpr u64 DRAWN_ONCE_MAX_BYTES = 16_MiB;
-        if (keeps_gpu_contents && !aggressive_mode &&
+        // Fortune's Eden: not once unused for 5 minutes over the expected level, as above. After
+        // a dungeon, its images drawn once (up to 16 MiB each) stayed for good: 3.2 GB of
+        // GPU-drawn images, 2.2 GB unused for a minute, back in town an hour later, while the
+        // cleanups evicted the town's textures every few seconds (#63, test76e).
+        if (keeps_gpu_contents && !aggressive_mode && !stale_over_expected &&
             image.guest_size_bytes <= DRAWN_ONCE_MAX_BYTES &&
             image.last_used_frame >= image.last_gpu_write_frame + DRAWN_ONCE_READ_FRAMES) {
             ++num_iterations;
@@ -1836,7 +1876,10 @@ void TextureCache<P>::PopAsyncFlushes() {
                 download_buffer.offset -= Common::AlignUp(image.unswizzled_size_bytes, 64);
                 std::span<u8> download_span =
                     download_buffer.mapped_span.subspan(download_buffer.offset);
-                if (!SkipRetiredSwizzle(download_info)) {
+                // Written by the CPU since the download was taken: these bytes are older
+                // (from Orchid cc04f48b).
+                if (!SkipRetiredSwizzle(download_info) &&
+                    False(image.flags & ImageFlagBits::CpuModified)) {
                     SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
                                  swizzle_data_buffer);
                 }
@@ -1887,7 +1930,8 @@ void TextureCache<P>::PopAsyncFlushes() {
             }
             const ImageBase& image = download_info.GetImage(slot_images);
             const auto copies = FullDownloadCopies(image.info);
-            if (!SkipRetiredSwizzle(download_info)) {
+            if (!SkipRetiredSwizzle(download_info) &&
+                False(image.flags & ImageFlagBits::CpuModified)) {
                 SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
                              swizzle_data_buffer);
             }
@@ -2090,6 +2134,63 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
         QueueAsyncUnswizzle(image, image_id);
         return;
     }
+    // Fortune's Eden: an ASTC texture the texture cache on disk has is read and decompressed on
+    // the texture decode thread and uploaded when it's ready (TickAsyncDecode), so a burst of
+    // them (an area loading) doesn't hold up the frame; one it doesn't have is converted on the
+    // GPU as before, with its guest bytes hashed as they are read.
+    if constexpr (requires { runtime.WantsGuestHash(image); }) {
+        if (True(image.flags & ImageFlagBits::AcceleratedUpload) &&
+            runtime.WantsGuestHash(image)) {
+            // Newer guest data than a texture cache read still in flight: that one is dropped.
+            if (True(image.flags & ImageFlagBits::IsDecoding)) {
+                for (auto& async_decode : async_decodes) {
+                    if (async_decode->image_id == image_id && async_decode->sized_by_data) {
+                        std::scoped_lock decode_lock{async_decode->mutex};
+                        async_decode->cancelled = true;
+                    }
+                }
+                image.flags &= ~ImageFlagBits::IsDecoding;
+            }
+            thread_local std::vector<u8> guest_bytes;
+            guest_bytes.resize(MapSizeBytes(image));
+            gpu_memory->ReadBlock(image.gpu_addr, guest_bytes.data(), guest_bytes.size(),
+                                  VideoCommon::CacheType::NoTextureCache);
+            const u64 hash = Common::CityHash64(
+                reinterpret_cast<const char*>(guest_bytes.data()),
+                (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size()));
+            const auto uploads = FullUploadSwizzles(image.info);
+            if (auto plan = runtime.PlanDiskCacheLoad(image, hash, uploads)) {
+                runtime.TransitionImageLayout(image);
+                image.flags |= ImageFlagBits::IsDecoding;
+                auto decode = std::make_unique<AsyncDecodeContext>();
+                AsyncDecodeContext* const decode_ptr = decode.get();
+                decode->image_id = image_id;
+                decode->sized_by_data = true;
+                async_decodes.push_back(std::move(decode));
+                texture_decode_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
+                    auto data = plan.load();
+                    std::unique_lock lock{decode_ptr->mutex};
+                    if (data) {
+                        decode_ptr->decoded_data.resize_destructive(data->size());
+                        std::memcpy(decode_ptr->decoded_data.data(), data->data(), data->size());
+                        decode_ptr->copies = std::move(plan.copies);
+                    } else {
+                        // Gone or damaged: converted on the GPU at the image's next use.
+                        decode_ptr->failed = true;
+                    }
+                    decode_ptr->complete = true;
+                });
+                return;
+            }
+            auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+            std::memcpy(staging.mapped_span.data(), guest_bytes.data(),
+                        (std::min)(guest_bytes.size(), staging.mapped_span.size()));
+            runtime.SetGuestHash(hash);
+            runtime.AccelerateImageUpload(image, staging, uploads, 0, 0);
+            runtime.InsertUploadMemoryBarrier();
+            return;
+        }
+    }
     auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
     UploadImageContents(image, staging);
     runtime.InsertUploadMemoryBarrier();
@@ -2102,6 +2203,24 @@ void TextureCache<P>::UploadImageContents(Image& image, StagingBuffer& staging) 
     const GPUVAddr gpu_addr = image.gpu_addr;
 
     if (True(image.flags & ImageFlagBits::AcceleratedUpload)) {
+        // Fortune's Eden: for the texture cache on disk, the guest bytes are hashed as they are
+        // read, not from the staging buffer (write-combined: reading it back cost up to a second
+        // in a burst of new textures, test77d).
+        if constexpr (requires { runtime.WantsGuestHash(image); }) {
+            if (runtime.WantsGuestHash(image)) {
+                thread_local std::vector<u8> guest_bytes;
+                guest_bytes.resize(mapped_span.size_bytes());
+                gpu_memory->ReadBlock(gpu_addr, guest_bytes.data(), guest_bytes.size(),
+                                      VideoCommon::CacheType::NoTextureCache);
+                std::memcpy(mapped_span.data(), guest_bytes.data(), guest_bytes.size());
+                runtime.SetGuestHash(Common::CityHash64(
+                    reinterpret_cast<const char*>(guest_bytes.data()),
+                    (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size())));
+                const auto uploads = FullUploadSwizzles(image.info);
+                runtime.AccelerateImageUpload(image, staging, uploads, 0, 0);
+                return;
+            }
+        }
         gpu_memory->ReadBlock(gpu_addr, mapped_span.data(), mapped_span.size_bytes(),
                               VideoCommon::CacheType::NoTextureCache);
         const auto uploads = FullUploadSwizzles(image.info);
@@ -2339,6 +2458,11 @@ void TextureCache<P>::QueueAsyncUnswizzle(Image& image, ImageId image_id) {
 template <class P>
 void TextureCache<P>::TickAsyncDecode() {
     bool has_uploads{};
+    // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
+    // frame; the rest wait for the next frames. Loading an area finished hundreds at once, and
+    // uploading them all in one frame took up to a second (test77f).
+    static constexpr u64 DISK_CACHE_UPLOAD_BUDGET = 32ULL << 20;
+    u64 disk_cache_uploaded = 0;
     auto i = async_decodes.begin();
     while (i != async_decodes.end()) {
         auto* async_decode = i->get();
@@ -2353,6 +2477,34 @@ void TextureCache<P>::TickAsyncDecode() {
             continue;
         }
         Image& image = slot_images[async_decode->image_id];
+        if (async_decode->failed) {
+            // A texture cache read that failed: converted on the GPU now (the entry is gone).
+            image.flags &= ~ImageFlagBits::IsDecoding;
+            lock.unlock();
+            i = async_decodes.erase(i);
+            auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+            UploadImageContents(image, staging);
+            has_uploads = true;
+            continue;
+        }
+        if (async_decode->sized_by_data) {
+            if (disk_cache_uploaded != 0 &&
+                disk_cache_uploaded + async_decode->decoded_data.size() > DISK_CACHE_UPLOAD_BUDGET) {
+                lock.unlock();
+                ++i;
+                continue;
+            }
+            disk_cache_uploaded += async_decode->decoded_data.size();
+            auto staging = runtime.UploadStagingBuffer(async_decode->decoded_data.size());
+            std::memcpy(staging.mapped_span.data(), async_decode->decoded_data.data(),
+                        async_decode->decoded_data.size());
+            image.UploadMemory(staging, async_decode->copies);
+            image.flags &= ~ImageFlagBits::IsDecoding;
+            has_uploads = true;
+            lock.unlock();
+            i = async_decodes.erase(i);
+            continue;
+        }
         if (async_decode->decoded_data.size() > MapSizeBytes(image)) {
             LOG_ERROR(HW_GPU, "Async decode of {} bytes for a {}-byte image at {:#x}, dropped",
                       async_decode->decoded_data.size(), MapSizeBytes(image), image.gpu_addr);
@@ -3145,6 +3297,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     texture_memory_estimate += Common::AlignUp(tentative_size, 1024);
     image.lru_index = lru_cache.Insert(image_id, frame_tick);
     image.last_used_frame = frame_tick;
+    image.address_space = current_address_space;
 
     ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, image_id](u64 page) {
         (*channel_state->gpu_page_table)[page].push_back(image_id);
@@ -3152,6 +3305,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     if (False(image.flags & ImageFlagBits::Sparse)) {
         auto map_id =
             slot_map_views.insert(image.gpu_addr, image.cpu_addr, image.guest_size_bytes, image_id);
+        page_filter.Mark(image.cpu_addr, image.guest_size_bytes);
         ForEachCPUPage(image.cpu_addr, image.guest_size_bytes,
                        [this, map_id](u64 page) { page_table[page].push_back(map_id); });
         image.map_view_id = map_id;
@@ -3161,6 +3315,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     ForEachSparseSegment(
         image, [this, image_id, &sparse_maps](GPUVAddr gpu_addr, DAddr cpu_addr, size_t size) {
             auto map_id = slot_map_views.insert(gpu_addr, cpu_addr, size, image_id);
+            page_filter.Mark(cpu_addr, size);
             ForEachCPUPage(cpu_addr, size,
                            [this, map_id](u64 page) { page_table[page].push_back(map_id); });
             sparse_maps.push_back(map_id);
@@ -3181,6 +3336,13 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
     ++bank_generation;
     NoteBankBump(BankBump::Unregister);
     lru_cache.Free(image.lru_index);
+    // Pages are cleared from the page table of the address space the image was registered in, not
+    // the one bound now: the collector, CPU unmaps and joins reach images of any address space
+    // (from Lichii d589f953).
+    const std::optional<size_t> storage_id = getStorageID(image.address_space);
+    ASSERT(storage_id);
+    TextureCacheGPUMap& gpu_page_table = gpu_page_table_storage[*storage_id * 2];
+    TextureCacheGPUMap& sparse_page_table = gpu_page_table_storage[*storage_id * 2 + 1];
     const auto& clear_page_table =
         [image_id](u64 page, ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>& selected_page_table) {
             const auto page_it = selected_page_table.find(page);
@@ -3197,9 +3359,10 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
             }
             image_ids.erase(vector_it);
         };
-    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, &clear_page_table](u64 page) {
-        clear_page_table(page, (*channel_state->gpu_page_table));
-    });
+    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes,
+                   [&clear_page_table, &gpu_page_table](u64 page) {
+                       clear_page_table(page, gpu_page_table);
+                   });
     if (False(image.flags & ImageFlagBits::Sparse)) {
         const auto map_id = image.map_view_id;
         ForEachCPUPage(image.cpu_addr, image.guest_size_bytes, [this, map_id](u64 page) {
@@ -3220,9 +3383,10 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
         slot_map_views.erase(map_id);
         return;
     }
-    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, &clear_page_table](u64 page) {
-        clear_page_table(page, (*channel_state->sparse_page_table));
-    });
+    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes,
+                   [&clear_page_table, &sparse_page_table](u64 page) {
+                       clear_page_table(page, sparse_page_table);
+                   });
     auto it = sparse_views.find(image_id);
     ASSERT(it != sparse_views.end());
     auto& sparse_maps = it->second;
@@ -3259,8 +3423,12 @@ template <class P>
 void TextureCache<P>::TrackImage(ImageBase& image, ImageId image_id) {
     ASSERT(False(image.flags & ImageFlagBits::Tracked));
     image.flags |= ImageFlagBits::Tracked;
+    // Marked before the pages trap: a new image is tracked (and uploaded) before RegisterImage
+    // marks it, and RasterizerVulkan::OnCPUWrite skips the texture cache on unmarked pages
+    // (from Lichii 54caf03b).
     if (False(image.flags & ImageFlagBits::Sparse)) {
         if (image.cpu_addr < ~(1ULL << 40)) {
+            page_filter.Mark(image.cpu_addr, image.guest_size_bytes);
             device_memory.UpdatePagesCachedCount(image.cpu_addr, image.guest_size_bytes, 1);
         }
         return;
@@ -3273,12 +3441,14 @@ void TextureCache<P>::TrackImage(ImageBase& image, ImageId image_id) {
             const auto& map = slot_map_views[map_view_id];
             const DAddr cpu_addr = map.cpu_addr;
             const std::size_t size = map.size;
+            page_filter.Mark(cpu_addr, size);
             device_memory.UpdatePagesCachedCount(cpu_addr, size, 1);
         }
         return;
     }
     ForEachSparseSegment(image,
                          [this]([[maybe_unused]] GPUVAddr gpu_addr, DAddr cpu_addr, size_t size) {
+                             page_filter.Mark(cpu_addr, size);
                              device_memory.UpdatePagesCachedCount(cpu_addr, size, 1);
                          });
 }

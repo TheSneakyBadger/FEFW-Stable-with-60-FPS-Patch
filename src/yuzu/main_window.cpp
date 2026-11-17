@@ -50,6 +50,7 @@
 #include "ryujinx_dialog.h"
 #include "set_play_time_dialog.h"
 #include "util/util.h"
+#include "yuzu/fefw_dldsr.h"
 #include "yuzu/fefw_home.h"
 #include "yuzu/fefw_mouse_mode.h"
 #include "yuzu/game/game_list.h"
@@ -1566,6 +1567,15 @@ void MainWindow::OnAppFocusStateChanged(Qt::ApplicationState state) {
     }
     if (!emulation_running) {
         return;
+    }
+    // DLDSR: the desktop back at its own resolution while another window is in front.
+    if (ui->action_Fullscreen->isChecked() && UISettings::values.fefw_dldsr.GetValue() != 0) {
+        if ((state & (Qt::ApplicationHidden | Qt::ApplicationInactive)) &&
+            !FefwDldsr::RecentlySwitched()) {
+            FefwDldsr::Restore();
+        } else if (state & Qt::ApplicationActive) {
+            ApplyDldsr();
+        }
     }
     if (UISettings::values.pause_when_in_background) {
         if (QtCommon::emu_thread->IsRunning() &&
@@ -3644,9 +3654,19 @@ void MainWindow::ShowFullscreen() {
         UISettings::values.renderwindow_geometry = render_window->saveGeometry();
         show_fullscreen(render_window);
     }
+    ApplyDldsr();
+}
+
+void MainWindow::ApplyDldsr() {
+    QWidget* const window = ui->action_Single_Window_Mode->isChecked()
+                                ? static_cast<QWidget*>(this)
+                                : static_cast<QWidget*>(render_window);
+    FefwDldsr::Apply(window, UISettings::values.fefw_dldsr.GetValue(),
+                     !UsingExclusiveFullscreen());
 }
 
 void MainWindow::HideFullscreen() {
+    FefwDldsr::Restore();
     if (ui->action_Single_Window_Mode->isChecked()) {
         if (UsingExclusiveFullscreen()) {
             showNormal();
@@ -5031,6 +5051,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     multiplayer_state->Close();
     QtCommon::system->HIDCore().UnloadInputDevices();
     Network::Shutdown();
+    FefwDldsr::Restore();
 
     QWidget::closeEvent(event);
 }

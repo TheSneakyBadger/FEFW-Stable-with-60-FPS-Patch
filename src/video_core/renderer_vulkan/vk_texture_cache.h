@@ -28,6 +28,7 @@
 #include "video_core/renderer_vulkan/vk_fsr3_frame_generator.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
+#include "video_core/fefw_texture_disk_cache.h"
 
 namespace Settings {
 struct ResolutionScalingInfo;
@@ -60,6 +61,26 @@ public:
                                  RenderPassCache& render_pass_cache_,
                                  DescriptorPool& descriptor_pool,
                                  ComputePassDescriptorQueue& compute_pass_descriptor_queue);
+    ~TextureCacheRuntime();
+
+    /// Fortune's Eden: whether the texture cache on disk needs this image's guest bytes hashed
+    /// (as they are read), and the hash for the upload that follows.
+    [[nodiscard]] bool WantsGuestHash(const Image& image) const;
+    void SetGuestHash(u64 hash);
+
+    /// A texture the texture cache on disk has: what to read (on the texture decode thread) and
+    /// how to upload it.
+    struct DiskCacheLoad {
+        FefwTextureDiskCache::Key key;
+        u64 size;
+        boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
+        [[nodiscard]] std::optional<std::vector<u8>> load() const {
+            return FefwTextureDiskCache::Load(key, size);
+        }
+    };
+    [[nodiscard]] std::optional<DiskCacheLoad> PlanDiskCacheLoad(
+        const Image& image, u64 guest_hash,
+        std::span<const VideoCommon::SwizzleParameters> swizzles) const;
 
     void Finish();
 
@@ -253,11 +274,27 @@ public:
         u64 bytes; ///< Size of the decode image (all levels and layers, RGBA8).
     };
     std::deque<PendingTranscode> pending_transcodes;
+    /// Converted textures being read back for the texture cache on disk.
+    struct PendingDiskSave {
+        u64 tick;
+        vk::Buffer buffer;
+        FefwTextureDiskCache::Key key;
+        u64 size;
+    };
+    std::deque<PendingDiskSave> pending_disk_saves;
+    u64 pending_disk_save_bytes = 0;
+    u64 disk_cache_log_frame = 0;
+    std::optional<u64> next_guest_hash;
     u64 pending_transcode_bytes = 0;
     u64 free_transcode_bytes = 0;
     u64 diagnostics_frame = 0;
     /// Video memory the decode images in flight, and the free ones, may each use.
     [[nodiscard]] u64 TranscodeMemoryCap() const;
+    /// What the decode images in flight may use in a burst: the cap, or more while the driver
+    /// reports video memory to spare (rechecked every 250 ms), up to 1 GiB more.
+    [[nodiscard]] u64 TranscodeMemoryLimit();
+    u64 transcode_limit = 0;
+    std::chrono::steady_clock::time_point transcode_limit_time{};
     /// Moves decode images the GPU is done with to the free list (waiting for the oldest first
     /// when asked), freeing those over the cap.
     void RecycleTranscodes(bool wait_for_oldest);

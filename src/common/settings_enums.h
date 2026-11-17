@@ -144,6 +144,8 @@ ENUM(UpscalerQuality, Native, UltraQuality, Quality, Balanced, Performance);
 ENUM(FrameGeneration, Off, AmdFsr3, NvidiaDlss);
 // NVIDIA DLSS multi frame generation: the frames shown for each of the game's.
 ENUM(MfgMultiplier, X2, X3, X4);
+// Converted (ASTC -> BCn) textures kept on disk, up to this size.
+ENUM(TextureDiskCache, Off, Gb2, Gb4, Gb8);
 // With frame generation, hold the game's frame rate to the display's refresh rate / frames shown.
 ENUM(MfgFrameCap, Display, Off);
 // Fortune's Weave's screen-space reflections: as the game sets them (32 rays), 8 rays, or off.

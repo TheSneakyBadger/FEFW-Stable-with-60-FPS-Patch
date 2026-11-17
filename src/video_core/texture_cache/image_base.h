@@ -112,6 +112,8 @@ struct ImageBase {
     /// drawn-once rule in RunGarbageCollector).
     u64 last_gpu_write_frame = 0;
     u64 last_used_frame = 0;
+    /// Address space whose GPU page table the image is registered in (set by RegisterImage).
+    size_t address_space = 0;
     size_t lru_index = SIZE_MAX;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};

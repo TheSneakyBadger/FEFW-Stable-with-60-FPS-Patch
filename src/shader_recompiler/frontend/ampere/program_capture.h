@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <span>
 #include <vector>
@@ -17,6 +18,33 @@ public:
 
     Result Observe(const Instruction& instruction, u32 index) {
         const u32 opcode = instruction.Bits(0, 12);
+        // A geometry program's exit handler installation names the handler, which sits after the
+        // body's last EXIT: keep capturing through it (from Lichii).
+        if (index < exit_setup.size()) {
+            exit_setup[index] = instruction;
+            if (index + 1 == exit_setup.size() &&
+                std::all_of(exit_setup.begin(), exit_setup.end(), [](const Instruction& setup) {
+                    return (setup.words[3] & 0xc00001ffU) == 0;
+                }) &&
+                exit_setup[0].words[0] == 0x0000734e &&
+                exit_setup[0].words[1] == 0 && exit_setup[0].words[2] == 0 &&
+                exit_setup[1].words[0] == 0x00037802 && exit_setup[1].words[2] == 0xf00 &&
+                exit_setup[2].words[0] == 0x00007210 && exit_setup[2].words[1] == 3 &&
+                exit_setup[2].words[2] == 0x07f1e0ff &&
+                exit_setup[3].words[1] == 0xff &&
+                ((exit_setup[3].words[0] == 0x01017210 &&
+                  exit_setup[3].words[2] == 0x007fe4ff) ||
+                 (exit_setup[3].words[0] == 0xff017224 &&
+                  exit_setup[3].words[2] == 0x000e0401)) &&
+                instruction.words[0] == 0x00007357 && instruction.words[1] == 0 &&
+                instruction.words[2] == 0) {
+                const u32 target = exit_setup[1].words[1];
+                if (target < exit_setup.size() * 16 || target % 16 ||
+                    target >= MaximumInstructions * 16)
+                    return Result::InvalidTarget;
+                last_forward_target = std::max(last_forward_target, target / 16);
+            }
+        }
         if (opcode == 0x944 || opcode == 0x947 || opcode == 0x945) {
             const u64 raw = instruction.words[1] | (u64{instruction.words[2] & 0x3ffff} << 32);
             // BRA.DIV (bit 91 and a uniform register) carries two mode bits below its word offset.
@@ -45,6 +73,7 @@ public:
     }
 
 private:
+    std::array<Instruction, 5> exit_setup{};
     u32 last_call_target{};
     u32 last_forward_target{};
     bool main_exited{};

@@ -64,6 +64,8 @@ add_library(video_core STATIC
     framebuffer_config.h
     fsr.cpp
     fsr.h
+    fefw_texture_disk_cache.cpp
+    fefw_texture_disk_cache.h
     host1x/codecs/decoder.cpp
     host1x/codecs/decoder.h
     host1x/codecs/h264.cpp
@@ -108,6 +110,7 @@ add_library(video_core STATIC
     invalidation_accumulator.h
     memory_manager.cpp
     memory_manager.h
+    page_filter.h
     present.h
     pte_kind.h
     query_cache/bank_base.h

@@ -416,6 +416,7 @@ private slots:
     bool UsingExclusiveFullscreen();
     void ShowFullscreen();
     void HideFullscreen();
+    void ApplyDldsr();
     void ToggleWindowMode();
     void ResetWindowSize(u32 width, u32 height);
     void ResetWindowSize720();

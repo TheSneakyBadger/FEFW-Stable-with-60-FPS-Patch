@@ -36,6 +36,8 @@ public:
     void Refresh(const QStandardItemModel& model);
     /// Re-reads the settings shown (after the settings change).
     void UpdateStatusLine();
+    /// The hint towards 1X resolution (and DLDSR) when another resolution is set.
+    void UpdateScaleHint(bool show, bool dlss, bool dldsr_offered);
 
 signals:
     void PlayRequested(const QString& path);
@@ -74,6 +76,8 @@ private:
     QLabel* title_label{};
     QLabel* version_label{};
     QLabel* status_label{};
+    QWidget* scale_hint{};
+    QLabel* scale_hint_label{};
     QPushButton* play_button{};
     QCheckBox* sixty_fps{};
     QComboBox* upscaler_box{};
@@ -84,6 +88,10 @@ private:
     QSpinBox* mfg_cap_spin{};
     QWidget* mfg_cap_column{};
     QComboBox* button_icons_box{};
+    QComboBox* texture_cache_box{};
+    QComboBox* dldsr_box{};
+    QWidget* dldsr_column{};
+    QLabel* dldsr_caption{};
     QCheckBox* ultrawide_box{};
     QCheckBox* hdr_box{};
     QCheckBox* hd_rumble_box{};

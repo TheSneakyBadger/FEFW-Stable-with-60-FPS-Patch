@@ -25,6 +25,8 @@
 
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/fefw_load_stats.h"
+#include "video_core/fefw_texture_disk_cache.h"
+#include "common/cityhash.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 
 #include "video_core/engines/fermi_2d.h"
@@ -664,7 +666,7 @@ void CopyBufferToImage(vk::CommandBuffer cmdbuf, VkBuffer src_buffer, VkImage im
     const VkImageMemoryBarrier read_barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
-            .srcAccessMask = WRITE_ACCESS_FLAGS,
+            .srcAccessMask = WRITE_ACCESS_FLAGS | VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .oldLayout = is_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -687,18 +689,16 @@ void CopyBufferToImage(vk::CommandBuffer cmdbuf, VkBuffer src_buffer, VkImage im
             .subresourceRange = subresource_range,
     };
 
-    cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                           read_barrier);
+    // Every stage that can use the image: vertex and fragment shaders sampling an upload, and
+    // early depth tests loading one, did not wait for the copy (textures read before it landed:
+    // black for a frame in Yoshi and the Mysterious Book).
+    cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, read_barrier);
     cmdbuf.CopyBufferToImage(src_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copies);
     // TODO: Move this to another API
-    cmdbuf.PipelineBarrier(
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            0, nullptr, nullptr, write_barrier);
+    cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, nullptr, nullptr,
+                           write_barrier);
 }
 
 [[nodiscard]] VkImageBlit MakeImageBlit(const Region2D& dst_region, const Region2D& src_region,
@@ -981,6 +981,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                                     compute_pass_descriptor_queue,
                                     Settings::AstcRecompressesToBc7());
             LOG_INFO(Render_Vulkan, "ASTC textures are decoded and re-compressed on the GPU");
+            FefwTextureDiskCache::Start();
         }
     }
     if (!device.IsKhrImageFormatListSupported()) {
@@ -1005,6 +1006,20 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         bl3d_unswizzle_pass.emplace(device, scheduler, descriptor_pool,
                                    staging_buffer_pool, compute_pass_descriptor_queue);
     }
+}
+
+bool TextureCacheRuntime::WantsGuestHash(const Image& image) const {
+    return bc_encoder_pass && IsPixelFormatASTC(image.info.format) &&
+           WillUseGpuBcnTranscode(device, image.info) && FefwTextureDiskCache::Enabled();
+}
+
+void TextureCacheRuntime::SetGuestHash(u64 hash) {
+    next_guest_hash = hash;
+}
+
+TextureCacheRuntime::~TextureCacheRuntime() {
+    // Converted textures still being read back aren't stored; queued writes are finished.
+    FefwTextureDiskCache::Stop();
 }
 
 void TextureCacheRuntime::Finish() {
@@ -1452,7 +1467,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .pNext = nullptr,
                 .srcAccessMask = 0,
-                .dstAccessMask = 0,
+                .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 .newLayout = VK_IMAGE_LAYOUT_GENERAL,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2025,9 +2040,13 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
     const VkImage src_image = src.ImageHandle();
     const VkImageSubresourceLayers dst_layers = MakeSubresourceLayers(&dst);
     const VkImageSubresourceLayers src_layers = MakeSubresourceLayers(&src);
+    // A blit inside one image (a mip chain, say) keeps it in GENERAL: moving the whole image to
+    // TRANSFER_DST_OPTIMAL would leave the source levels in another layout than the blit reads.
+    const VkImageLayout dst_layout =
+        src_image == dst_image ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     scheduler.RequestOutsideRenderPassOperationContext();
     scheduler.Record([filter, dst_region, src_region, dst_image, src_image, dst_layers, src_layers,
-                      aspect_mask, is_resolve](vk::CommandBuffer cmdbuf) {
+                      aspect_mask, is_resolve, dst_layout](vk::CommandBuffer cmdbuf) {
         const std::array read_barriers{
             VkImageMemoryBarrier{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -2057,7 +2076,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
                                  VK_ACCESS_TRANSFER_WRITE_BIT,
                 .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
                 .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = dst_layout,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = dst_image,
@@ -2078,7 +2097,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
                              VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                              VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
                              VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .oldLayout = dst_layout,
             .newLayout = VK_IMAGE_LAYOUT_GENERAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2094,14 +2113,13 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        0, nullptr, nullptr, read_barriers);
         if (is_resolve) {
-            cmdbuf.ResolveImage(src_image, VK_IMAGE_LAYOUT_GENERAL, dst_image,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            cmdbuf.ResolveImage(src_image, VK_IMAGE_LAYOUT_GENERAL, dst_image, dst_layout,
                                 MakeImageResolve(dst_region, src_region, dst_layers, src_layers));
         } else {
             const bool is_linear = filter == Fermi2D::Filter::Bilinear;
             const VkFilter vk_filter = is_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
             cmdbuf.BlitImage(
-                src_image, VK_IMAGE_LAYOUT_GENERAL, dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                src_image, VK_IMAGE_LAYOUT_GENERAL, dst_image, dst_layout,
                 MakeImageBlit(dst_region, src_region, dst_layers, src_layers), vk_filter);
         }
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
@@ -2320,7 +2338,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .pNext = nullptr,
                 .srcAccessMask = 0,
-                .dstAccessMask = 0,
+                .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 .newLayout = VK_IMAGE_LAYOUT_GENERAL,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2346,18 +2364,15 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .subresourceRange = dst_range.SubresourceRange(aspect_mask),
             },
         };
-        cmdbuf.PipelineBarrier(
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0, nullptr, nullptr, pre_barriers);
+        // Every stage that can sample, store to or render to either image: shader reads in vertex
+        // and fragment shaders and early depth tests were outside these scopes.
+        cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, nullptr, nullptr, pre_barriers);
         cmdbuf.CopyImage(src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vk_copies);
-        cmdbuf.PipelineBarrier(
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0, nullptr, nullptr, post_barriers);
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, nullptr, nullptr,
+                               post_barriers);
     });
 }
 
@@ -2445,7 +2460,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         .pNext = nullptr,
                         .srcAccessMask = 0,
-                        .dstAccessMask = 0,
+                        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                         .newLayout = VK_IMAGE_LAYOUT_GENERAL,
                         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2571,6 +2586,27 @@ void TextureCacheRuntime::ReleaseMsaaScratchImage(VkImage image) {
 void TextureCacheRuntime::TickFrame() {
     static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
     RecycleTranscodes(false);
+    // Converted textures read back for the texture cache on disk: stored once the GPU is done.
+    while (!pending_disk_saves.empty() && scheduler.IsFree(pending_disk_saves.front().tick)) {
+        PendingDiskSave& save = pending_disk_saves.front();
+        save.buffer.Invalidate();
+        const std::span<const u8> mapped = save.buffer.Mapped();
+        if (mapped.size() >= save.size) {
+            FefwTextureDiskCache::Store(
+                save.key, std::vector<u8>(mapped.begin(), mapped.begin() + save.size));
+        }
+        pending_disk_save_bytes -= (std::min)(pending_disk_save_bytes, save.size);
+        pending_disk_saves.pop_front();
+    }
+    if (++disk_cache_log_frame % 600 == 0 && FefwTextureDiskCache::Enabled()) {
+        const auto counts = FefwTextureDiskCache::TakeCounts();
+        if (counts.loaded != 0 || counts.stored != 0) {
+            LOG_INFO(Render_Vulkan,
+                     "Texture cache on disk, last 10 s: {} textures loaded, {} stored ({} MiB "
+                     "on disk)",
+                     counts.loaded, counts.stored, counts.bytes_on_disk >> 20);
+        }
+    }
     std::erase_if(free_transcodes, [this](PendingTranscode& t) {
         if (++t.unused_frames > MAX_UNUSED_SCRATCH_FRAMES) {
             free_transcode_bytes -= t.bytes;
@@ -3930,6 +3966,67 @@ u64 TextureCacheRuntime::TranscodeMemoryCap() const {
     return std::clamp<u64>(local / 64, u64{64} << 20, u64{256} << 20);
 }
 
+u64 TextureCacheRuntime::TranscodeMemoryLimit() {
+    // A burst of new textures (a new area, a new part of a battle) waited for the GPU every few
+    // textures at the cap, and each wait stalled the frame: up to 150 waits in frames of
+    // 0.1-0.7 s on a 12 GB card with 5 GB free. While the driver reports video memory to spare,
+    // the burst may use some of it (what's free less a reserve of a sixth of the budget, at
+    // least 1 GiB; at most 1 GiB more than the cap). Cards without much to spare (most 8 GB and
+    // smaller ones in busy scenes) keep the cap and wait as before.
+    const u64 cap = TranscodeMemoryCap();
+    if (!device.CanReportMemoryUsage()) {
+        return cap;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (transcode_limit != 0 && now - transcode_limit_time < std::chrono::milliseconds{250}) {
+        return transcode_limit;
+    }
+    transcode_limit_time = now;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    const VkPhysicalDeviceMemoryProperties2 properties =
+        device.GetPhysical().GetMemoryProperties(&budget);
+    u64 total_budget = 0;
+    u64 headroom = 0;
+    for (u32 heap = 0; heap < properties.memoryProperties.memoryHeapCount; ++heap) {
+        if ((properties.memoryProperties.memoryHeaps[heap].flags &
+             VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) {
+            continue;
+        }
+        total_budget += budget.heapBudget[heap];
+        if (budget.heapBudget[heap] > budget.heapUsage[heap]) {
+            headroom += budget.heapBudget[heap] - budget.heapUsage[heap];
+        }
+    }
+    const u64 reserve = (std::max)(u64{1} << 30, total_budget / 6);
+    u64 spare = headroom > reserve ? headroom - reserve : 0;
+    // And below the texture cache's faster cleanup level (70% of the card, 85% with 10 GiB or
+    // more; the cache counts the same driver-reported use, decode images included), less 256 MiB.
+    // Measured only against the driver's budget, a burst took the cache over its levels into
+    // faster and hard cleanups
+    // that evicted the game's textures, which then came back as more bursts (test76c, #63: 3
+    // hard cleanups of 120-170 ms and worse stutter in 10 minutes of towns).
+    const u64 local = device.GetDeviceLocalMemory();
+    const u64 cache_level = local >= (u64{10} << 30) ? local / 20 * 17 : local / 10 * 7;
+    const u64 cache_use = device.GetDeviceMemoryInUse() + (u64{256} << 20);
+    spare = (std::min)(spare, cache_level > cache_use ? cache_level - cache_use : 0);
+    // The decode images already made are in the driver's usage: the limit is what they use now
+    // plus what's spare.
+    const u64 in_use = pending_transcode_bytes + free_transcode_bytes;
+    transcode_limit = std::clamp<u64>(in_use + spare, cap, cap + (u64{1} << 30));
+    static u32 logged = 0;
+    if (transcode_limit > cap && logged < 5) {
+        ++logged;
+        LOG_INFO(Render_Vulkan,
+                 "ASTC re-compression: up to {} MiB of decode images in flight while video memory "
+                 "is spare ({} MiB free of {} MiB, {} MiB below the texture cache's faster "
+                 "cleanup; cap {} MiB)",
+                 transcode_limit >> 20, headroom >> 20, total_budget >> 20,
+                 cache_level > cache_use ? (cache_level - cache_use) >> 20 : 0, cap >> 20);
+    }
+    return transcode_limit;
+}
+
 void TextureCacheRuntime::RecycleTranscodes(bool wait_for_oldest) {
     // A decode image the GPU is done with goes back to the free list for the next texture of its
     // shape (up to the cap), or is destroyed.
@@ -3949,6 +4046,80 @@ void TextureCacheRuntime::RecycleTranscodes(bool wait_for_oldest) {
     }
 }
 
+namespace {
+/// The copies of every level of a texture the GPU encoded to BCn (BC1: 8 bytes a block, BC3 and
+/// BC7: 16), from one buffer; returns its size.
+u64 BcnCopies(const ImageInfo& info, bool bc3,
+              boost::container::small_vector<VideoCommon::BufferImageCopy, 16>& copies) {
+    const u32 width = info.size.width;
+    const u32 height = info.size.height;
+    const u32 levels = static_cast<u32>(info.resources.levels);
+    const u32 layers = static_cast<u32>(info.resources.layers);
+    const u64 block_bytes = bc3 ? 16 : 8;
+    u64 total = 0;
+    for (u32 level = 0; level < levels; ++level) {
+        const u32 level_width = (std::max)(width >> level, 1U);
+        const u32 level_height = (std::max)(height >> level, 1U);
+        const u32 blocks_x = Common::DivCeil(level_width, 4U);
+        const u32 blocks_y = Common::DivCeil(level_height, 4U);
+        const u64 size = u64{blocks_x} * blocks_y * layers * block_bytes;
+        copies.push_back({
+            .buffer_offset = total,
+            .buffer_size = size,
+            .buffer_row_length = blocks_x * 4,
+            .buffer_image_height = blocks_y * 4,
+            .image_subresource{
+                .base_level = static_cast<s32>(level),
+                .base_layer = 0,
+                .num_layers = static_cast<s32>(layers),
+            },
+            .image_offset{0, 0, 0},
+            .image_extent{level_width, level_height, 1},
+        });
+        total += size;
+    }
+    return total;
+}
+
+FefwTextureDiskCache::Key DiskCacheKey(const ImageInfo& info, u64 guest_hash,
+                                       std::span<const VideoCommon::SwizzleParameters> swizzles,
+                                       bool bc3) {
+    u64 hash = guest_hash;
+    // The swizzle parameters field by field (the struct has padding).
+    for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
+        const std::array<u64, 8> fields{
+            swizzle.num_tiles.width, swizzle.num_tiles.height, swizzle.num_tiles.depth,
+            swizzle.block.width,     swizzle.block.height,     swizzle.block.depth,
+            swizzle.buffer_offset,   static_cast<u64>(static_cast<s64>(swizzle.level)),
+        };
+        hash = Common::CityHash64WithSeed(reinterpret_cast<const char*>(fields.data()),
+                                          sizeof(fields), hash);
+    }
+    return FefwTextureDiskCache::Key{
+        .data_hash = hash,
+        .format = static_cast<u32>(info.format),
+        .width = info.size.width,
+        .height = info.size.height,
+        .levels = static_cast<u32>(info.resources.levels),
+        .layers = static_cast<u32>(info.resources.layers),
+        .encoding = Settings::AstcRecompressesToBc7() ? 7U : (bc3 ? 3U : 1U),
+    };
+}
+} // Anonymous namespace
+
+std::optional<TextureCacheRuntime::DiskCacheLoad> TextureCacheRuntime::PlanDiskCacheLoad(
+    const Image& image, u64 guest_hash,
+    std::span<const VideoCommon::SwizzleParameters> swizzles) const {
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    const FefwTextureDiskCache::Key key = DiskCacheKey(image.info, guest_hash, swizzles, bc3);
+    if (!FefwTextureDiskCache::Contains(key)) {
+        return std::nullopt;
+    }
+    DiskCacheLoad load{.key = key, .size = 0, .copies = {}};
+    load.size = BcnCopies(image.info, bc3, load.copies);
+    return load;
+}
+
 void TextureCacheRuntime::TranscodeAstcToBcn(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles) {
@@ -3957,6 +4128,18 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     const u32 height = info.size.height;
     const u32 levels = static_cast<u32>(info.resources.levels);
     const u32 layers = static_cast<u32>(info.resources.layers);
+    // What the GPU encodes: every level in one buffer, then copied into the image.
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
+    const u64 total = BcnCopies(info, bc3, copies);
+
+    // Fortune's Eden: the key for the texture cache on disk (the texture cache reads the ones
+    // it has on its decode thread, PlanDiskCacheLoad; this one isn't there yet).
+    std::optional<FefwTextureDiskCache::Key> disk_key;
+    if (const std::optional<u64> guest_hash = std::exchange(next_guest_hash, std::nullopt);
+        guest_hash && FefwTextureDiskCache::Enabled()) {
+        disk_key = DiskCacheKey(info, *guest_hash, swizzles, bc3);
+    }
     FefwLoadStats::Add(FefwLoadStats::Get().astc_textures);
     constexpr VkFormat DecodeFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
     // A decode image of the same shape the GPU is done with: many textures share a few shapes,
@@ -3979,7 +4162,10 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         // free the idle decode images, then wait for the oldest decodes to finish and reuse or
         // free theirs.
         const u64 cap = TranscodeMemoryCap();
-        while (pending_transcode_bytes + free_transcode_bytes + bytes > cap) {
+        const u64 limit = pending_transcode_bytes + free_transcode_bytes + bytes > cap
+                              ? (std::max)(cap, TranscodeMemoryLimit())
+                              : cap;
+        while (pending_transcode_bytes + free_transcode_bytes + bytes > limit) {
             if (free_transcode_bytes > 0) {
                 free_transcodes.clear();
                 free_transcode_bytes = 0;
@@ -4001,7 +4187,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                 LOG_INFO(Render_Vulkan,
                          "ASTC re-compression waited for the GPU: {} MiB of decode images in "
                          "flight, limit {} MiB",
-                         pending_transcode_bytes >> 20, cap >> 20);
+                         pending_transcode_bytes >> 20, limit >> 20);
             }
             RecycleTranscodes(true);
             if (find_reusable() != free_transcodes.end()) {
@@ -4061,32 +4247,6 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
         },
         map, swizzles);
 
-    // Encode every level into one buffer, then copy it into the image.
-    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
-    const u64 block_bytes = bc3 ? 16 : 8;
-    boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
-    u64 total = 0;
-    for (u32 level = 0; level < levels; ++level) {
-        const u32 level_width = (std::max)(width >> level, 1U);
-        const u32 level_height = (std::max)(height >> level, 1U);
-        const u32 blocks_x = Common::DivCeil(level_width, 4U);
-        const u32 blocks_y = Common::DivCeil(level_height, 4U);
-        const u64 size = u64{blocks_x} * blocks_y * layers * block_bytes;
-        copies.push_back({
-            .buffer_offset = total,
-            .buffer_size = size,
-            .buffer_row_length = blocks_x * 4,
-            .buffer_image_height = blocks_y * 4,
-            .image_subresource{
-                .base_level = static_cast<s32>(level),
-                .base_layer = 0,
-                .num_layers = static_cast<s32>(layers),
-            },
-            .image_offset{0, 0, 0},
-            .image_extent{level_width, level_height, 1},
-        });
-        total += size;
-    }
     const auto output = staging_buffer_pool.Request(total, MemoryUsage::DeviceLocal);
     for (u32 level = 0; level < levels; ++level) {
         bc_encoder_pass->Encode(*pending.views[level], copies[level].image_extent.width,
@@ -4104,6 +4264,42 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
                                0, barrier);
     });
     image.UploadMemory(output.buffer, output.offset, copies);
+    // Read back for the texture cache on disk (stored once the GPU is done, in TickFrame).
+    static constexpr u64 MAX_PENDING_SAVE_BYTES = 128ULL << 20;
+    if (disk_key && pending_disk_save_bytes + total <= MAX_PENDING_SAVE_BYTES) {
+        vk::Buffer readback = memory_allocator.CreateBuffer(
+            VkBufferCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .size = total,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = 0,
+                .pQueueFamilyIndices = nullptr,
+            },
+            MemoryUsage::Download);
+        scheduler.Record([src = output.buffer, src_offset = output.offset, dst = *readback,
+                          total](vk::CommandBuffer cmdbuf) {
+            const VkBufferCopy region{.srcOffset = src_offset, .dstOffset = 0, .size = total};
+            cmdbuf.CopyBuffer(src, dst, region);
+            const VkMemoryBarrier barrier{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                                   barrier);
+        });
+        pending_disk_save_bytes += total;
+        pending_disk_saves.push_back(PendingDiskSave{
+            .tick = scheduler.CurrentTick(),
+            .buffer = std::move(readback),
+            .key = *disk_key,
+            .size = total,
+        });
+    }
     static bool logged_first = false;
     if (!std::exchange(logged_first, true)) {
         LOG_INFO(Render_Vulkan, "First ASTC texture re-compressed on the GPU: {}x{}, {} levels, {} layers, {}",
@@ -4164,8 +4360,9 @@ void TextureCacheRuntime::TransitionImageLayout(Image& image) {
         };
         scheduler.RequestOutsideRenderPassOperationContext();
         scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {
-            cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
-                                   vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, barrier);
+            // Clears and uploads that follow run in the transfer stage.
+            cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER,
+                                   vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, barrier);
         });
     }
 }

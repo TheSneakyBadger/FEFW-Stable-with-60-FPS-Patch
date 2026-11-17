@@ -44,10 +44,12 @@
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/loader/loader.h"
+#include "qt_common/config/uisettings.h"
 #include "qt_common/qt_common.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #include "yuzu/configuration/nvidia_dlss_panel.h"
+#include "yuzu/fefw_dldsr.h"
 #endif
 #include "qt_common/game_list/game_list_p.h"
 
@@ -439,6 +441,28 @@ void FefwHome::BuildGamePage(QWidget* page) {
     status_label = new QLabel(right);
     status_label->setObjectName(QStringLiteral("fefwHomeStatus"));
     status_label->setWordWrap(true);
+    // At a resolution other than 1X: the recommended setup (1X with the upscaler, and DLDSR) is a
+    // click away.
+    scale_hint = new QWidget(right);
+    {
+        QHBoxLayout* const hint_layout = new QHBoxLayout(scale_hint);
+        hint_layout->setContentsMargins(0, 0, 0, 0);
+        hint_layout->setSpacing(10);
+        scale_hint_label = new QLabel(scale_hint);
+        scale_hint_label->setObjectName(QStringLiteral("fefwHomeStatus"));
+        scale_hint_label->setWordWrap(true);
+        QPushButton* const use_1x = new QPushButton(tr("Use 1X"), scale_hint);
+        use_1x->setCursor(Qt::PointingHandCursor);
+        use_1x->setMinimumHeight(30);
+        hint_layout->addWidget(scale_hint_label, 1);
+        hint_layout->addWidget(use_1x, 0, Qt::AlignVCenter);
+        connect(use_1x, &QPushButton::clicked, this, [this] {
+            Settings::values.resolution_setup.SetValue(Settings::ResolutionSetup::Res1X);
+            emit SettingChanged();
+            UpdateStatusLine();
+        });
+    }
+    scale_hint->hide();
 
     QPushButton* const performance = new QPushButton(tr("Performance Settings"), right);
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), right);
@@ -490,9 +514,24 @@ void FefwHome::BuildGamePage(QWidget* page) {
     // RenHDrum ships for Windows only (renhdrum.dll); other builds keep the standard rumble.
     hd_rumble_box->hide();
 #endif
+    // The texture cache on disk, with a note on who it helps most.
+    texture_cache_box = new QComboBox(right);
+    for (const auto& [size, name] :
+         {std::pair{Settings::TextureDiskCache::Off, tr("Off")},
+          std::pair{Settings::TextureDiskCache::Gb2, tr("2 GB")},
+          std::pair{Settings::TextureDiskCache::Gb4, tr("4 GB")},
+          std::pair{Settings::TextureDiskCache::Gb8, tr("8 GB")}}) {
+        texture_cache_box->addItem(name, static_cast<int>(size));
+    }
+    texture_cache_box->setCursor(Qt::PointingHandCursor);
+    texture_cache_box->setMinimumWidth(110);
+    texture_cache_box->setToolTip(
+        tr("Keeps the game's textures, once converted for your graphics card, on disk (in "
+           "user/cache/textures), so a texture seen before is loaded instead of converted again. "
+           "The oldest are dropped once it's full. Takes effect when the game starts."));
     switches->addStretch();
 
-    // Second row: upscaling, frame generation and the button icons.
+    // Second row: upscaling and frame generation.
     QHBoxLayout* const choices = new QHBoxLayout;
     choices->setSpacing(14);
     choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
@@ -541,11 +580,51 @@ void FefwHome::BuildGamePage(QWidget* page) {
         cap_layout->addWidget(mfg_cap_spin);
     }
     choices->addWidget(mfg_cap_column);
-    choices->addLayout(labelled(tr("Button icons"), button_icons_box));
+    // DLDSR in fullscreen: shown once the driver offers its resolutions (UpdateStatusLine).
+    dldsr_box = new QComboBox(right);
+    dldsr_box->setCursor(Qt::PointingHandCursor);
+    dldsr_box->setMinimumWidth(110);
+    dldsr_box->setToolTip(
+        tr("In fullscreen, plays at a DLDSR resolution: the game is drawn larger than your monitor "
+           "and NVIDIA's AI filter scales it down, so it looks sharper. Works with DLSS and DLAA "
+           "(DLSS Quality is a good match). Shown once DLDSR is turned on in the NVIDIA app "
+           "(Graphics, DSR - Factors). On AMD cards it's VSR (Virtual Super Resolution in AMD "
+           "Software, Display). Takes more of your graphics card. The desktop goes back "
+           "to its own resolution when you leave fullscreen or switch to another window."));
+    dldsr_column = new QWidget(right);
+    {
+        QVBoxLayout* const dldsr_layout = new QVBoxLayout(dldsr_column);
+        dldsr_layout->setContentsMargins(0, 0, 0, 0);
+        dldsr_layout->setSpacing(4);
+        dldsr_caption = caption(tr("DLDSR (fullscreen)"));
+        dldsr_layout->addWidget(dldsr_caption);
+        dldsr_layout->addWidget(dldsr_box);
+    }
+    dldsr_column->hide();
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
     }
     choices->addStretch();
+
+    // Third row: the display and the texture cache on disk, with a note on who it helps most.
+    QHBoxLayout* const extras = new QHBoxLayout;
+    extras->setSpacing(14);
+    extras->addWidget(dldsr_column);
+    extras->addLayout(labelled(tr("Button icons"), button_icons_box));
+    extras->addLayout(labelled(tr("Texture cache on disk"), texture_cache_box));
+    {
+        QLabel* const note = new QLabel(
+            tr("Stores textures so places you've been load without stutter. Most useful on "
+               "graphics cards with less video memory."),
+            right);
+        note->setObjectName(QStringLiteral("fefwHomeCaption"));
+        note->setWordWrap(true);
+        note->setMinimumWidth(200);
+        note->setMaximumWidth(320);
+        note->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
+        extras->addWidget(note, 0, Qt::AlignBottom);
+    }
+    extras->addStretch();
 
     QFrame* const divider = new QFrame(right);
     divider->setObjectName(QStringLiteral("fefwHomeDivider"));
@@ -565,6 +644,8 @@ void FefwHome::BuildGamePage(QWidget* page) {
     panel_layout->setSpacing(14);
     panel_layout->addLayout(switches);
     panel_layout->addLayout(choices);
+    panel_layout->addLayout(extras);
+    panel_layout->addWidget(scale_hint);
     panel_layout->addWidget(status_label);
     panel_layout->addWidget(divider);
     panel_layout->addLayout(buttons);
@@ -651,6 +732,21 @@ void FefwHome::BuildGamePage(QWidget* page) {
         }
     });
     connect(mfg_cap_spin, &QSpinBox::editingFinished, this, &FefwHome::SettingChanged);
+    connect(texture_cache_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto size =
+            static_cast<Settings::TextureDiskCache>(texture_cache_box->itemData(index).toInt());
+        if (index >= 0 && Settings::values.texture_disk_cache.GetValue() != size) {
+            Settings::values.texture_disk_cache.SetValue(size);
+            emit SettingChanged();
+        }
+    });
+    connect(dldsr_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const u32 factor = dldsr_box->itemData(index).toUInt();
+        if (index >= 0 && UISettings::values.fefw_dldsr.GetValue() != factor) {
+            UISettings::values.fefw_dldsr.SetValue(factor);
+            emit SettingChanged();
+        }
+    });
     connect(button_icons_box, &QComboBox::currentIndexChanged, this, [this](int index) {
         const auto icons =
             static_cast<Settings::FefwButtonIcons>(button_icons_box->itemData(index).toInt());
@@ -833,8 +929,6 @@ void FefwHome::UpdateStatusLine() {
     QStringList notes;
     if (upscaler == Settings::Upscaler::GameDlss) {
         notes << tr("The game's own DLSS always draws at Performance.");
-    } else if (!at_1x) {
-        notes << tr("Upscaler quality applies at 1X resolution (Performance at this one).");
     }
 #ifdef EGLANTINE_STREAMLINE
     if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
@@ -891,6 +985,28 @@ void FefwHome::UpdateStatusLine() {
     const QSignalBlocker frame_gen_blocker{frame_gen_box};
     frame_gen_box->setCurrentIndex(
         frame_gen_box->findData(static_cast<int>(Settings::values.frame_generation.GetValue())));
+    // DLDSR: the factors the driver offers on this monitor (none: the choice is hidden).
+    {
+        const std::vector<u32> factors = FefwDldsr::AvailableFactors(this);
+        const QSignalBlocker dldsr_blocker{dldsr_box};
+        dldsr_box->clear();
+        dldsr_box->addItem(tr("Off"), 0U);
+        for (const u32 factor : factors) {
+            dldsr_box->addItem(QStringLiteral("%1.%2x").arg(factor / 100).arg(
+                                   factor % 100, 2, 10, QLatin1Char('0')),
+                               factor);
+        }
+        const int current = dldsr_box->findData(UISettings::values.fefw_dldsr.GetValue());
+        dldsr_box->setCurrentIndex(current >= 0 ? current : 0);
+        dldsr_caption->setText(FefwDldsr::UsesAmdVsr(this) ? tr("VSR (fullscreen)")
+                                                            : tr("DLDSR (fullscreen)"));
+        dldsr_column->setVisible(!factors.empty());
+        UpdateScaleHint(upscaler != Settings::Upscaler::GameDlss && !at_1x,
+                        upscaler == Settings::Upscaler::NvidiaDlss, !factors.empty());
+    }
+    const QSignalBlocker texture_cache_blocker{texture_cache_box};
+    texture_cache_box->setCurrentIndex(texture_cache_box->findData(
+        static_cast<int>(Settings::values.texture_disk_cache.GetValue())));
     const QSignalBlocker mfg_blocker{mfg_box};
     mfg_box->setCurrentIndex(
         mfg_box->findData(static_cast<int>(Settings::values.mfg_multiplier.GetValue())));
@@ -902,6 +1018,26 @@ void FefwHome::UpdateStatusLine() {
                                    Settings::FrameGeneration::Off &&
                                Settings::values.mfg_frame_cap.GetValue() ==
                                    Settings::MfgFrameCap::Display);
+}
+
+// The recommended setup: 1X, where the upscaler rebuilds the detail at the chosen quality.
+void FefwHome::UpdateScaleHint(bool show, bool dlss, bool dldsr_offered) {
+    if (show) {
+        const QString name = dlss ? tr("DLSS") : tr("FSR");
+        QString text = tr("Recommended: 1X resolution. %1 then rebuilds the detail at the quality "
+                          "you choose, for much less than a higher resolution costs (at this one "
+                          "it runs at Performance).")
+                           .arg(name);
+        if (dldsr_offered) {
+            text += QLatin1Char(' ') +
+                    tr("For an even sharper picture, add %1 2.25x.")
+                        .arg(FefwDldsr::UsesAmdVsr(this) ? tr("VSR") : tr("DLDSR"));
+        }
+        scale_hint_label->setText(text);
+        scale_hint->show();
+    } else {
+        scale_hint->hide();
+    }
 }
 
 void FefwHome::OfferMfgUnlocker() {

@@ -143,6 +143,8 @@ protected:
     std::shared_ptr<const LoweredNativeCode> LowerNativeCode(
         u32 source_header_size, const Shader::Ampere::TrapGuardReader& guard_reader);
     size_t native_source_size{};
+    /// Lowers a native geometry program (OUT, the exit handler envelope, program counter loads).
+    bool native_geometry{};
     std::shared_ptr<const LoweredNativeCode> lowered_native;
     u32 native_source_header_size{};
     std::vector<Shader::Ampere::Instruction> native_trap_prefix;
