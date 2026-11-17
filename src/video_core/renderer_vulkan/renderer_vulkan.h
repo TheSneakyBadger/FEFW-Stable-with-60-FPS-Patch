@@ -133,6 +133,15 @@ private:
     u32 fsr_fg_unknown{}; ///< The presented buffer wasn't seen being drawn.
     u32 fsr_fg_fallback{}; ///< Its frame wasn't prepared: the newest prepared one was used.
     u64 dlssg_index{};     ///< NVIDIA DLSS frame generation: the last frame index presented.
+    /// NVIDIA DLSS frame generation rides through a few frames without motion (a frame the game
+    /// had none for, in the middle of play) instead of switching off and on again: the last
+    /// frame's inputs are tagged again with a reset, so it stays on.
+    bool dlssg_tagged_last{};  ///< The last frame presented was tagged.
+    const void* dlssg_last_generator{}; ///< The generator whose images were tagged last.
+    bool dlssg_reset_next{};   ///< The next tagged frame follows a ride: no history across it.
+    u32 dlssg_ride{};          ///< Frames ridden through in a row.
+    u32 dlssg_rides{};         ///< Rides (a gap ridden through) since the last report.
+    u32 dlssg_ride_frames{};   ///< Frames ridden through since the last report.
     f32 fsr_fg_wait_ms{};
     f32 fsr_fg_minute_wait_ms{};
     /// Frame generation held off while the worker is behind with the card's work: with many lit
