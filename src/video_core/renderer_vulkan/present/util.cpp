@@ -49,8 +49,10 @@ vk::Image CreateWrappedImage(MemoryAllocator& allocator, VkExtent2D dimensions, 
 
 void TransitionImageLayout(vk::CommandBuffer& cmdbuf, VkImage image, VkImageLayout target_layout,
                            VkImageLayout source_layout) {
+    // Transfer access too: callers clear or upload to the image right after this transition.
     constexpr VkFlags flags{VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT};
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT |
+                            VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
     const VkImageMemoryBarrier barrier{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .pNext = nullptr,
@@ -69,8 +71,8 @@ void TransitionImageLayout(vk::CommandBuffer& cmdbuf, VkImage image, VkImageLayo
             .layerCount = 1,
         },
     };
-    cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
-                           0, barrier);
+    cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER,
+                           vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, barrier);
 }
 
 void UploadImage(const Device& device, MemoryAllocator& allocator, Scheduler& scheduler,
