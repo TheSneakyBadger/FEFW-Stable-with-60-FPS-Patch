@@ -4,10 +4,14 @@
 #include "yuzu/fefw_dldsr.h"
 
 #ifdef _WIN32
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <optional>
 #include <string>
+
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <QString>
 #include <QTimer>
@@ -44,50 +48,68 @@ std::string Narrow(const wchar_t* text) {
     return QString::fromWCharArray(text).toStdString();
 }
 
-/// The factor's mode: the desktop's size times the factor's square root (4/3 for 1.78x, 3/2 for
-/// 2.25x), at the desktop's refresh rate if offered, otherwise the highest.
-std::optional<DEVMODEW> FindMode(const wchar_t* device, u32 factor) {
-    long num = 0;
-    long den = 1;
-    switch (factor) {
-    case 178:
-        num = 4;
-        den = 3;
-        break;
-    case 225:
-        num = 3;
-        den = 2;
-        break;
-    default:
-        return std::nullopt;
+/// The factor of a mode above the desktop's resolution: its pixel count over the desktop's, times
+/// 100 (178, 225; 120 to 400 with the older DSR), or 0 when it isn't one (another shape, smaller,
+/// interlaced, another colour depth).
+u32 FactorOf(const DEVMODEW& mode, const DEVMODEW& desktop) {
+    if (mode.dmPelsWidth <= desktop.dmPelsWidth || mode.dmPelsHeight <= desktop.dmPelsHeight ||
+        mode.dmBitsPerPel != desktop.dmBitsPerPel || (mode.dmDisplayFlags & DM_INTERLACED) != 0) {
+        return 0;
     }
+    // The same shape as the desktop, within 1%.
+    const u64 cross_a = u64{mode.dmPelsWidth} * desktop.dmPelsHeight;
+    const u64 cross_b = u64{mode.dmPelsHeight} * desktop.dmPelsWidth;
+    if ((cross_a > cross_b ? cross_a - cross_b : cross_b - cross_a) * 100 > cross_b) {
+        return 0;
+    }
+    const u64 pixels = u64{mode.dmPelsWidth} * mode.dmPelsHeight;
+    const u64 desktop_pixels = u64{desktop.dmPelsWidth} * desktop.dmPelsHeight;
+    return static_cast<u32>((pixels * 100 + desktop_pixels / 2) / desktop_pixels);
+}
+
+std::optional<DEVMODEW> DesktopMode(const wchar_t* device) {
     DEVMODEW desktop{};
     desktop.dmSize = sizeof(desktop);
     if (!EnumDisplaySettingsW(device, ENUM_REGISTRY_SETTINGS, &desktop)) {
         return std::nullopt;
     }
-    const long width = static_cast<long>(desktop.dmPelsWidth) * num / den;
-    const long height = static_cast<long>(desktop.dmPelsHeight) * num / den;
-    std::optional<DEVMODEW> best;
+    return desktop;
+}
+
+/// Calls `visit(mode, factor)` for each mode above the desktop's resolution.
+template <typename Visit>
+void ForEachLargerMode(const wchar_t* device, const DEVMODEW& desktop, Visit&& visit) {
     DEVMODEW mode{};
     mode.dmSize = sizeof(mode);
     for (DWORD i = 0; EnumDisplaySettingsW(device, i, &mode); ++i) {
-        const bool fits = std::labs(static_cast<long>(mode.dmPelsWidth) - width) <= 2 &&
-                          std::labs(static_cast<long>(mode.dmPelsHeight) - height) <= 2 &&
-                          mode.dmBitsPerPel == desktop.dmBitsPerPel &&
-                          (mode.dmDisplayFlags & DM_INTERLACED) == 0;
-        if (fits) {
-            const bool same_rate = mode.dmDisplayFrequency == desktop.dmDisplayFrequency;
-            const bool best_same_rate =
-                best && best->dmDisplayFrequency == desktop.dmDisplayFrequency;
-            if (!best || (same_rate && !best_same_rate) ||
-                (!best_same_rate && mode.dmDisplayFrequency > best->dmDisplayFrequency)) {
-                best = mode;
-            }
+        if (const u32 factor = FactorOf(mode, desktop); factor != 0) {
+            visit(mode, factor);
         }
         mode = DEVMODEW{};
         mode.dmSize = sizeof(mode);
     }
+}
+
+/// The factor's mode (within 2 of it, as drivers round the sizes), at the desktop's refresh rate if
+/// offered, otherwise the highest.
+std::optional<DEVMODEW> FindMode(const wchar_t* device, u32 factor) {
+    const auto desktop = DesktopMode(device);
+    if (!desktop) {
+        return std::nullopt;
+    }
+    std::optional<DEVMODEW> best;
+    ForEachLargerMode(device, *desktop, [&](const DEVMODEW& mode, u32 mode_factor) {
+        if ((mode_factor > factor ? mode_factor - factor : factor - mode_factor) > 2) {
+            return;
+        }
+        const bool same_rate = mode.dmDisplayFrequency == desktop->dmDisplayFrequency;
+        const bool best_same_rate =
+            best && best->dmDisplayFrequency == desktop->dmDisplayFrequency;
+        if (!best || (same_rate && !best_same_rate) ||
+            (!best_same_rate && mode.dmDisplayFrequency > best->dmDisplayFrequency)) {
+            best = mode;
+        }
+    });
     return best;
 }
 
@@ -112,10 +134,30 @@ std::vector<u32> AvailableFactors(QWidget* window) {
     if (!info) {
         return factors;
     }
-    for (const u32 factor : {178U, 225U}) {
-        if (FindMode(info->szDevice, factor)) {
+    const auto desktop = DesktopMode(info->szDevice);
+    if (!desktop) {
+        return factors;
+    }
+    std::vector<std::string> sizes;
+    ForEachLargerMode(info->szDevice, *desktop, [&](const DEVMODEW& mode, u32 factor) {
+        // One entry per factor (the sizes are rounded, so neighbours within 2 are the same).
+        const bool known = std::ranges::any_of(factors, [factor](u32 known_factor) {
+            return (known_factor > factor ? known_factor - factor : factor - known_factor) <= 2;
+        });
+        if (!known) {
             factors.push_back(factor);
+            sizes.push_back(fmt::format("{}x{} ({}.{:02}x)", mode.dmPelsWidth, mode.dmPelsHeight,
+                                        factor / 100, factor % 100));
         }
+    });
+    std::ranges::sort(factors);
+    // Once a run (the main screen asks each time it updates).
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        LOG_INFO(Frontend, "DLDSR: {} at {}x{}; larger resolutions offered: {}",
+                 Narrow(info->szDevice), desktop->dmPelsWidth, desktop->dmPelsHeight,
+                 sizes.empty() ? std::string{"none"} : fmt::format("{}", fmt::join(sizes, ", ")));
     }
     return factors;
 }
