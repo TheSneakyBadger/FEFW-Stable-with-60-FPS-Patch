@@ -32,7 +32,10 @@ void Stop();
 
 [[nodiscard]] bool Enabled();
 
-/// The stored data for this texture, exactly `size` bytes, if there is any.
+/// Whether there is an entry for this texture (it may still fail to load).
+[[nodiscard]] bool Contains(const Key& key);
+
+/// The stored data for this texture, exactly `size` bytes, if there is any. Any thread.
 [[nodiscard]] std::optional<std::vector<u8>> Load(const Key& key, u64 size);
 
 /// Stores the data (on the background thread).
