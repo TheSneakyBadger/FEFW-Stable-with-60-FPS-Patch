@@ -23,6 +23,16 @@
 #include "common/settings.h"
 #include "common/zstd_compression.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <winioctl.h>
+#else
+#include <climits>
+#include <cstdlib>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#endif
+
 namespace FefwTextureDiskCache {
 namespace {
 
@@ -158,6 +168,62 @@ void WorkerLoop() {
 
 } // Anonymous namespace
 
+bool OnHardDrive(const std::filesystem::path& folder) {
+#ifdef _WIN32
+    // The volume the folder is on, and whether its disk has a seek penalty (spins).
+    wchar_t volume[MAX_PATH]{};
+    if (!GetVolumePathNameW(folder.c_str(), volume, MAX_PATH)) {
+        return false;
+    }
+    std::wstring device = volume;
+    if (!device.empty() && device.back() == L'\\') {
+        device.pop_back();
+    }
+    if (device.size() != 2 || device[1] != L':') {
+        return false; // A mounted folder or a network share: assume it doesn't spin.
+    }
+    device = L"\\\\.\\" + device;
+    const HANDLE handle = CreateFileW(device.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      nullptr, OPEN_EXISTING, 0, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    STORAGE_PROPERTY_QUERY query{};
+    query.PropertyId = StorageDeviceSeekPenaltyProperty;
+    query.QueryType = PropertyStandardQuery;
+    DEVICE_SEEK_PENALTY_DESCRIPTOR penalty{};
+    DWORD returned = 0;
+    const bool known =
+        DeviceIoControl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), &penalty,
+                        sizeof(penalty), &returned, nullptr) &&
+        returned >= sizeof(penalty);
+    CloseHandle(handle);
+    return known && penalty.IncursSeekPenalty;
+#else
+    // /sys/dev/block/MAJOR:MINOR is the disk, or a partition inside the disk's folder.
+    struct stat info {};
+    std::error_code ec;
+    const fs::path existing = fs::exists(folder, ec) ? folder : folder.parent_path();
+    if (stat(existing.c_str(), &info) != 0) {
+        return false;
+    }
+    const fs::path block = fmt::format("/sys/dev/block/{}:{}", major(info.st_dev),
+                                       minor(info.st_dev));
+    const fs::path real = fs::canonical(block, ec);
+    if (ec) {
+        return false;
+    }
+    for (const fs::path& dir : {real, real.parent_path()}) {
+        std::ifstream file{dir / "queue" / "rotational"};
+        int rotational = 0;
+        if (file >> rotational) {
+            return rotational == 1;
+        }
+    }
+    return false;
+#endif
+}
+
 void Start() {
     Stop();
     u64 limit = 0;
@@ -189,6 +255,13 @@ void Start() {
     if (ec) {
         LOG_WARNING(Render_Vulkan, "Texture cache on disk: can't create {}: {}",
                     folder.string(), ec.message());
+        return;
+    }
+    // On a hard drive its reads and writes would slow the game's own (its maps, its movies), for
+    // freezes of seconds: the cache is off there.
+    if (OnHardDrive(folder)) {
+        LOG_INFO(Render_Vulkan, "Texture cache on disk: off, {} is on a hard drive",
+                 folder.string());
         return;
     }
     // Oldest first by the time each was last written or used, so the order survives restarts.
