@@ -14,6 +14,7 @@
 #include <string_view>
 #include <vector>
 #include "common/common_types.h"
+#include "shader_recompiler/frontend/ampere/geometry_exit.h"
 #include "shader_recompiler/frontend/ampere/instruction.h"
 #include "shader_recompiler/frontend/ampere/register_pressure.h"
 
@@ -33,8 +34,12 @@ struct LoweredProgram {
 // Lower only operations whose semantics are representable by the existing
 // Maxwell frontend. These are new instructions, not reinterpretations of the
 // native bytes. Scheduling/control words are added by the environment adapter.
+// `geometry_stage` allows the geometry-only instructions (OUT, the stage buffer read of a vertex
+// and the exit handler envelope); `native_code_address` is where the program's first instruction
+// is in guest memory, which a program counter load reads (ported from Lichii/Orchid).
 inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
-                                     std::span<const u32> verified_traps = {}, bool allow_register_spills = false) {
+                                     std::span<const u32> verified_traps = {}, bool allow_register_spills = false,
+                                     bool geometry_stage = false, u64 native_code_address = 0) {
     LoweredProgram result;
     struct Relocation { u32 output_index; s64 target; bool call = false; u32 output_target = ~0U; };
     std::vector<Relocation> relocations;
@@ -157,6 +162,15 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         return result;
     };
     if (code.empty() || code.size() > 65536) return fail(0, "invalid native program size");
+    // Geometry programs open with an exit handler installation: the program counter is loaded,
+    // the handler's address set up and every EXIT of the body goes there to finalize the output.
+    std::optional<GeometryExitEnvelope> geometry_exit;
+    if (code.front().Bits(0, 12) == 0x34e) {
+        if (!geometry_stage) return fail(0, "native program counter load outside geometry stage");
+        geometry_exit = AnalyzeGeometryExit(code);
+        if (!*geometry_exit)
+            return fail(geometry_exit->error_offset / sizeof(Instruction), geometry_exit->error);
+    }
     const auto branches_to = [&](u32 at, u32 pred, s64 destination) {
         if (at >= code.size()) return false;
         const auto& branch = code[at];
@@ -212,11 +226,16 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
     for (u32 index = 0; index < code.size(); ++index) {
         auto insn = code[index];
         result.source_instruction_offsets.push_back(static_cast<u32>(result.instructions.size()));
+        // The handler installation and the handler's own state restore have no Maxwell meaning:
+        // the body's EXITs branch straight to the handler's output finalization below.
+        if (geometry_exit && (index < GeometryExitSetupInstructions ||
+            index * sizeof(Instruction) == geometry_exit->handler + sizeof(Instruction)))
+            continue;
         u32 opcode = insn.Bits(0, 12);
         const u32 original_opcode = opcode;
         std::optional<u32> active_link;
         u32 active_entry = 0;
-        if (main_exited) {
+        if (main_exited && (!geometry_exit || index * sizeof(Instruction) < geometry_exit->handler)) {
             for (size_t call = 0; call < call_targets.size(); ++call) {
                 if (call_targets[call] <= index && call_targets[call] >= active_entry) {
                     active_entry = call_targets[call];
@@ -1568,10 +1587,21 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{width} << 48));
             break;
         }
-        case 0x919: case 0x9c3: { // S2R / S2UR thread and workgroup identities.
+        case 0x919: case 0x9c3: { // S2R / S2UR: special registers the Maxwell S2R handles.
+            // Same numbering as Maxwell: lane id (0), invocation id/info, Y direction, thread kill
+            // (17-19, 29; geometry programs read the invocation info), W scale factors (30-31),
+            // thread and workgroup ids, lane masks (56-60). Widened as in Lichii.
             const u32 special = insn.Bits(72, 8);
+            if (special == 132 && !insn.words[1] && insn.words[2] == (special << 8)) {
+                // SR_VARIABLE_RATE: without variable-rate shading every fragment is 1x1, its width
+                // and height in bytes 1 and 2.
+                const u32 target = opcode == 0x9c3 ? uniform_register(static_cast<u32>(dest)) : static_cast<u32>(dest);
+                if (target == ~0U) return fail(index, "native uniform special destination");
+                mov_imm(target, 0x00010100);
+                break;
+            }
             if (insn.words[1] || insn.words[2] != (special << 8) ||
-                (special != 0 && special != 33 && special != 34 && special != 35 &&
+                (special != 0 && (special < 17 || special > 19) && (special < 29 || special > 35) &&
                  special != 37 && special != 38 && special != 39 &&
                  special != 56 && special != 57 && special != 58 && special != 59 && special != 60))
                 return fail(index, "native special register");
@@ -3365,7 +3395,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                     return fail(index, "native branch bypasses return linkage");
             }
             emit(0xe32000000007000fULL);
-            bool complete = true;
+            bool complete = !geometry_exit;
             for (u32 target : call_targets) complete &= target <= index;
             if (complete) return finish(index);
             break;
@@ -3660,7 +3690,67 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                  0xe29000000007000fULL);
             break;
         }
+        case 0x324: case 0x924: { // OUT.EMIT / OUT.CUT (geometry)
+            if (!geometry_stage) return fail(index, "native geometry output outside geometry stage");
+            const u32 type = insn.Bits(78, 2);
+            if (insn.words[2] & ~0xc000U)
+                return fail(index, "native geometry output mode");
+            if (type == 0 && (opcode != 0x324 || dest != 255 || insn.words[1] != 255))
+                return fail(index, "native geometry finalization mode");
+            const u64 handle = u64{insn.Bits(24, 8)} << 8;
+            const u64 flags = u64{type} << 39;
+            if (opcode == 0x324) {
+                if (insn.words[1] & ~0xffU)
+                    return fail(index, "native geometry output stream");
+                emit(base(0xfbe0000000000000ULL) | handle | (u64{insn.words[1]} << 20) | flags);
+            } else {
+                if (insn.words[1] > 0x7ffff)
+                    return fail(index, "native geometry output stream");
+                emit(base(0xf6e0000000000000ULL) | handle | (u64{insn.words[1]} << 20) | flags);
+            }
+            break;
+        }
+        case 0x34e: { // Program counter load (geometry exit handler installation)
+            if (!geometry_stage) return fail(index, "unsupported native opcode");
+            if (!native_code_address || insn.Bits(24, 8) || insn.words[1] || insn.words[2] ||
+                (dest != 255 && dest + 1 >= reserved_register) || native_predicate != 7)
+                return fail(index, "native program counter load mode");
+            if (dest == 255) break;
+            const u64 address = native_code_address + u64{index} * sizeof(Instruction);
+            mov_imm(static_cast<u32>(dest), static_cast<u32>(address));
+            mov_imm(static_cast<u32>(dest) + 1, static_cast<u32>(address >> 32));
+            break;
+        }
+        case 0x923: { // ISBERD: a geometry program reads its input vertex handles from the stage buffer
+            if (!geometry_stage) return fail(index, "unsupported native opcode");
+            if (insn.words[1] || insn.words[2] || insn.Bits(24, 8) == 255)
+                return fail(index, "native geometry stage buffer read mode");
+            // Maxwell ALD takes the vertex index directly, so the handle is the index: MOV Rd, Ra.
+            emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{insn.Bits(24, 8)} << 20));
+            break;
+        }
         case 0x94d: { // EXIT
+            if (geometry_exit && index * sizeof(Instruction) < geometry_exit->handler) {
+                // A body EXIT goes to the exit handler, which finalizes the output and exits.
+                relocations.push_back({static_cast<u32>(result.instructions.size()),
+                                       static_cast<s64>(geometry_exit->handler / sizeof(Instruction))});
+                emit(0xe24000000000000fULL | predicate);
+                const bool pending_main_branch = std::any_of(
+                    relocations.begin(), relocations.end(), [&](const Relocation& relocation) {
+                        return !relocation.call && relocation.target > s64{index} &&
+                               relocation.target !=
+                                   static_cast<s64>(geometry_exit->handler / sizeof(Instruction));
+                    });
+                if (geometry_exit->has_returns && native_predicate == 7 && !main_exited &&
+                    !pending_main_branch && !call_targets.empty()) {
+                    for (u32 target : call_targets) {
+                        if (target <= index)
+                            return fail(index, "native call target overlaps main program");
+                    }
+                    main_exited = true;
+                }
+                break;
+            }
             if (insn.Bits(84, 2)) return fail(index, "native special EXIT mode");
             const u32 exit_condition = insn.Bits(87, 4);
             if (exit_condition != 7 && native_predicate != 7) {
@@ -3685,6 +3775,14 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             const bool pending_main_branch = std::any_of(relocations.begin(), relocations.end(),
                 [&](const Relocation& relocation) { return !relocation.call && relocation.target > index; });
             if (pending_main_branch) break;
+            if (main_exited && geometry_exit && index * sizeof(Instruction) > geometry_exit->handler) {
+                // The geometry exit handler's own EXIT ends the program after its library functions.
+                bool complete = std::none_of(relocations.begin(), relocations.end(),
+                    [&](const Relocation& relocation) { return relocation.target > s64{index}; });
+                for (u32 target : call_targets) complete &= target <= index;
+                if (complete) return finish(index);
+                break;
+            }
             if (main_exited) return fail(index, "native library exits without returning");
             for (u32 target : call_targets) {
                 if (target <= index) return fail(index, "native call target overlaps main program");

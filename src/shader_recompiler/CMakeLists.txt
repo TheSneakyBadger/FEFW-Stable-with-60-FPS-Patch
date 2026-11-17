@@ -63,6 +63,7 @@ add_library(shader_recompiler STATIC
     frontend/ampere/classify.h
     frontend/ampere/flow.cpp
     frontend/ampere/flow.h
+    frontend/ampere/geometry_exit.h
     frontend/ampere/instruction.h
     frontend/ampere/isa.h
     frontend/ampere/lower_to_maxwell.h
