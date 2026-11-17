@@ -91,8 +91,23 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         // 2.4 GB and 0.8 GB below it. Long sessions crept towards the limit (where other
         // allocations and the driver push it over and performance drops); this keeps a margin
         // that grows with the card. 8 GB cards change little.
-        expected_memory = (std::min)(expected_memory, static_cast<u64>(device_local_memory) / 10 * 7);
-        critical_memory = (std::min)(critical_memory, static_cast<u64>(device_local_memory) / 20 * 17);
+        // Fortune's Eden: on cards with 10 GiB or more to use, faster above 85% and hard above
+        // 92%. At 70%, a 16 GB card cleaned up with 3 GB still free, and the textures of an area
+        // visited a minute before were converted again on the way back (#63). The margin left
+        // (about 1 GB there) still covers the driver's and frame generation's own allocations.
+        const bool large_card = device_local_memory >= static_cast<s64>(10_GiB);
+        expected_memory = (std::min)(expected_memory,
+                                     static_cast<u64>(device_local_memory) / 20 *
+                                         (large_card ? 17 : 14));
+        critical_memory = (std::min)(critical_memory,
+                                     static_cast<u64>(device_local_memory) / 100 *
+                                         (large_card ? 92 : 85));
+        if (large_card) {
+            expected_memory = (std::max)(expected_memory,
+                                         static_cast<u64>(device_local_memory) / 20 * 17);
+            critical_memory = (std::max)(critical_memory,
+                                         static_cast<u64>(device_local_memory) / 100 * 92);
+        }
         critical_memory = (std::max)(critical_memory, expected_memory + 256_MiB);
     } else {
         expected_memory = DEFAULT_EXPECTED_MEMORY + 512_MiB;
