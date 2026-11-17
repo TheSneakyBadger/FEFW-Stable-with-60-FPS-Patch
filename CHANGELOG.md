@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.7.5
+
+Much less stutter in places you've been before, with textures kept on disk, steadier long sessions, and DLDSR in fullscreen.
+
+#### 💾 Texture cache on disk
+
+- **Places you've been load without stutter** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). The game's textures are ASTC, which PC graphics cards can't use, so each one is converted on the GPU the first time it's seen, and again whenever it was cleaned out of video memory. Converted textures are now kept on disk (in `user\cache\textures`), so a texture seen before is loaded instead. Choose the size with **Texture cache on disk** on the home screen: **2 GB** (default), **4 GB**, **8 GB** or **Off**. The oldest are dropped once it's full. Most useful on graphics cards with less video memory.
+- Textures are read from disk in the background and uploaded a few at a time, so arriving somewhere doesn't hold up the frame.
+
+#### 🧹 Video memory
+
+- **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). Images from earlier scenes (and dungeons) unused for 5 minutes are now cleaned up once memory is getting full, instead of being kept until the hard limit while the game's own textures were evicted and loaded again. The sky in use is still kept.
+- **Cards with 10 GB or more** start cleaning up at 85% of their video memory (92% for the hard limit), so more stays loaded.
+- **Bursts of new textures no longer stall the frame:** spare video memory is used instead of waiting for the GPU every few textures, staying below the cleanup level.
+
+#### 🖥️ DLDSR in fullscreen
+
+- **DLDSR (fullscreen)** on the home screen: with NVIDIA's DLDSR on (*NVIDIA app → Graphics → DSR - Factors*), choose **1.78x** or **2.25x**, and fullscreen plays at that resolution. The upscaler draws to it and NVIDIA's AI filter scales it down to your monitor: with DLSS or DLAA, the sharpest picture. The desktop goes back to its own resolution when you leave fullscreen, switch to another window or close Fortune's Eden. Windows only.
+- **On AMD cards it's VSR** (*AMD Software → Display → Virtual Super Resolution*), with every factor the driver offers.
+- **1X resolution is recommended:** at other resolutions, the home screen says why and offers a **Use 1X** button.
+- The home screen's settings are in three rows, so nothing is cut off.
+
+#### 🔧 Fixes ported from Lichii and Orchid
+
+- **Geometry shaders are drawn** instead of the draws being skipped (ported from [Lichii](https://github.com/zortos293/Lichii) and [Orchid](https://github.com/MythosOfs/Orchid), GPL-3.0), with fixes for them on AMD and Intel cards.
+- **Texture cache and memory fixes:** cleanups that freed nothing, images over memory the CPU changed, uploads and copies seen by every stage that uses them, and bounds checks in the texture decoders (which could write into other images on AMD).
+- Faster texture unswizzling (from Eglantine).
+
+#### 🔊 Audio
+
+- **The Volume setting is back** in *Settings → Audio* (0–200%) ([#72](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/72)).
+
+Everything else is as in [v1.7.4](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.4).
+
 ## v1.7.4
 
 Multi frame generation (3x and 4x) for AMD FSR 3.1 and NVIDIA DLSS, and much smoother frame generation.

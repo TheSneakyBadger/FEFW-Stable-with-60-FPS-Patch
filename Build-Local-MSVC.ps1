@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.4 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -476,6 +476,19 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.5:
+- Texture cache on disk (home screen: 2 GB by default, Off, 4 GB or 8 GB): textures, once
+  converted for your graphics card, are kept in user\cache\textures, so places you've been
+  load without stutter (#63). Most useful on cards with less video memory.
+- Steadier long sessions: video memory from earlier scenes is cleaned up, cards with 10 GB or
+  more keep more loaded, and bursts of new textures no longer stall the frame (#63).
+- DLDSR (fullscreen) on the home screen: with NVIDIA's DLDSR on (NVIDIA app > Graphics >
+  DSR - Factors), 1.78x or 2.25x makes fullscreen play at that resolution, for a sharper
+  picture with DLSS or DLAA. VSR on AMD cards. The desktop goes back to its own resolution
+  when you leave fullscreen or switch windows. 1X resolution is recommended (Use 1X button).
+- Fixes ported from Lichii and Orchid: geometry shaders are drawn, texture and memory fixes.
+- The Volume setting is back in Settings > Audio (#72).
 
 New in v1.7.4:
 - Multi frame generation: 2x, 3x or 4x (Frames on the home screen, Multi frame generation in
