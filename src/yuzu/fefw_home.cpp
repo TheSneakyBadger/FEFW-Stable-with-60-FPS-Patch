@@ -507,24 +507,9 @@ void FefwHome::BuildGamePage(QWidget* page) {
         tr("Keeps the game's textures, once converted for your graphics card, on disk (in "
            "user/cache/textures), so a texture seen before is loaded instead of converted again. "
            "The oldest are dropped once it's full. Takes effect when the game starts."));
-    {
-        QVBoxLayout* const column = new QVBoxLayout;
-        column->setSpacing(4);
-        column->addWidget(caption(tr("Texture cache on disk")));
-        column->addWidget(texture_cache_box);
-        QLabel* const note = new QLabel(
-            tr("Stores textures so places you've been load without stutter. Most useful on "
-               "graphics cards with less video memory."),
-            right);
-        note->setObjectName(QStringLiteral("fefwHomeCaption"));
-        note->setWordWrap(true);
-        note->setMaximumWidth(240);
-        column->addWidget(note);
-        switches->addLayout(column);
-    }
     switches->addStretch();
 
-    // Second row: upscaling, frame generation and the button icons.
+    // Second row: upscaling and frame generation.
     QHBoxLayout* const choices = new QHBoxLayout;
     choices->setSpacing(14);
     choices->addLayout(labelled(tr("Upscaler"), upscaler_box));
@@ -592,12 +577,30 @@ void FefwHome::BuildGamePage(QWidget* page) {
         dldsr_layout->addWidget(dldsr_box);
     }
     dldsr_column->hide();
-    choices->addWidget(dldsr_column);
-    choices->addLayout(labelled(tr("Button icons"), button_icons_box));
     for (QComboBox* const box : {upscaler_box, quality_box, frame_gen_box, button_icons_box}) {
         box->setMinimumWidth(150);
     }
     choices->addStretch();
+
+    // Third row: the display and the texture cache on disk, with a note on who it helps most.
+    QHBoxLayout* const extras = new QHBoxLayout;
+    extras->setSpacing(14);
+    extras->addWidget(dldsr_column);
+    extras->addLayout(labelled(tr("Button icons"), button_icons_box));
+    extras->addLayout(labelled(tr("Texture cache on disk"), texture_cache_box));
+    {
+        QLabel* const note = new QLabel(
+            tr("Stores textures so places you've been load without stutter. Most useful on "
+               "graphics cards with less video memory."),
+            right);
+        note->setObjectName(QStringLiteral("fefwHomeCaption"));
+        note->setWordWrap(true);
+        note->setMinimumWidth(200);
+        note->setMaximumWidth(320);
+        note->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
+        extras->addWidget(note, 0, Qt::AlignBottom);
+    }
+    extras->addStretch();
 
     QFrame* const divider = new QFrame(right);
     divider->setObjectName(QStringLiteral("fefwHomeDivider"));
@@ -617,6 +620,7 @@ void FefwHome::BuildGamePage(QWidget* page) {
     panel_layout->setSpacing(14);
     panel_layout->addLayout(switches);
     panel_layout->addLayout(choices);
+    panel_layout->addLayout(extras);
     panel_layout->addWidget(status_label);
     panel_layout->addWidget(divider);
     panel_layout->addLayout(buttons);
