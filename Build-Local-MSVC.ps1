@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.1 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -476,6 +476,10 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.5.1:
+- No more freezes on hard drives: the texture cache on disk is off when Fortune's Eden is on a
+  hard drive (its reads and writes slowed the game's own). It works as before on an SSD.
 
 New in v1.7.5:
 - Texture cache on disk (home screen: 2 GB by default, Off, 4 GB or 8 GB): textures, once

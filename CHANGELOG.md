@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.5.1
+
+A fix for freezes on hard drives in v1.7.5.
+
+- **No more freezes on hard drives.** v1.7.5's texture cache on disk reads and writes many small files while you explore, and on a hard drive the game's own reads (its maps and movies) had to wait behind them, for freezes of a few seconds. When Fortune's Eden is on a hard drive the cache is now off, and the home screen says so. On an SSD it works as before.
+
+Everything else is as in [v1.7.5](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5).
+
 ## v1.7.5
 
 Much less stutter in places you've been before, with textures kept on disk, steadier long sessions, and DLDSR in fullscreen.
