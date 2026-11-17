@@ -28,6 +28,7 @@
 #include "video_core/renderer_vulkan/vk_fsr3_frame_generator.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
+#include "video_core/fefw_texture_disk_cache.h"
 
 namespace Settings {
 struct ResolutionScalingInfo;
@@ -60,6 +61,7 @@ public:
                                  RenderPassCache& render_pass_cache_,
                                  DescriptorPool& descriptor_pool,
                                  ComputePassDescriptorQueue& compute_pass_descriptor_queue);
+    ~TextureCacheRuntime();
 
     void Finish();
 
@@ -253,6 +255,16 @@ public:
         u64 bytes; ///< Size of the decode image (all levels and layers, RGBA8).
     };
     std::deque<PendingTranscode> pending_transcodes;
+    /// Converted textures being read back for the texture cache on disk.
+    struct PendingDiskSave {
+        u64 tick;
+        vk::Buffer buffer;
+        FefwTextureDiskCache::Key key;
+        u64 size;
+    };
+    std::deque<PendingDiskSave> pending_disk_saves;
+    u64 pending_disk_save_bytes = 0;
+    u64 disk_cache_log_frame = 0;
     u64 pending_transcode_bytes = 0;
     u64 free_transcode_bytes = 0;
     u64 diagnostics_frame = 0;

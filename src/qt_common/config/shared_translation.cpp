@@ -217,6 +217,12 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "(sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll) and "
               "nvngx_dlssg.dll in the user folder's streamline folder; AMD's is used where it "
               "can't run.\nTakes effect when a game starts. Experimental."));
+    INSERT(Settings, texture_disk_cache, tr("Texture cache on disk:"),
+           tr("Keeps the game's textures, once converted for your graphics card, on disk, so a "
+              "texture seen before (an area you come back to, or in a later session) is loaded "
+              "instead of converted again, which can stutter. Most useful on cards with less video "
+              "memory, which have to clear textures out more often. Stored in user/cache/textures, "
+              "oldest dropped first. Takes effect when the game starts."));
     INSERT(Settings, mfg_multiplier, tr("Multi frame generation:"),
            tr("How many frames frame generation shows for each of the game's: 2x makes one between "
               "each two, 3x two and 4x three.\nAMD FSR 3.1: any card.\nNVIDIA DLSS: NVIDIA allows "
@@ -519,6 +525,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(FrameGeneration, AmdFsr3, tr("AMD FSR 3.1 (any card)")),
                               PAIR(FrameGeneration, NvidiaDlss,
                                    tr("NVIDIA DLSS (GeForce RTX 40/50)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::TextureDiskCache>::Index(),
+                          {
+                              PAIR(TextureDiskCache, Off, tr("Off")),
+                              PAIR(TextureDiskCache, Gb2, tr("2 GB")),
+                              PAIR(TextureDiskCache, Gb4, tr("4 GB")),
+                              PAIR(TextureDiskCache, Gb8, tr("8 GB")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::MfgMultiplier>::Index(),
                           {
