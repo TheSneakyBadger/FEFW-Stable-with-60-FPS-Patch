@@ -441,6 +441,28 @@ void FefwHome::BuildGamePage(QWidget* page) {
     status_label = new QLabel(right);
     status_label->setObjectName(QStringLiteral("fefwHomeStatus"));
     status_label->setWordWrap(true);
+    // At a resolution other than 1X: the recommended setup (1X with the upscaler, and DLDSR) is a
+    // click away.
+    scale_hint = new QWidget(right);
+    {
+        QHBoxLayout* const hint_layout = new QHBoxLayout(scale_hint);
+        hint_layout->setContentsMargins(0, 0, 0, 0);
+        hint_layout->setSpacing(10);
+        scale_hint_label = new QLabel(scale_hint);
+        scale_hint_label->setObjectName(QStringLiteral("fefwHomeStatus"));
+        scale_hint_label->setWordWrap(true);
+        QPushButton* const use_1x = new QPushButton(tr("Use 1X"), scale_hint);
+        use_1x->setCursor(Qt::PointingHandCursor);
+        use_1x->setMinimumHeight(30);
+        hint_layout->addWidget(scale_hint_label, 1);
+        hint_layout->addWidget(use_1x, 0, Qt::AlignVCenter);
+        connect(use_1x, &QPushButton::clicked, this, [this] {
+            Settings::values.resolution_setup.SetValue(Settings::ResolutionSetup::Res1X);
+            emit SettingChanged();
+            UpdateStatusLine();
+        });
+    }
+    scale_hint->hide();
 
     QPushButton* const performance = new QPushButton(tr("Performance Settings"), right);
     QPushButton* const game_settings = new QPushButton(tr("Game Settings"), right);
@@ -623,6 +645,7 @@ void FefwHome::BuildGamePage(QWidget* page) {
     panel_layout->addLayout(switches);
     panel_layout->addLayout(choices);
     panel_layout->addLayout(extras);
+    panel_layout->addWidget(scale_hint);
     panel_layout->addWidget(status_label);
     panel_layout->addWidget(divider);
     panel_layout->addLayout(buttons);
@@ -906,8 +929,6 @@ void FefwHome::UpdateStatusLine() {
     QStringList notes;
     if (upscaler == Settings::Upscaler::GameDlss) {
         notes << tr("The game's own DLSS always draws at Performance.");
-    } else if (!at_1x) {
-        notes << tr("Upscaler quality applies at 1X resolution (Performance at this one).");
     }
 #ifdef EGLANTINE_STREAMLINE
     if (Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
@@ -980,6 +1001,8 @@ void FefwHome::UpdateStatusLine() {
         dldsr_caption->setText(FefwDldsr::UsesAmdVsr(this) ? tr("VSR (fullscreen)")
                                                             : tr("DLDSR (fullscreen)"));
         dldsr_column->setVisible(!factors.empty());
+        UpdateScaleHint(upscaler != Settings::Upscaler::GameDlss && !at_1x,
+                        upscaler == Settings::Upscaler::NvidiaDlss, !factors.empty());
     }
     const QSignalBlocker texture_cache_blocker{texture_cache_box};
     texture_cache_box->setCurrentIndex(texture_cache_box->findData(
@@ -995,6 +1018,26 @@ void FefwHome::UpdateStatusLine() {
                                    Settings::FrameGeneration::Off &&
                                Settings::values.mfg_frame_cap.GetValue() ==
                                    Settings::MfgFrameCap::Display);
+}
+
+// The recommended setup: 1X, where the upscaler rebuilds the detail at the chosen quality.
+void FefwHome::UpdateScaleHint(bool show, bool dlss, bool dldsr_offered) {
+    if (show) {
+        const QString name = dlss ? tr("DLSS") : tr("FSR");
+        QString text = tr("Recommended: 1X resolution. %1 then rebuilds the detail at the quality "
+                          "you choose, for much less than a higher resolution costs (at this one "
+                          "it runs at Performance).")
+                           .arg(name);
+        if (dldsr_offered) {
+            text += QLatin1Char(' ') +
+                    tr("For an even sharper picture, add %1 2.25x.")
+                        .arg(FefwDldsr::UsesAmdVsr(this) ? tr("VSR") : tr("DLDSR"));
+        }
+        scale_hint_label->setText(text);
+        scale_hint->show();
+    } else {
+        scale_hint->hide();
+    }
 }
 
 void FefwHome::OfferMfgUnlocker() {
