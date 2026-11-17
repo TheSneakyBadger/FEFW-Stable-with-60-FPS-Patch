@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <vector>
 
@@ -23,6 +24,10 @@ struct Key {
     u32 layers;
     u32 encoding;   ///< What the GPU encoded to (1: BC1, 3: BC3, 7: BC7).
 };
+
+/// Whether the folder is on a hard drive (a spinning disk), where the cache is off: its reads and
+/// writes would slow the game's own. Unknown (a network share, no answer): false.
+[[nodiscard]] bool OnHardDrive(const std::filesystem::path& folder);
 
 /// Reads the setting and indexes the folder (when the renderer starts). 0 bytes: off.
 void Start();
