@@ -301,6 +301,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // where something has to go: below it they cost nothing, and an image the game drew once
         // (a sky, #64) isn't put at risk for no gain.
         static constexpr u64 CURRENT_SCENE_MAX_FRAMES = 18000;
+        const bool stale_over_expected =
+            high_priority_mode && frame_tick > CURRENT_SCENE_MAX_FRAMES &&
+            image.last_used_frame < frame_tick - CURRENT_SCENE_MAX_FRAMES;
         const u64 current_scene_start =
             high_priority_mode && frame_tick > CURRENT_SCENE_MAX_FRAMES
                 ? (std::max)(scene_start_frame, frame_tick - CURRENT_SCENE_MAX_FRAMES)
@@ -326,7 +329,11 @@ u32 TextureCache<P>::RunGarbageCollector() {
         }
         static constexpr u64 DRAWN_ONCE_READ_FRAMES = 600;
         static constexpr u64 DRAWN_ONCE_MAX_BYTES = 16_MiB;
-        if (keeps_gpu_contents && !aggressive_mode &&
+        // Fortune's Eden: not once unused for 5 minutes over the expected level, as above. After
+        // a dungeon, its images drawn once (up to 16 MiB each) stayed for good: 3.2 GB of
+        // GPU-drawn images, 2.2 GB unused for a minute, back in town an hour later, while the
+        // cleanups evicted the town's textures every few seconds (#63, test76e).
+        if (keeps_gpu_contents && !aggressive_mode && !stale_over_expected &&
             image.guest_size_bytes <= DRAWN_ONCE_MAX_BYTES &&
             image.last_used_frame >= image.last_gpu_write_frame + DRAWN_ONCE_READ_FRAMES) {
             ++num_iterations;
