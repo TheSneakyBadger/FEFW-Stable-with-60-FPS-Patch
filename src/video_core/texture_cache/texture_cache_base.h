@@ -89,9 +89,6 @@ using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Co
 
 class TextureCacheChannelInfo : public ChannelInfo {
 public:
-    /// Device pages this cache ever registered images on: writes elsewhere skip its lock (Lichii).
-    VideoCommon::PageFilter page_filter;
-
     TextureCacheChannelInfo() = delete;
     TextureCacheChannelInfo(Tegra::Control::ChannelState& state) noexcept;
     TextureCacheChannelInfo(const TextureCacheChannelInfo& state) = delete;
@@ -168,6 +165,10 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     };
 
 public:
+    /// Device pages this cache ever registered or tracked images on: CPU writes and the GPU's own
+    /// cached writes elsewhere skip its lock (Lichii).
+    VideoCommon::PageFilter page_filter;
+
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
     ~TextureCache();
 
