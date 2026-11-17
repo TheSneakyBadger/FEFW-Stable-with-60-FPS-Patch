@@ -2171,7 +2171,7 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 decode->image_id = image_id;
                 decode->sized_by_data = true;
                 async_decodes.push_back(std::move(decode));
-                texture_decode_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
+                disk_cache_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
                     auto data = plan.load();
                     std::unique_lock lock{decode_ptr->mutex};
                     if (data) {
@@ -2183,6 +2183,8 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                         decode_ptr->failed = true;
                     }
                     decode_ptr->complete = true;
+                    // With the mutex held: once it's released the context may be freed.
+                    decode_ptr->ready.notify_all();
                 });
                 return;
             }
@@ -2461,6 +2463,9 @@ void TextureCache<P>::QueueAsyncUnswizzle(Image& image, ImageId image_id) {
 
 template <class P>
 void TextureCache<P>::TickAsyncDecode() {
+    // Draws may wait up to 4 ms a frame in all for textures being read from disk (most take a
+    // millisecond or two); past that they're drawn when ready, as before.
+    disk_cache_wait_left = std::chrono::milliseconds{4};
     bool has_uploads{};
     // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
     // frame; the rest wait for the next frames. Loading an area finished hundreds at once, and
@@ -3703,6 +3708,53 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
 }
 
 template <class P>
+void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
+    if (False(image.flags & ImageFlagBits::IsDecoding)) {
+        return;
+    }
+    const auto it = std::ranges::find_if(async_decodes, [image_id](const auto& decode) {
+        return decode->image_id == image_id && decode->sized_by_data;
+    });
+    if (it == async_decodes.end()) {
+        return;
+    }
+    AsyncDecodeContext* const decode = it->get();
+    std::unique_lock lock{decode->mutex};
+    if (decode->cancelled) {
+        return;
+    }
+    if (!decode->complete) {
+        if (disk_cache_wait_left <= std::chrono::nanoseconds::zero()) {
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        decode->ready.wait_for(lock, disk_cache_wait_left,
+                               [decode] { return decode->complete.load(); });
+        disk_cache_wait_left -= std::chrono::steady_clock::now() - start;
+        if (!decode->complete) {
+            return;
+        }
+    }
+    image.flags &= ~ImageFlagBits::IsDecoding;
+    if (decode->failed) {
+        // Gone or damaged: converted on the GPU now, as without the cache.
+        lock.unlock();
+        async_decodes.erase(it);
+        auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+        UploadImageContents(image, staging);
+        runtime.InsertUploadMemoryBarrier();
+        return;
+    }
+    auto staging = runtime.UploadStagingBuffer(decode->decoded_data.size());
+    std::memcpy(staging.mapped_span.data(), decode->decoded_data.data(),
+                decode->decoded_data.size());
+    image.UploadMemory(staging, decode->copies);
+    lock.unlock();
+    async_decodes.erase(it);
+    runtime.InsertUploadMemoryBarrier();
+}
+
+template <class P>
 void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool invalidate) {
     Image& image = slot_images[image_id];
     if (invalidate) {
@@ -3712,6 +3764,7 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         }
     } else {
         RefreshContents(image, image_id);
+        WaitDiskCacheLoad(image, image_id);
         if (!image.aliased_images.empty()) {
             SynchronizeAliases(image_id);
         }
