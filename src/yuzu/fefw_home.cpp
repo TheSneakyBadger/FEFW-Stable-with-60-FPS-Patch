@@ -566,14 +566,16 @@ void FefwHome::BuildGamePage(QWidget* page) {
         tr("In fullscreen, plays at a DLDSR resolution: the game is drawn larger than your monitor "
            "and NVIDIA's AI filter scales it down, so it looks sharper. Works with DLSS and DLAA "
            "(DLSS Quality is a good match). Shown once DLDSR is turned on in the NVIDIA app "
-           "(Graphics, DSR - Factors). Takes more of your graphics card. The desktop goes back "
+           "(Graphics, DSR - Factors). On AMD cards it's VSR (Virtual Super Resolution in AMD "
+           "Software, Display). Takes more of your graphics card. The desktop goes back "
            "to its own resolution when you leave fullscreen or switch to another window."));
     dldsr_column = new QWidget(right);
     {
         QVBoxLayout* const dldsr_layout = new QVBoxLayout(dldsr_column);
         dldsr_layout->setContentsMargins(0, 0, 0, 0);
         dldsr_layout->setSpacing(4);
-        dldsr_layout->addWidget(caption(tr("DLDSR (fullscreen)")));
+        dldsr_caption = caption(tr("DLDSR (fullscreen)"));
+        dldsr_layout->addWidget(dldsr_caption);
         dldsr_layout->addWidget(dldsr_box);
     }
     dldsr_column->hide();
@@ -975,6 +977,8 @@ void FefwHome::UpdateStatusLine() {
         }
         const int current = dldsr_box->findData(UISettings::values.fefw_dldsr.GetValue());
         dldsr_box->setCurrentIndex(current >= 0 ? current : 0);
+        dldsr_caption->setText(FefwDldsr::UsesAmdVsr(this) ? tr("VSR (fullscreen)")
+                                                            : tr("DLDSR (fullscreen)"));
         dldsr_column->setVisible(!factors.empty());
     }
     const QSignalBlocker texture_cache_blocker{texture_cache_box};

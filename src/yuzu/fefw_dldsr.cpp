@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -46,6 +47,25 @@ std::optional<MONITORINFOEXW> MonitorOf(HWND hwnd) {
 
 std::string Narrow(const wchar_t* text) {
     return QString::fromWCharArray(text).toStdString();
+}
+
+/// The graphics card driving the monitor (its name, as Windows reports it).
+std::wstring AdapterOf(const wchar_t* device) {
+    DISPLAY_DEVICEW adapter{};
+    adapter.cb = sizeof(adapter);
+    for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &adapter, 0); ++i) {
+        if (std::wstring_view{adapter.DeviceName} == device) {
+            return adapter.DeviceString;
+        }
+        adapter = DISPLAY_DEVICEW{};
+        adapter.cb = sizeof(adapter);
+    }
+    return {};
+}
+
+bool IsAmdAdapter(const std::wstring& adapter) {
+    return adapter.find(L"AMD") != std::wstring::npos ||
+           adapter.find(L"Radeon") != std::wstring::npos;
 }
 
 /// The factor of a mode above the desktop's resolution: its pixel count over the desktop's, times
@@ -150,24 +170,38 @@ std::vector<u32> AvailableFactors(QWidget* window) {
                                         factor / 100, factor % 100));
         }
     });
-    // Only DLDSR's two factors are offered (the older DSR's others are left out).
+    const std::wstring adapter = AdapterOf(info->szDevice);
+    const bool amd = IsAmdAdapter(adapter);
+    // NVIDIA (and anything else): only DLDSR's two factors (the older DSR's are left out). AMD:
+    // every VSR factor the driver offers.
     std::vector<u32> dldsr;
-    for (const u32 wanted : {178U, 225U}) {
-        if (std::ranges::any_of(factors, [wanted](u32 factor) {
-                return (factor > wanted ? factor - wanted : wanted - factor) <= 2;
-            })) {
-            dldsr.push_back(wanted);
+    if (amd) {
+        dldsr = factors;
+        std::ranges::sort(dldsr);
+    } else {
+        for (const u32 wanted : {178U, 225U}) {
+            if (std::ranges::any_of(factors, [wanted](u32 factor) {
+                    return (factor > wanted ? factor - wanted : wanted - factor) <= 2;
+                })) {
+                dldsr.push_back(wanted);
+            }
         }
     }
     // Once a run (the main screen asks each time it updates).
     static bool logged = false;
     if (!logged) {
         logged = true;
-        LOG_INFO(Frontend, "DLDSR: {} at {}x{}; larger resolutions offered: {}",
-                 Narrow(info->szDevice), desktop->dmPelsWidth, desktop->dmPelsHeight,
+        LOG_INFO(Frontend, "DLDSR: {} ({}{}) at {}x{}; larger resolutions offered: {}",
+                 Narrow(info->szDevice), Narrow(adapter.c_str()), amd ? ", AMD VSR" : "",
+                 desktop->dmPelsWidth, desktop->dmPelsHeight,
                  sizes.empty() ? std::string{"none"} : fmt::format("{}", fmt::join(sizes, ", ")));
     }
     return dldsr;
+}
+
+bool UsesAmdVsr(QWidget* window) {
+    const auto info = MonitorOf(WindowOf(window));
+    return info && IsAmdAdapter(AdapterOf(info->szDevice));
 }
 
 void Apply(QWidget* window, u32 factor, bool borderless) {
@@ -240,6 +274,10 @@ bool RecentlySwitched() {
 
 std::vector<u32> AvailableFactors(QWidget*) {
     return {};
+}
+
+bool UsesAmdVsr(QWidget*) {
+    return false;
 }
 
 void Apply(QWidget*, u32, bool) {}
