@@ -175,6 +175,7 @@ DeviceMemoryManager<Traits>::DeviceMemoryManager(const DeviceMemory& device_memo
     , device_inter{nullptr}
     , compressed_device_addr(Kernel::Board::Nintendo::Nx::KSystemControl::Init::GetIntendedMemorySize() >> Memory::YUZU_PAGEBITS)
     , tracked_entries(device_as_size >> Memory::YUZU_PAGEBITS)
+    , mapping_asid_plus1(device_as_size >> Memory::YUZU_PAGEBITS)
 {
     impl = std::make_unique<DeviceMemoryManagerAllocator<Traits>>();
     cached_pages = std::make_unique<CachedPages>();
@@ -219,6 +220,8 @@ void DeviceMemoryManager<Traits>::Map(DAddr address, VAddr virtual_address, size
         // One page per run unless tracked below: a run left from an earlier mapping of these
         // device pages would make WalkBlock copy the host memory that followed that mapping.
         tracked_entries.GetUnchecked(start_page_d + i).continuity_tracker = 0;
+        mapping_asid_plus1.GetAndFault(start_page_d + i)
+            .store(static_cast<u32>(asid.id) + 1U, std::memory_order_release);
         if (ptr == nullptr) [[unlikely]] {
             tracked_entries.GetUnchecked(start_page_d + i).compressed_physical_ptr = 0;
             continue;
@@ -260,6 +263,7 @@ void DeviceMemoryManager<Traits>::Unmap(DAddr address, size_t size) {
         entry.compressed_physical_ptr = 0;
         entry.cpu_backing_address = 0;
         entry.continuity_tracker = 0;
+        mapping_asid_plus1.GetAndFault(start_page_d + i).store(0, std::memory_order_release);
         if (phys_addr != 0) [[likely]] {
             u32& base_dev = compressed_device_addr.GetAndFault(phys_addr - 1U);
             if ((base_dev >> MULTI_FLAG_BITS) == 0) [[likely]] {
@@ -453,9 +457,21 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
         [&](size_t copy_amount, DAddr current_vaddr) {
             if (!reported) {
                 reported = true;
-                LOG_ERROR(HW_Memory,
-                          "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                          current_vaddr, address, size);
+                // Which process the range was last mapped under tells a mis-attributed mapping
+                // from a lost one (from Lichii f0bf0cfd).
+                const u32 mapping_asid = MappingProvenanceForDiagnostics(current_vaddr);
+                if (mapping_asid != 0) {
+                    LOG_ERROR(HW_Memory,
+                              "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
+                              "size = {}, last mapped under process asid {}, {} live processes)",
+                              current_vaddr, address, size, mapping_asid - 1,
+                              LiveProcessCountForDiagnostics());
+                } else {
+                    LOG_ERROR(HW_Memory,
+                              "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
+                              "size = {}, no recorded mapping, {} live processes)",
+                              current_vaddr, address, size, LiveProcessCountForDiagnostics());
+                }
             }
             std::memset(dest_pointer, 0, copy_amount);
         },
@@ -520,9 +536,21 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
         [&](size_t copy_amount, DAddr current_vaddr) {
             if (!reported) {
                 reported = true;
-                LOG_ERROR(HW_Memory,
-                          "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, size = {})",
-                          current_vaddr, address, size);
+                // Which process the range was last mapped under tells a mis-attributed mapping
+                // from a lost one (from Lichii f0bf0cfd).
+                const u32 mapping_asid = MappingProvenanceForDiagnostics(current_vaddr);
+                if (mapping_asid != 0) {
+                    LOG_ERROR(HW_Memory,
+                              "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
+                              "size = {}, last mapped under process asid {}, {} live processes)",
+                              current_vaddr, address, size, mapping_asid - 1,
+                              LiveProcessCountForDiagnostics());
+                } else {
+                    LOG_ERROR(HW_Memory,
+                              "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
+                              "size = {}, no recorded mapping, {} live processes)",
+                              current_vaddr, address, size, LiveProcessCountForDiagnostics());
+                }
             }
             std::memset(dest_pointer, 0, copy_amount);
         },
@@ -568,6 +596,7 @@ Asid DeviceMemoryManager<Traits>::RegisterProcess(Memory::Memory* memory_device_
         registered_processes.emplace_back(memory_device_inter);
         new_id = registered_processes.size() - 1U;
     }
+    live_process_count.fetch_add(1, std::memory_order_release);
     return Asid{new_id};
 }
 
@@ -575,6 +604,7 @@ template <typename Traits>
 void DeviceMemoryManager<Traits>::UnregisterProcess(Asid asid) {
     registered_processes[asid.id] = nullptr;
     id_pool.push_front(asid.id);
+    live_process_count.fetch_sub(1, std::memory_order_release);
 }
 
 template <typename Traits>
