@@ -246,7 +246,10 @@ u32 TextureCache<P>::RunGarbageCollector() {
              (IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap)))) {
             return false;
         }
-        --num_iterations;
+        // Images this pass can't evict don't use up its iterations (from Lichii 2834e34c): with
+        // the decrement first, 10 converted ASTC textures (CostlyLoad) at the old end of the LRU
+        // used up a normal pass, which ended having freed nothing while evictable images sat
+        // right behind them.
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
@@ -259,6 +262,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
             (!high_priority_mode && must_download)) {
             return false;
         }
+        --num_iterations;
         // An image the GPU drew into that can't be written back (BadOverlap, or not downloadable)
         // would come back from guest memory without what the GPU drew, which guest memory never
         // had. Fortune's Weave draws its sky colour table (256x256 R11G11B10) once and keeps
@@ -1855,7 +1859,10 @@ void TextureCache<P>::PopAsyncFlushes() {
                 download_buffer.offset -= Common::AlignUp(image.unswizzled_size_bytes, 64);
                 std::span<u8> download_span =
                     download_buffer.mapped_span.subspan(download_buffer.offset);
-                if (!SkipRetiredSwizzle(download_info)) {
+                // Written by the CPU since the download was taken: these bytes are older
+                // (from Orchid cc04f48b).
+                if (!SkipRetiredSwizzle(download_info) &&
+                    False(image.flags & ImageFlagBits::CpuModified)) {
                     SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
                                  swizzle_data_buffer);
                 }
@@ -1906,7 +1913,8 @@ void TextureCache<P>::PopAsyncFlushes() {
             }
             const ImageBase& image = download_info.GetImage(slot_images);
             const auto copies = FullDownloadCopies(image.info);
-            if (!SkipRetiredSwizzle(download_info)) {
+            if (!SkipRetiredSwizzle(download_info) &&
+                False(image.flags & ImageFlagBits::CpuModified)) {
                 SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, download_span,
                              swizzle_data_buffer);
             }
@@ -3164,6 +3172,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     texture_memory_estimate += Common::AlignUp(tentative_size, 1024);
     image.lru_index = lru_cache.Insert(image_id, frame_tick);
     image.last_used_frame = frame_tick;
+    image.address_space = current_address_space;
 
     ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, image_id](u64 page) {
         (*channel_state->gpu_page_table)[page].push_back(image_id);
@@ -3171,6 +3180,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     if (False(image.flags & ImageFlagBits::Sparse)) {
         auto map_id =
             slot_map_views.insert(image.gpu_addr, image.cpu_addr, image.guest_size_bytes, image_id);
+        page_filter.Mark(image.cpu_addr, image.guest_size_bytes);
         ForEachCPUPage(image.cpu_addr, image.guest_size_bytes,
                        [this, map_id](u64 page) { page_table[page].push_back(map_id); });
         image.map_view_id = map_id;
@@ -3180,6 +3190,7 @@ void TextureCache<P>::RegisterImage(ImageId image_id) {
     ForEachSparseSegment(
         image, [this, image_id, &sparse_maps](GPUVAddr gpu_addr, DAddr cpu_addr, size_t size) {
             auto map_id = slot_map_views.insert(gpu_addr, cpu_addr, size, image_id);
+            page_filter.Mark(cpu_addr, size);
             ForEachCPUPage(cpu_addr, size,
                            [this, map_id](u64 page) { page_table[page].push_back(map_id); });
             sparse_maps.push_back(map_id);
@@ -3200,6 +3211,13 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
     ++bank_generation;
     NoteBankBump(BankBump::Unregister);
     lru_cache.Free(image.lru_index);
+    // Pages are cleared from the page table of the address space the image was registered in, not
+    // the one bound now: the collector, CPU unmaps and joins reach images of any address space
+    // (from Lichii d589f953).
+    const std::optional<size_t> storage_id = getStorageID(image.address_space);
+    ASSERT(storage_id);
+    TextureCacheGPUMap& gpu_page_table = gpu_page_table_storage[*storage_id * 2];
+    TextureCacheGPUMap& sparse_page_table = gpu_page_table_storage[*storage_id * 2 + 1];
     const auto& clear_page_table =
         [image_id](u64 page, ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>& selected_page_table) {
             const auto page_it = selected_page_table.find(page);
@@ -3216,9 +3234,10 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
             }
             image_ids.erase(vector_it);
         };
-    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, &clear_page_table](u64 page) {
-        clear_page_table(page, (*channel_state->gpu_page_table));
-    });
+    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes,
+                   [&clear_page_table, &gpu_page_table](u64 page) {
+                       clear_page_table(page, gpu_page_table);
+                   });
     if (False(image.flags & ImageFlagBits::Sparse)) {
         const auto map_id = image.map_view_id;
         ForEachCPUPage(image.cpu_addr, image.guest_size_bytes, [this, map_id](u64 page) {
@@ -3239,9 +3258,10 @@ void TextureCache<P>::UnregisterImage(ImageId image_id) {
         slot_map_views.erase(map_id);
         return;
     }
-    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes, [this, &clear_page_table](u64 page) {
-        clear_page_table(page, (*channel_state->sparse_page_table));
-    });
+    ForEachGPUPage(image.gpu_addr, image.guest_size_bytes,
+                   [&clear_page_table, &sparse_page_table](u64 page) {
+                       clear_page_table(page, sparse_page_table);
+                   });
     auto it = sparse_views.find(image_id);
     ASSERT(it != sparse_views.end());
     auto& sparse_maps = it->second;
@@ -3278,8 +3298,12 @@ template <class P>
 void TextureCache<P>::TrackImage(ImageBase& image, ImageId image_id) {
     ASSERT(False(image.flags & ImageFlagBits::Tracked));
     image.flags |= ImageFlagBits::Tracked;
+    // Marked before the pages trap: a new image is tracked (and uploaded) before RegisterImage
+    // marks it, and RasterizerVulkan::OnCPUWrite skips the texture cache on unmarked pages
+    // (from Lichii 54caf03b).
     if (False(image.flags & ImageFlagBits::Sparse)) {
         if (image.cpu_addr < ~(1ULL << 40)) {
+            page_filter.Mark(image.cpu_addr, image.guest_size_bytes);
             device_memory.UpdatePagesCachedCount(image.cpu_addr, image.guest_size_bytes, 1);
         }
         return;
@@ -3292,12 +3316,14 @@ void TextureCache<P>::TrackImage(ImageBase& image, ImageId image_id) {
             const auto& map = slot_map_views[map_view_id];
             const DAddr cpu_addr = map.cpu_addr;
             const std::size_t size = map.size;
+            page_filter.Mark(cpu_addr, size);
             device_memory.UpdatePagesCachedCount(cpu_addr, size, 1);
         }
         return;
     }
     ForEachSparseSegment(image,
                          [this]([[maybe_unused]] GPUVAddr gpu_addr, DAddr cpu_addr, size_t size) {
+                             page_filter.Mark(cpu_addr, size);
                              device_memory.UpdatePagesCachedCount(cpu_addr, size, 1);
                          });
 }
