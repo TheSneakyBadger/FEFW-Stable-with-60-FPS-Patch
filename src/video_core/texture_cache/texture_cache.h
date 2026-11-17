@@ -297,10 +297,12 @@ u32 TextureCache<P>::RunGarbageCollector() {
         // isn't always seen (none in the last 58 minutes of a 75-minute session, #63), and
         // without one every image used since the last was kept until the hard limit: 2.2 GB of
         // GPU-drawn images, 1.6 GB unused for a minute, while the game's textures were evicted
-        // and loaded again (worse stutter the longer the session).
+        // and loaded again (worse stutter the longer the session). Only over the expected level,
+        // where something has to go: below it they cost nothing, and an image the game drew once
+        // (a sky, #64) isn't put at risk for no gain.
         static constexpr u64 CURRENT_SCENE_MAX_FRAMES = 18000;
         const u64 current_scene_start =
-            frame_tick > CURRENT_SCENE_MAX_FRAMES
+            high_priority_mode && frame_tick > CURRENT_SCENE_MAX_FRAMES
                 ? (std::max)(scene_start_frame, frame_tick - CURRENT_SCENE_MAX_FRAMES)
                 : scene_start_frame;
         if (evict_old_gpu && keeps_gpu_contents && !aggressive_mode &&
