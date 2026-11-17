@@ -2134,6 +2134,63 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
         QueueAsyncUnswizzle(image, image_id);
         return;
     }
+    // Fortune's Eden: an ASTC texture the texture cache on disk has is read and decompressed on
+    // the texture decode thread and uploaded when it's ready (TickAsyncDecode), so a burst of
+    // them (an area loading) doesn't hold up the frame; one it doesn't have is converted on the
+    // GPU as before, with its guest bytes hashed as they are read.
+    if constexpr (requires { runtime.WantsGuestHash(image); }) {
+        if (True(image.flags & ImageFlagBits::AcceleratedUpload) &&
+            runtime.WantsGuestHash(image)) {
+            // Newer guest data than a texture cache read still in flight: that one is dropped.
+            if (True(image.flags & ImageFlagBits::IsDecoding)) {
+                for (auto& async_decode : async_decodes) {
+                    if (async_decode->image_id == image_id && async_decode->sized_by_data) {
+                        std::scoped_lock decode_lock{async_decode->mutex};
+                        async_decode->cancelled = true;
+                    }
+                }
+                image.flags &= ~ImageFlagBits::IsDecoding;
+            }
+            thread_local std::vector<u8> guest_bytes;
+            guest_bytes.resize(MapSizeBytes(image));
+            gpu_memory->ReadBlock(image.gpu_addr, guest_bytes.data(), guest_bytes.size(),
+                                  VideoCommon::CacheType::NoTextureCache);
+            const u64 hash = Common::CityHash64(
+                reinterpret_cast<const char*>(guest_bytes.data()),
+                (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size()));
+            const auto uploads = FullUploadSwizzles(image.info);
+            if (auto plan = runtime.PlanDiskCacheLoad(image, hash, uploads)) {
+                runtime.TransitionImageLayout(image);
+                image.flags |= ImageFlagBits::IsDecoding;
+                auto decode = std::make_unique<AsyncDecodeContext>();
+                AsyncDecodeContext* const decode_ptr = decode.get();
+                decode->image_id = image_id;
+                decode->sized_by_data = true;
+                async_decodes.push_back(std::move(decode));
+                texture_decode_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
+                    auto data = plan.load();
+                    std::unique_lock lock{decode_ptr->mutex};
+                    if (data) {
+                        decode_ptr->decoded_data.resize_destructive(data->size());
+                        std::memcpy(decode_ptr->decoded_data.data(), data->data(), data->size());
+                        decode_ptr->copies = std::move(plan.copies);
+                    } else {
+                        // Gone or damaged: converted on the GPU at the image's next use.
+                        decode_ptr->failed = true;
+                    }
+                    decode_ptr->complete = true;
+                });
+                return;
+            }
+            auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+            std::memcpy(staging.mapped_span.data(), guest_bytes.data(),
+                        (std::min)(guest_bytes.size(), staging.mapped_span.size()));
+            runtime.SetGuestHash(hash);
+            runtime.AccelerateImageUpload(image, staging, uploads, 0, 0);
+            runtime.InsertUploadMemoryBarrier();
+            return;
+        }
+    }
     auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
     UploadImageContents(image, staging);
     runtime.InsertUploadMemoryBarrier();
@@ -2415,6 +2472,27 @@ void TextureCache<P>::TickAsyncDecode() {
             continue;
         }
         Image& image = slot_images[async_decode->image_id];
+        if (async_decode->failed) {
+            // A texture cache read that failed: converted on the GPU now (the entry is gone).
+            image.flags &= ~ImageFlagBits::IsDecoding;
+            lock.unlock();
+            i = async_decodes.erase(i);
+            auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+            UploadImageContents(image, staging);
+            has_uploads = true;
+            continue;
+        }
+        if (async_decode->sized_by_data) {
+            auto staging = runtime.UploadStagingBuffer(async_decode->decoded_data.size());
+            std::memcpy(staging.mapped_span.data(), async_decode->decoded_data.data(),
+                        async_decode->decoded_data.size());
+            image.UploadMemory(staging, async_decode->copies);
+            image.flags &= ~ImageFlagBits::IsDecoding;
+            has_uploads = true;
+            lock.unlock();
+            i = async_decodes.erase(i);
+            continue;
+        }
         if (async_decode->decoded_data.size() > MapSizeBytes(image)) {
             LOG_ERROR(HW_GPU, "Async decode of {} bytes for a {}-byte image at {:#x}, dropped",
                       async_decode->decoded_data.size(), MapSizeBytes(image), image.gpu_addr);

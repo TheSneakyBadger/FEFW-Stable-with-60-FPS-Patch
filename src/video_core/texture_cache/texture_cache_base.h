@@ -83,6 +83,10 @@ struct AsyncDecodeContext {
     std::atomic_bool complete;
     /// The image was deleted: drop the result instead of uploading it into the slot's next image.
     bool cancelled{};
+    /// Fortune's Eden: data from the texture cache on disk (BCn, sized by itself, not the guest
+    /// size); failed: it couldn't be read.
+    bool sized_by_data{};
+    bool failed{};
 };
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
