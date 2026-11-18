@@ -1,4 +1,4 @@
-# One-off: once the v1.7.5.5 Linux build (linux-build 10961b2) is on the test-builds branch, put
+# One-off: once the v1.7.5.5 Linux build (linux-build 544d3ec) is on the test-builds branch, put
 # it on the v1.7.5.5 release as Fortunes-Eden-linux-x86_64.tar.gz and Fortunes-Eden-x86_64.AppImage.
 name: Upload v1.7.5.5 Linux assets
 on:
@@ -18,14 +18,14 @@ jobs:
           for i in $(seq 1 280); do
             rm -rf tb
             git clone -q --depth=1 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
-            if git -C tb log -1 --format=%s | grep -q "Fortunes-Eden-v1.7.5.5-linux-x86_64-10961b2"; then break; fi
+            if git -C tb log -1 --format=%s | grep -q "Fortunes-Eden-v1.7.5.5-linux-x86_64-544d3ec"; then break; fi
             rm -rf tb
             sleep 60
           done
           test -d tb || { echo "The v1.7.5.5 Linux build never arrived"; exit 1; }
           cd tb
           mkdir x && tar -xzf Fortunes-Eden-linux-x86_64.tar.gz -C x
-          cp x/Fortunes-Eden-v1.7.5.5-linux-x86_64-10961b2/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
+          cp x/Fortunes-Eden-v1.7.5.5-linux-x86_64-544d3ec/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
           cp Fortunes-Eden-linux-x86_64.tar.gz ..
           cd ..
           sha256sum Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage
