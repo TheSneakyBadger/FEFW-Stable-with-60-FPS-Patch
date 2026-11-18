@@ -74,6 +74,7 @@ add_library(dynarmic STATIC
     interface/halt_reason.h
     interface/exclusive_monitor.h
     interface/optimization_flags.h
+    interface/fefw_jit_stats.h
     ir/acc_type.h
     ir/basic_block.cpp
     ir/basic_block.h

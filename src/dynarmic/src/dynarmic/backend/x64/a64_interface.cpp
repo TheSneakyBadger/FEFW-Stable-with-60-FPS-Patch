@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,7 @@
 #include "dynarmic/common/atomic.h"
 #include "dynarmic/frontend/A64/translate/a64_translate.h"
 #include "dynarmic/interface/A64/a64.h"
+#include "dynarmic/interface/fefw_jit_stats.h"
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/opt_passes.h"
 
@@ -254,6 +256,7 @@ private:
         block_of_code.EnsureMemoryCommitted(MINIMUM_REMAINING_CODESIZE);
 
         // JIT Compile
+        const auto compile_start = std::chrono::steady_clock::now();
         const auto get_code = [this](u64 vaddr) { return conf.callbacks->MemoryReadCode(vaddr); };
         // LocationDescriptor ctor() does important ops (like tflags) do not skip
         auto const arch_descriptor = A64::LocationDescriptor{descriptor};
@@ -264,7 +267,15 @@ private:
                         .enable_pauth_returns = conf.enable_pauth_returns,
                         .address_space_bits = conf.page_table_address_space_bits});
         Optimization::Optimize(ir_block, conf, polyfill_options);
-        return emitter.Emit(ir_block).entrypoint;
+        const CodePtr entrypoint = emitter.Emit(ir_block).entrypoint;
+        auto& stats = FefwJitStats::Get();
+        stats.blocks.fetch_add(1, std::memory_order_relaxed);
+        stats.compile_ns.fetch_add(
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now() - compile_start)
+                                           .count()),
+            std::memory_order_relaxed);
+        return entrypoint;
     }
 
     void PerformRequestedCacheInvalidation(HaltReason hr) {
@@ -279,9 +290,11 @@ private:
 
             jit_state.ResetRSB();
             if (invalidate_entire_cache) {
+                FefwJitStats::Get().cache_clears.fetch_add(1, std::memory_order_relaxed);
                 block_of_code.ClearCache();
                 emitter.ClearCache();
             } else {
+                FefwJitStats::Get().range_clears.fetch_add(1, std::memory_order_relaxed);
                 emitter.InvalidateCacheRanges(invalid_cache_ranges);
             }
             invalid_cache_ranges.clear();
