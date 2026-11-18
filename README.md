@@ -222,6 +222,7 @@ Fortune's Eden stands on a lot of other people's work. Thank you to all of them:
 - **AMD**: AMD FSR 3.1 and FSR 3.1 frame generation are built from AMD's FidelityFX SDK (MIT, `licenses\amd-fidelityfx-sdk`); AMD FSR 4 is AMD's own signed FSR 4.1.2 Vulkan library from the FSR SDK 2.4, redistributed unmodified under the FidelityFX SDK licence (`licenses\amd-fsr4`). AMD and FidelityFX are trademarks of AMD; this project is not made or endorsed by AMD.
 - **[dav1d](https://code.videolan.org/videolan/dav1d)** by VideoLAN: fast AV1 decoding for the pre-rendered cutscenes (BSD 2-clause, `licenses\dav1d`).
 - **NVIDIA**: DLSS and Streamline are NVIDIA's, downloaded from NVIDIA by the settings; none of NVIDIA's files are included.
+- **[jh238800](https://github.com/jh238800)**: weeks of careful testing on [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63), with side-by-side logs of every setting, that tracked down the battle-map stutter and the texture and frame generation fixes since v1.7.
 - **Everyone who reports problems** and sends logs, saves and test results: most fixes here started with one of your reports.
 
 Licensed under **GPL-3.0-or-later**; the full source for this build is included as `source.zip` in each release download, and each release's exact source is on a `source-v<version>` branch. Not affiliated with, endorsed by or sponsored by Nintendo, NVIDIA or AMD. For use only with games, keys and firmware legally dumped from your own console; see the legal notice at the top.
