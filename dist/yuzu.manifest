@@ -26,7 +26,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
         true
       </gdiScaling>
       <ws2:longPathAware
-          xmlns:ws3="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+          xmlns:ws2="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
         true
       </ws2:longPathAware>
     </asmv3:windowsSettings>
