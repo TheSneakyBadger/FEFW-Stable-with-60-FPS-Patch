@@ -475,7 +475,8 @@ void FefwHome::BuildGamePage(QWidget* page) {
         button->setMinimumHeight(34);
     }
     // What the game list's right-click menu was used for, now in one menu.
-    QPushButton* const more = new QPushButton(QStringLiteral("\u22EF"), right);
+    // Named for what players look for in it (it was a bare "\u22EF").
+    QPushButton* const more = new QPushButton(tr("Mods / Saves"), right);
     more->setObjectName(QStringLiteral("fefwHomeMoreButton"));
     more->setToolTip(tr("Game folder, saves, mods and updates"));
     more->setCursor(Qt::PointingHandCursor);
