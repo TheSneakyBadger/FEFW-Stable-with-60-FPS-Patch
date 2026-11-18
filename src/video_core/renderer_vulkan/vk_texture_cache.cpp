@@ -3864,6 +3864,12 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
     runtime_ptr = &runtime;
     render_area.width = (std::min)(render_area.width, width);
     render_area.height = (std::min)(render_area.height, height);
+    // And within what the device allows: a pass without attachments takes the game's surface
+    // clip as its size (32768x32768 for Fortune's Weave's ambient occlusion, which writes storage
+    // images from its fragment shader), over AMD's 16384 limit, where RADV rasterized nothing:
+    // the occlusion stayed 0 and shaded areas went black (#44; found by BreakingIce16).
+    render_area.width = (std::min)(render_area.width, runtime.device.GetMaxFramebufferWidth());
+    render_area.height = (std::min)(render_area.height, runtime.device.GetMaxFramebufferHeight());
 
     if (do_resolve_color) {
         const u32 layers = static_cast<u32>((std::max)(num_layers, 1));
