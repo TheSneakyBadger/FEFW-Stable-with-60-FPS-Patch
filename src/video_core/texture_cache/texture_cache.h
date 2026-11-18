@@ -192,7 +192,19 @@ u32 TextureCache<P>::RunGarbageCollector() {
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
+        // Fortune's Eden: below the expected level, only images unused for 30 s (EDEN_TC_IDLE_AGE
+        // frames), not 50 frames. Since passes stopped spending their 10 iterations on converted
+        // ASTC textures they can't free (v1.7.5, from Lichii), each pass below the expected level
+        // freed up to 10 other textures unused for under a second: 1,500-2,800 a minute on a
+        // 12 GB card with less than half its memory in use (#63), each loaded again the next
+        // time it was drawn (a unit's portrait and menus on battle maps). Up to v1.7.1 it was
+        // 1-40 a minute.
+        static const u64 idle_age = [] {
+            const char* value = std::getenv("EDEN_TC_IDLE_AGE");
+            return value != nullptr ? (std::max)(std::strtoull(value, nullptr, 10), 50ULL)
+                                    : 1800ULL;
+        }();
+        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : idle_age;
         num_iterations = aggressive_mode ? 800 : (high_priority_mode ? 400 : 10);
         // Free down to 256 MiB below the expected level. Images freed in the last few frames
         // still count in use until they are destroyed: over the hard limit a pass runs every
@@ -486,7 +498,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
     static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
     const bool hard_pass = total_used_memory >= critical_memory;
     allow_writebacks = !hard_pass;
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    if (frame_tick > ticks_to_destroy) {
+        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    }
     allow_writebacks = true;
     FlushWritebacks();
     if (hard_pass) {
