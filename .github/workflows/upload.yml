@@ -17,8 +17,10 @@ jobs:
         run: |
           for i in $(seq 1 280); do
             rm -rf tb
-            git clone -q --depth=1 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
-            if git -C tb log -1 --format=%s | grep -q "Fortunes-Eden-v1.7.5.5-linux-x86_64-544d3ec"; then break; fi
+            git clone -q --depth=30 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
+            # Not only the newest commit: test builds can land after it.
+            commit=$(git -C tb log -30 --format='%H %s' | grep "Fortunes-Eden-v1.7.5.5-linux-x86_64-544d3ec" | head -1 | cut -d' ' -f1)
+            if [ -n "$commit" ]; then git -C tb checkout -q "$commit"; break; fi
             rm -rf tb
             sleep 60
           done
