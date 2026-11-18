@@ -808,8 +808,13 @@ bool VsyncSleep() {
     if (!token) {
         return false;
     }
+    // With the vsync timer pacing (as with AMD FSR 3.1: its fixed schedule kept the game's frames
+    // 16.8 ms apart, where Reflex's sleeps varied them 16.4-17.0 ms), Reflex's limit is 2% above
+    // it, so it never holds a frame back; with Reflex pacing, exactly the rate.
+    const bool timer_paces = FefwFrameGenHook::timer_paces.load(std::memory_order_relaxed);
     const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
-    ApplyFrameLimit(fg, static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown));
+    ApplyFrameLimit(fg, static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
+                                         (timer_paces ? 98 : 100) / 100));
     if (skip_left > 0) {
         --skip_left;
     } else {
@@ -875,9 +880,14 @@ bool LoadFrameGen() {
     LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation ready");
     if (const char* const value = std::getenv("EDEN_DLSSG_VSYNC_SLEEP");
         !(value && value[0] == '0')) {
+        const char* const pacer = std::getenv("EDEN_DLSSG_PACER");
+        FefwFrameGenHook::timer_paces.store(!(pacer && std::string_view{pacer} == "reflex"),
+                                            std::memory_order_relaxed);
         FefwFrameGenHook::vsync_sleep.store(&VsyncSleep, std::memory_order_release);
-        LOG_INFO(Render_Vulkan, "NVIDIA Reflex: sleeping at the game's vsync, its frame limit "
-                                "pacing the game");
+        LOG_INFO(Render_Vulkan, "NVIDIA Reflex: sleeping at the game's vsync, paced by {}",
+                 FefwFrameGenHook::timer_paces.load(std::memory_order_relaxed)
+                     ? "the vsync timer"
+                     : "Reflex's frame limit");
     }
     return true;
 }
