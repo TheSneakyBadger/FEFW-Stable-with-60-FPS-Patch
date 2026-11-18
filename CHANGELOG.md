@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.7.5.5
+
+Smoother NVIDIA DLSS frame generation, far fewer textures reloaded, the AMD shading fix on Linux, and the texture cache on disk tuned for smaller PCs.
+
+- **NVIDIA DLSS frame generation no longer holds up the game** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). Two things made the game itself wait while NVIDIA paced its frames, so on a laptop RTX 4080 a busy map ran at 47–57 FPS instead of 60 and frame generation kept switching off and on. NVIDIA Reflex's wait now happens before a frame's work is queued, not in the middle of handing work to the graphics card. And frames are now shown on a GPU queue of their own, so the game's work never waits behind NVIDIA's pacing. That queue is used wherever the card has one to spare (NVIDIA cards); `EDEN_PRESENT_QUEUE=0` turns it off.
+- **Far fewer textures freed and loaded again** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). Since v1.7.5 the cleanup freed up to 2,000 textures a minute that had been unused for under a second, even with half the video memory free, and each was loaded again the next time it was drawn (a unit's portrait and menus, for example). Now only textures unused for 30 seconds go, until memory gets fuller: 80–150 a minute instead of about 1,800 on an RTX 4090.
+- **Shading no longer goes black on AMD cards on Linux** ([#44](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/44)). With SSAO on, caves, the Obelisk chamber and night streets were far too dark on RADV, because the shading pass asked for a larger drawing area than the card supports. It's now kept within the card's limit.
+- **Texture cache on disk on smaller PCs** ([#75](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/75)): off by default on graphics cards with 4 GB of video memory or less, where textures are reloaded too often for the disk to keep up (the home screen says so); it reads with 1 thread instead of up to 8 on CPUs with 4 fast cores or fewer; and frames wait for it at most 100 ms a second. Its reads are also faster: a draw's textures are read side by side, straight into place.
+- The log now shows where frames wait (every 10 s) and how much of the game's code was compiled, to help track down stutter.
+
+Thanks to **jh238800** for the long, careful testing on [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63), with side-by-side logs of every setting, behind these fixes, and to **BreakingIce16** for finding the cause of [#44](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/44).
+
+Everything else is as in [v1.7.5.4](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.4).
+
 ## v1.7.5.4
 
 - **No more texture pop-in at cutscene cuts** ([#74](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/74)). A cut needs a whole new scene's textures at once, and those read from the texture cache on disk that weren't ready in time were drawn empty for a few frames. A frame now waits for them (up to 40 ms in all, with up to 8 read at a time), and any still not ready are converted on the GPU at once, as before the cache. So a cut or a new area costs a brief hitch at most, never pop-in.

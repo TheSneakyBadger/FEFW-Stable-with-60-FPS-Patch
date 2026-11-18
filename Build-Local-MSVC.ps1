@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.4 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.5 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -476,6 +476,13 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.5.5:
+- NVIDIA DLSS frame generation no longer holds up the game (#63): NVIDIA Reflex waits before a
+  frame's work is queued, and frames are shown on a GPU queue of their own.
+- Far fewer textures freed and loaded again: only those unused for 30 s, until memory gets fuller.
+- No more black shading on AMD cards on Linux (#44).
+- Texture cache on disk: off on 4 GB graphics cards, 1 reader on 4-core CPUs, faster reads (#75).
 
 New in v1.7.5.4:
 - No more texture pop-in at cutscene cuts (#74): a frame waits briefly for textures being read
