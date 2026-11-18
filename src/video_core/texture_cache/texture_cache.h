@@ -2463,9 +2463,11 @@ void TextureCache<P>::QueueAsyncUnswizzle(Image& image, ImageId image_id) {
 
 template <class P>
 void TextureCache<P>::TickAsyncDecode() {
-    // Draws may wait up to 4 ms a frame in all for textures being read from disk (most take a
-    // millisecond or two); past that they're converted on the GPU (WaitDiskCacheLoad).
-    disk_cache_wait_left = std::chrono::milliseconds{4};
+    // Draws may wait up to 40 ms a frame in all for textures being read from disk; past that
+    // they're converted on the GPU (WaitDiskCacheLoad). A cut or a new area needs 300-600 at once:
+    // with 4 ms nearly all of them (97%) ran out of time and were converted, which costs more
+    // than reading them (frames of 0.2-1 s against 0.1-0.2 s), so the cache did nothing.
+    disk_cache_wait_left = std::chrono::milliseconds{40};
     if (++disk_cache_fallback_frames >= 600) {
         if (disk_cache_fallbacks != 0) {
             LOG_INFO(HW_GPU,

@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <thread>
 #include <chrono>
 #include <condition_variable>
 #include <utility>
@@ -717,9 +719,11 @@ private:
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
-    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed, 4 at a time).
-    Common::ThreadWorker disk_cache_worker{4, "TextureDiskRead", {},
-                                           Common::ThreadPlacement::Efficiency};
+    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed, up to 8 at a
+    /// time, half the CPU's threads at most).
+    Common::ThreadWorker disk_cache_worker{
+        std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U), "TextureDiskRead", {},
+        Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
     /// Textures converted on the GPU because their read wasn't ready in time (for the log).
