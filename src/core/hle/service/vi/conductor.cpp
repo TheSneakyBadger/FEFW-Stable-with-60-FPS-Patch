@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 #include "common/adpf.h"
 #include "common/fefw_frame_gen_hook.h"
@@ -89,8 +91,18 @@ void Conductor::VsyncThread(std::stop_token token) {
     Common::SetCurrentThreadPriority(Common::ThreadPriority::VeryHigh);
     Common::SetCurrentThreadToPerformanceCores();
 
+    std::chrono::steady_clock::time_point last_vsync{};
     while (!token.stop_requested()) {
-        m_signal.Wait();
+        if (m_reflex_paced.load(std::memory_order_relaxed)) {
+            // NVIDIA Reflex sets when each vsync comes: the timer isn't waited for (at 60 Hz the
+            // two clocks beat, Reflex at 59.5 a second waiting out ticks that came late: the game
+            // averaged 58.6). Never sooner than the timer's own interval after the last one, for
+            // the frames Reflex doesn't sleep before.
+            std::this_thread::sleep_until(last_vsync +
+                                          std::chrono::nanoseconds{this->GetNextTicks()});
+        } else {
+            m_signal.Wait();
+        }
 
         if (m_system.IsShuttingDown()) {
             return;
@@ -101,6 +113,7 @@ void Conductor::VsyncThread(std::stop_token token) {
             m_reflex_paced.store(reflex_sleep(), std::memory_order_relaxed);
         }
 
+        last_vsync = std::chrono::steady_clock::now();
         this->ProcessVsync();
     }
 }
