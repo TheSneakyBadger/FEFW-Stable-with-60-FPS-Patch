@@ -796,7 +796,15 @@ bool VsyncSleep() {
         skip_left = 8;
     }
     last_sleep_ns = now;
-    sl::FrameToken* const token = Token(last_sim_index.load(std::memory_order_relaxed) + 1);
+    // The frame the game starts now. This vsync first composes the frame the game finished
+    // (index last + 1, tagged on the GPU thread shortly after), so the game's new one is last + 2
+    // (88c used last + 1: the start of the frame about to be composited, marked just before its
+    // end, so Reflex still saw almost no simulation time). Never the same index twice.
+    static u64 last_vsync_index = 0;
+    const u64 index =
+        (std::max)(last_sim_index.load(std::memory_order_relaxed) + 2, last_vsync_index + 1);
+    last_vsync_index = index;
+    sl::FrameToken* const token = Token(index);
     if (!token) {
         return false;
     }
