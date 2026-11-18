@@ -853,8 +853,24 @@ void FrameGenSleep(u64 index) {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_SLEEP");
         return value && value[0] == '0';
     }();
+    // Not for the first frames after frame generation comes back on (menus, cutscenes and
+    // standing still pause it): Reflex's first sleeps then were 65-90 ms, a hitch on each resume
+    // (8 in 4 minutes on an RTX 4090). A sleep for a frame index that doesn't follow the last
+    // one marks a resume. EDEN_DLSSG_RESUME_SKIP=<frames> (default 8; 0: sleep as before).
+    static const u32 resume_skip = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_RESUME_SKIP");
+        return value ? static_cast<u32>(std::clamp(std::atoi(value), 0, 120)) : 8U;
+    }();
+    static u64 last_index = 0;
+    static u32 skip_left = 0;
+    if (last_index != 0 && index != last_index + 1 && index != last_index) {
+        skip_left = resume_skip;
+    }
+    last_index = index;
     // The frame's "simulation" is the GPU thread's work on it, from here to its tags.
-    if (!sleep_off) {
+    if (skip_left > 0) {
+        --skip_left;
+    } else if (!sleep_off) {
         FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
         fg.reflex_sleep(*token);
     }
