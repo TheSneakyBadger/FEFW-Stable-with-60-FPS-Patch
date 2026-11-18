@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.5.4
+
+- **No more texture pop-in at cutscene cuts** ([#74](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/74)). A cut needs a whole new scene's textures at once, and those read from the texture cache on disk that weren't ready in time were drawn empty for a few frames. A frame now waits for them (up to 40 ms in all, with up to 8 read at a time), and any still not ready are converted on the GPU at once, as before the cache. So a cut or a new area costs a brief hitch at most, never pop-in.
+
+Everything else is as in [v1.7.5.3](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.3).
+
 ## v1.7.5.3
 
 - **No more black textures for a split second when arriving somewhere you've been.** Textures from the texture cache on disk were read in the background and could be drawn a frame or two before they were ready, showing black. They're now read 4 at a time, and one the game is about to draw is uploaded first (waiting up to 4 ms a frame in all; most take 1–2 ms).
