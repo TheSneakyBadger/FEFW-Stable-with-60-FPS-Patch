@@ -5,8 +5,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 #include "common/adpf.h"
+#include "common/fefw_frame_gen_hook.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/core.h"
@@ -88,13 +91,31 @@ void Conductor::VsyncThread(std::stop_token token) {
     Common::SetCurrentThreadPriority(Common::ThreadPriority::VeryHigh);
     Common::SetCurrentThreadToPerformanceCores();
 
+    std::chrono::steady_clock::time_point last_vsync{};
     while (!token.stop_requested()) {
-        m_signal.Wait();
+        if (m_reflex_paced.load(std::memory_order_relaxed)) {
+            // NVIDIA Reflex sets when each vsync comes: the timer isn't waited for (at 60 Hz the
+            // two clocks beat, Reflex at 59.5 a second waiting out ticks that came late: the game
+            // averaged 58.6). About the timer's own interval after the last one at the soonest,
+            // for the frames Reflex doesn't sleep before: 1 ms less, as the sleep overshoots by
+            // up to a millisecond (with the whole interval it was the limit itself: 56.7 a second).
+            std::this_thread::sleep_until(last_vsync +
+                                          std::chrono::nanoseconds{this->GetNextTicks()} -
+                                          std::chrono::milliseconds{1});
+        } else {
+            m_signal.Wait();
+        }
 
         if (m_system.IsShuttingDown()) {
             return;
         }
 
+        if (auto* const reflex_sleep =
+                FefwFrameGenHook::vsync_sleep.load(std::memory_order_acquire)) {
+            m_reflex_paced.store(reflex_sleep(), std::memory_order_relaxed);
+        }
+
+        last_vsync = std::chrono::steady_clock::now();
         this->ProcessVsync();
     }
 }
@@ -127,8 +148,9 @@ s64 Conductor::GetNextTicks() const {
     // the frame rate cap) can show them with the frames made between them (165 Hz at 3x: 54 a
     // second), evenly, from the game's own vsync. (Held back on the GPU thread instead, the game
     // still saw a 60 Hz vsync: its frames came 1 or 2 vsyncs apart and the motion stuttered.)
+    // NVIDIA Reflex pacing the vsync itself: its frame limit holds the game to the rate instead.
     if (settings.use_speed_limit.GetValue() && Settings::SpeedLimit() == 100 &&
-        m_compose_speed_scale == 1.f) {
+        m_compose_speed_scale == 1.f && !m_reflex_paced.load(std::memory_order_relaxed)) {
         return (std::max)(ticks, Settings::FrameGenerationPeriodNs());
     }
     return ticks;

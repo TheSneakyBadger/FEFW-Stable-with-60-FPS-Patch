@@ -452,6 +452,28 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                                                  Common::FS::DirEntryFilter::All);
     } else {
         Common::FS::IterateDirEntries(dir_path, callback, Common::FS::DirEntryFilter::File);
+        // Fortune's Eden: an extracted game (loose files) is found from the folder that holds it,
+        // not only from its exefs folder: the chosen folder's exefs/main, and main or exefs/main
+        // one folder down (a game folder among others). Players were pointing the home screen's
+        // "Choose game folder" at the game's folder and being told it couldn't be found.
+        const auto try_main = [&callback](const std::filesystem::path& main) {
+            if (Common::FS::IsFile(main)) {
+                callback(main);
+            }
+        };
+        const std::filesystem::path root{Common::FS::ToU8String(dir_path)};
+        try_main(root / "exefs" / "main");
+        Common::FS::IterateDirEntries(
+            root,
+            [this, &try_main](const std::filesystem::path& sub) {
+                if (stop_requested) {
+                    return false;
+                }
+                try_main(sub / "main");
+                try_main(sub / "exefs" / "main");
+                return true;
+            },
+            Common::FS::DirEntryFilter::Directory);
     }
 }
 
