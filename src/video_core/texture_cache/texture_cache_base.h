@@ -732,6 +732,10 @@ private:
         Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
+    /// While FillImageViews runs: textures being read from disk that its draw uses, waited for
+    /// together when it's done.
+    bool defer_disk_waits{};
+    boost::container::small_vector<ImageId, 32> deferred_disk_waits;
     /// Textures converted on the GPU because their read wasn't ready in time (for the log).
     u32 disk_cache_fallbacks{};
     u32 disk_cache_fallback_frames{};
