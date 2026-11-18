@@ -30,6 +30,11 @@ struct Key {
 /// writes would slow the game's own. Unknown (a network share, no answer): false.
 [[nodiscard]] bool OnHardDrive(const std::filesystem::path& folder);
 
+/// How many threads read from the cache: half the CPU's threads, 2 to 8; 1 with 4 or fewer fast
+/// cores (a laptop's), where more took time from the game's own threads (#75).
+/// EDEN_DISK_READERS overrides it (1 to 16).
+[[nodiscard]] u32 ReadThreads();
+
 /// Reads the setting and indexes the folder (when the renderer starts). 0 bytes: off.
 void Start();
 

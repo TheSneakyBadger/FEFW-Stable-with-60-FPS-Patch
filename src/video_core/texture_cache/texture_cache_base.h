@@ -42,6 +42,7 @@
 #include "video_core/control/channel_state_cache.h"
 #include "video_core/delayed_destruction_ring.h"
 #include "video_core/engines/fermi_2d.h"
+#include "video_core/fefw_texture_disk_cache.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/descriptor_table.h"
 #include "video_core/texture_cache/dependency_cache.h"
@@ -725,11 +726,10 @@ private:
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
-    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed, up to 8 at a
-    /// time, half the CPU's threads at most).
-    Common::ThreadWorker disk_cache_worker{
-        std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U), "TextureDiskRead", {},
-        Common::ThreadPlacement::Efficiency};
+    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed; how many at a
+    /// time: FefwTextureDiskCache::ReadThreads).
+    Common::ThreadWorker disk_cache_worker{FefwTextureDiskCache::ReadThreads(), "TextureDiskRead",
+                                           {}, Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
     /// While FillImageViews runs: textures being read from disk that its draw uses, waited for

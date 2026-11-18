@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -23,6 +24,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/zstd_compression.h"
+#include "video_core/gpu_split.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -227,6 +229,30 @@ bool OnHardDrive(const std::filesystem::path& cache_folder) {
     }
     return false;
 #endif
+}
+
+u32 ReadThreads() {
+    static const u32 threads = [] {
+        if (const char* value = std::getenv("EDEN_DISK_READERS"); value && value[0] != '\0') {
+            const u32 wanted = static_cast<u32>(std::strtoul(value, nullptr, 10));
+            if (wanted >= 1 && wanted <= 16) {
+                LOG_INFO(Render_Vulkan, "Texture cache on disk: {} read threads (EDEN_DISK_READERS)",
+                         wanted);
+                return wanted;
+            }
+        }
+        const u32 fast_cores = VideoCommon::FastCoreCount();
+        if (fast_cores != 0 && fast_cores <= 4) {
+            LOG_INFO(Render_Vulkan,
+                     "Texture cache on disk: 1 read thread (this CPU has {} fast cores)",
+                     fast_cores);
+            return 1U;
+        }
+        const u32 count = std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U);
+        LOG_INFO(Render_Vulkan, "Texture cache on disk: {} read threads", count);
+        return count;
+    }();
+    return threads;
 }
 
 void Start() {

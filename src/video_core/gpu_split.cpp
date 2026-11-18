@@ -24,23 +24,6 @@
 
 namespace VideoCommon {
 
-namespace {
-
-
-void Pause() {
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
-    _mm_pause();
-#elif defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#elif defined(__aarch64__)
-    asm volatile("yield");
-#else
-    std::this_thread::yield();
-#endif
-}
-
-/// Cores of the fastest kind (performance cores on a hybrid CPU, every core otherwise), or 0
-/// when that can't be told.
 u32 FastCoreCount() {
 #ifdef _WIN32
     DWORD length = 0;
@@ -75,6 +58,22 @@ u32 FastCoreCount() {
     return 0;
 #endif
 }
+
+namespace {
+
+
+void Pause() {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
+#else
+    std::this_thread::yield();
+#endif
+}
+
 
 /// The split's second thread is busy whenever the game draws. With 4 or fewer fast cores (a
 /// laptop's 4 performance cores, a 4-core desktop) it competed with the game's own threads,
