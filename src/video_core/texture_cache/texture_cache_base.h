@@ -722,6 +722,9 @@ private:
                                            Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
+    /// Textures converted on the GPU because their read wasn't ready in time (for the log).
+    u32 disk_cache_fallbacks{};
+    u32 disk_cache_fallback_frames{};
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;

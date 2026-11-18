@@ -2464,8 +2464,18 @@ void TextureCache<P>::QueueAsyncUnswizzle(Image& image, ImageId image_id) {
 template <class P>
 void TextureCache<P>::TickAsyncDecode() {
     // Draws may wait up to 4 ms a frame in all for textures being read from disk (most take a
-    // millisecond or two); past that they're drawn when ready, as before.
+    // millisecond or two); past that they're converted on the GPU (WaitDiskCacheLoad).
     disk_cache_wait_left = std::chrono::milliseconds{4};
+    if (++disk_cache_fallback_frames >= 600) {
+        if (disk_cache_fallbacks != 0) {
+            LOG_INFO(HW_GPU,
+                     "Texture cache on disk, last 10 s: {} textures converted on the GPU instead "
+                     "(their reads weren't ready when drawn)",
+                     disk_cache_fallbacks);
+        }
+        disk_cache_fallbacks = 0;
+        disk_cache_fallback_frames = 0;
+    }
     bool has_uploads{};
     // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
     // frame; the rest wait for the next frames. Loading an area finished hundreds at once, and
@@ -3723,19 +3733,26 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
     if (decode->cancelled) {
         return;
     }
-    if (!decode->complete) {
-        if (disk_cache_wait_left <= std::chrono::nanoseconds::zero()) {
-            return;
-        }
+    if (!decode->complete && disk_cache_wait_left > std::chrono::nanoseconds::zero()) {
         const auto start = std::chrono::steady_clock::now();
         decode->ready.wait_for(lock, disk_cache_wait_left,
                                [decode] { return decode->complete.load(); });
         disk_cache_wait_left -= std::chrono::steady_clock::now() - start;
-        if (!decode->complete) {
-            return;
-        }
     }
     image.flags &= ~ImageFlagBits::IsDecoding;
+    if (!decode->complete) {
+        // Not read in time (this frame's wait is used up): converted on the GPU now, as without
+        // the cache, rather than drawn empty until the read is done. A burst (a cutscene's cut,
+        // #74) popped in over several frames. The read finishes and is dropped
+        // (TickAsyncDecode).
+        decode->cancelled = true;
+        lock.unlock();
+        ++disk_cache_fallbacks;
+        auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+        UploadImageContents(image, staging);
+        runtime.InsertUploadMemoryBarrier();
+        return;
+    }
     if (decode->failed) {
         // Gone or damaged: converted on the GPU now, as without the cache.
         lock.unlock();
