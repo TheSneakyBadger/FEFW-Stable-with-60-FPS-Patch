@@ -24,6 +24,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/vulkan_common/streamline.h"
+#include "video_core/renderer_vulkan/fefw_present_timing.h"
 #include "video_core/vulkan_common/streamline_api.h"
 
 #include <sl_security.h>
@@ -850,7 +851,10 @@ void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
         fg.frame_limit_us = limit_us;
     }
     // The emulator has no simulation of its own to mark: the frame's recording is all of it.
-    fg.reflex_sleep(*token);
+    {
+        FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
+        fg.reflex_sleep(*token);
+    }
     Marker(sl::PCLMarker::eSimulationStart, *token);
     Marker(sl::PCLMarker::eSimulationEnd, *token);
     Marker(sl::PCLMarker::eRenderSubmitStart, *token);
