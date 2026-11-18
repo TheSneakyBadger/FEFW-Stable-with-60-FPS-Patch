@@ -981,7 +981,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                                     compute_pass_descriptor_queue,
                                     Settings::AstcRecompressesToBc7());
             LOG_INFO(Render_Vulkan, "ASTC textures are decoded and re-compressed on the GPU");
-            FefwTextureDiskCache::Start();
+            FefwTextureDiskCache::Start(device.GetDeviceLocalMemory());
         }
     }
     if (!device.IsKhrImageFormatListSupported()) {
@@ -2602,9 +2602,13 @@ void TextureCacheRuntime::TickFrame() {
         const auto counts = FefwTextureDiskCache::TakeCounts();
         if (counts.loaded != 0 || counts.stored != 0) {
             LOG_INFO(Render_Vulkan,
-                     "Texture cache on disk, last 10 s: {} textures loaded, {} stored ({} MiB "
-                     "on disk)",
-                     counts.loaded, counts.stored, counts.bytes_on_disk >> 20);
+                     "Texture cache on disk, last 10 s: {} textures loaded ({:.1f} ms each on "
+                     "average, {:.1f} ms at most), {} stored ({} MiB on disk)",
+                     counts.loaded,
+                     counts.loaded ? static_cast<double>(counts.read_ns) / counts.loaded / 1e6
+                                   : 0.0,
+                     static_cast<double>(counts.read_max_ns) / 1e6, counts.stored,
+                     counts.bytes_on_disk >> 20);
         }
     }
     std::erase_if(free_transcodes, [this](PendingTranscode& t) {
@@ -3877,6 +3881,12 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
     runtime_ptr = &runtime;
     render_area.width = (std::min)(render_area.width, width);
     render_area.height = (std::min)(render_area.height, height);
+    // And within what the device allows: a pass without attachments takes the game's surface
+    // clip as its size (32768x32768 for Fortune's Weave's ambient occlusion, which writes storage
+    // images from its fragment shader), over AMD's 16384 limit, where RADV rasterized nothing:
+    // the occlusion stayed 0 and shaded areas went black (#44; found by BreakingIce16).
+    render_area.width = (std::min)(render_area.width, runtime.device.GetMaxFramebufferWidth());
+    render_area.height = (std::min)(render_area.height, runtime.device.GetMaxFramebufferHeight());
 
     if (do_resolve_color) {
         const u32 layers = static_cast<u32>((std::max)(num_layers, 1));

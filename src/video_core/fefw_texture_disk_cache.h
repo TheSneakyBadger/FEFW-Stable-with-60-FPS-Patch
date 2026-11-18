@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "common/common_types.h"
@@ -29,8 +30,20 @@ struct Key {
 /// writes would slow the game's own. Unknown (a network share, no answer): false.
 [[nodiscard]] bool OnHardDrive(const std::filesystem::path& folder);
 
-/// Reads the setting and indexes the folder (when the renderer starts). 0 bytes: off.
-void Start();
+/// How many threads read from the cache: half the CPU's threads, 2 to 8; 1 with 4 or fewer fast
+/// cores (a laptop's), where more took time from the game's own threads (#75).
+/// EDEN_DISK_READERS overrides it (1 to 16).
+[[nodiscard]] u32 ReadThreads();
+
+/// The video memory Fortune's Eden may use below which the cache is off (#75): a 4 GB card (about
+/// 2.9 GiB usable) can't hold a scene's textures, frees and reloads thousands a minute, and
+/// reading them back from disk fell behind converting them on the GPU (frames waited 4.7 s in
+/// 30 s). EDEN_TEXTURE_CACHE_SMALL_CARD=1 keeps it on.
+inline constexpr u64 SMALL_CARD_MEMORY = 4ULL << 30;
+
+/// Reads the setting and indexes the folder (when the renderer starts), given the video memory
+/// Fortune's Eden may use. 0 bytes: off.
+void Start(u64 video_memory);
 
 /// Waits for queued writes (when the renderer stops).
 void Stop();
@@ -40,8 +53,9 @@ void Stop();
 /// Whether there is an entry for this texture (it may still fail to load).
 [[nodiscard]] bool Contains(const Key& key);
 
-/// The stored data for this texture, exactly `size` bytes, if there is any. Any thread.
-[[nodiscard]] std::optional<std::vector<u8>> Load(const Key& key, u64 size);
+/// Reads the stored data for this texture into output (exactly its size), if there is any. Any
+/// thread.
+[[nodiscard]] bool LoadInto(const Key& key, std::span<u8> output);
 
 /// Stores the data (on the background thread).
 void Store(const Key& key, std::vector<u8> data);
@@ -51,6 +65,8 @@ struct Counts {
     u32 loaded;
     u32 stored;
     u64 bytes_on_disk;
+    u64 read_ns;     ///< Time the loads took on their threads, in all.
+    u64 read_max_ns; ///< The longest load.
 };
 [[nodiscard]] Counts TakeCounts();
 

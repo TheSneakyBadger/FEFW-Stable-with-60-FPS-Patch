@@ -35,6 +35,10 @@
 #include "core/hle/kernel/svc_results.h"
 #include "core/hle/service/am/service/graphics_supervisor.h"
 #include "video_core/fefw_load_stats.h"
+#if __has_include(<dynarmic/interface/fefw_jit_stats.h>)
+#include <dynarmic/interface/fefw_jit_stats.h>
+#define FEFW_HAS_JIT_STATS 1
+#endif
 #include "core/hle/service/am/service/graphics_session.h"
 #include "core/hle/service/am/service/gpu_session.h"
 #include "core/hle/service/am/service/graphics_supervisor_protocol.h"
@@ -1013,19 +1017,40 @@ private:
         u64 dropped{};
         u64 astc{};
         u64 astc_waits{};
+        // The game's code compiled for the PC (the JIT): blocks, time, code thrown away (#63).
+        u64 jit_blocks{};
+        u64 jit_ns{};
+        u64 jit_cache_clears{};
+        u64 jit_range_clears{};
 
         static LoadSnapshot Take() {
             auto& c = FefwLoadStats::Get();
-            return {c.graphics_pipelines.load(std::memory_order_relaxed),
-                    c.translations.load(std::memory_order_relaxed),
-                    c.compute_pipelines.load(std::memory_order_relaxed),
-                    c.draws_dropped.load(std::memory_order_relaxed),
-                    c.astc_textures.load(std::memory_order_relaxed),
-                    c.astc_waits.load(std::memory_order_relaxed)};
+            LoadSnapshot snapshot{c.graphics_pipelines.load(std::memory_order_relaxed),
+                                  c.translations.load(std::memory_order_relaxed),
+                                  c.compute_pipelines.load(std::memory_order_relaxed),
+                                  c.draws_dropped.load(std::memory_order_relaxed),
+                                  c.astc_textures.load(std::memory_order_relaxed),
+                                  c.astc_waits.load(std::memory_order_relaxed)};
+#ifdef FEFW_HAS_JIT_STATS
+            auto& j = Dynarmic::FefwJitStats::Get();
+            snapshot.jit_blocks = j.blocks.load(std::memory_order_relaxed);
+            snapshot.jit_ns = j.compile_ns.load(std::memory_order_relaxed);
+            snapshot.jit_cache_clears = j.cache_clears.load(std::memory_order_relaxed);
+            snapshot.jit_range_clears = j.range_clears.load(std::memory_order_relaxed);
+#endif
+            return snapshot;
         }
         LoadSnapshot operator-(const LoadSnapshot& o) const {
-            return {pipelines - o.pipelines, translations - o.translations, compute - o.compute,
-                    dropped - o.dropped,     astc - o.astc,               astc_waits - o.astc_waits};
+            return {pipelines - o.pipelines,
+                    translations - o.translations,
+                    compute - o.compute,
+                    dropped - o.dropped,
+                    astc - o.astc,
+                    astc_waits - o.astc_waits,
+                    jit_blocks - o.jit_blocks,
+                    jit_ns - o.jit_ns,
+                    jit_cache_clears - o.jit_cache_clears,
+                    jit_range_clears - o.jit_range_clears};
         }
         LoadSnapshot& operator+=(const LoadSnapshot& o) {
             pipelines += o.pipelines;
@@ -1034,12 +1059,19 @@ private:
             dropped += o.dropped;
             astc += o.astc;
             astc_waits += o.astc_waits;
+            jit_blocks += o.jit_blocks;
+            jit_ns += o.jit_ns;
+            jit_cache_clears += o.jit_cache_clears;
+            jit_range_clears += o.jit_range_clears;
             return *this;
         }
         std::string Text() const {
             return fmt::format("{} pipelines built ({} with new shaders), {} compute, {} draws "
-                               "skipped while building, {} ASTC textures ({} waits)",
-                               pipelines, translations, compute, dropped, astc, astc_waits);
+                               "skipped while building, {} ASTC textures ({} waits), game code "
+                               "compiled: {} blocks in {:.1f} ms (cache cleared {}x, ranges {}x)",
+                               pipelines, translations, compute, dropped, astc, astc_waits,
+                               jit_blocks, static_cast<double>(jit_ns) / 1e6, jit_cache_clears,
+                               jit_range_clears);
         }
     };
 
@@ -1055,6 +1087,8 @@ private:
             u32 over_100{};
             LoadSnapshot period_load{}; // at the start of the period
             LoadSnapshot slow_load{};   // summed over the frames over 100 ms
+            LoadSnapshot hitch_load{};  // summed over the frames over 40 ms
+            u32 over_40{};
         };
         static Pacing pacing;
         static LoadSnapshot last_load;
@@ -1077,6 +1111,10 @@ private:
         ++pacing.frames;
         pacing.total_ms += gap_ms;
         pacing.worst_ms = (std::max)(pacing.worst_ms, gap_ms);
+        if (gap_ms > 40.0) {
+            ++pacing.over_40;
+            pacing.hitch_load += since_last;
+        }
         if (gap_ms > 50.0) {
             ++pacing.over_50;
         }
@@ -1096,6 +1134,19 @@ private:
                      any ? "; " + period.Text() : std::string{},
                      pacing.over_100 ? "; in the frames over 100 ms: " + pacing.slow_load.Text()
                                      : std::string{});
+            // The game's code compiled for the PC, in the period and in its hitches (#63).
+            if (period.jit_blocks != 0 || pacing.over_40 != 0) {
+                LOG_INFO(Service_AM,
+                         "Game code compiled, last 10 s: {} blocks in {:.1f} ms (cache cleared "
+                         "{}x, ranges {}x); in the {} frames over 40 ms: {} blocks in {:.1f} ms "
+                         "(cache cleared {}x, ranges {}x), {} pipelines built, {} ASTC textures",
+                         period.jit_blocks, static_cast<double>(period.jit_ns) / 1e6,
+                         period.jit_cache_clears, period.jit_range_clears, pacing.over_40,
+                         pacing.hitch_load.jit_blocks,
+                         static_cast<double>(pacing.hitch_load.jit_ns) / 1e6,
+                         pacing.hitch_load.jit_cache_clears, pacing.hitch_load.jit_range_clears,
+                         pacing.hitch_load.pipelines, pacing.hitch_load.astc);
+            }
             pacing = Pacing{now, now};
             pacing.period_load = load;
         }

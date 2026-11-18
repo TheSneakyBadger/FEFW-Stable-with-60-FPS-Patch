@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -22,6 +24,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/zstd_compression.h"
+#include "video_core/gpu_split.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -56,6 +59,7 @@ struct Header {
 struct Entry {
     u64 size;      ///< Bytes on disk.
     u64 last_used; ///< Larger is newer.
+    bool used{};   ///< Loaded this run: its file's time is brought up to date when it stops.
 };
 
 struct Job {
@@ -78,6 +82,8 @@ std::unordered_set<u64> queued;
 u64 queued_bytes = 0;
 std::thread worker;
 std::atomic<u32> loaded_count{0};
+std::atomic<u64> read_ns{0};
+std::atomic<u64> read_max_ns{0};
 std::atomic<u32> stored_count{0};
 
 u64 NameOf(const Key& key) {
@@ -225,7 +231,31 @@ bool OnHardDrive(const std::filesystem::path& cache_folder) {
 #endif
 }
 
-void Start() {
+u32 ReadThreads() {
+    static const u32 threads = [] {
+        if (const char* value = std::getenv("EDEN_DISK_READERS"); value && value[0] != '\0') {
+            const u32 wanted = static_cast<u32>(std::strtoul(value, nullptr, 10));
+            if (wanted >= 1 && wanted <= 16) {
+                LOG_INFO(Render_Vulkan, "Texture cache on disk: {} read threads (EDEN_DISK_READERS)",
+                         wanted);
+                return wanted;
+            }
+        }
+        const u32 fast_cores = VideoCommon::FastCoreCount();
+        if (fast_cores != 0 && fast_cores <= 4) {
+            LOG_INFO(Render_Vulkan,
+                     "Texture cache on disk: 1 read thread (this CPU has {} fast cores)",
+                     fast_cores);
+            return 1U;
+        }
+        const u32 count = std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U);
+        LOG_INFO(Render_Vulkan, "Texture cache on disk: {} read threads", count);
+        return count;
+    }();
+    return threads;
+}
+
+void Start(u64 video_memory) {
     Stop();
     u64 limit = 0;
     switch (Settings::values.texture_disk_cache.GetValue()) {
@@ -257,6 +287,20 @@ void Start() {
         LOG_WARNING(Render_Vulkan, "Texture cache on disk: can't create {}: {}",
                     folder.string(), ec.message());
         return;
+    }
+    // Too little video memory: textures are freed and reloaded so often that reading them back
+    // from disk falls behind converting them on the GPU (#75). Remembered for the home screen.
+    const bool small_card = video_memory != 0 && video_memory < SMALL_CARD_MEMORY;
+    Settings::values.fefw_texture_cache_small_card.SetValue(small_card);
+    if (small_card) {
+        const char* const keep = std::getenv("EDEN_TEXTURE_CACHE_SMALL_CARD");
+        if (!keep || keep[0] != '1') {
+            LOG_INFO(Render_Vulkan,
+                     "Texture cache on disk: off, the graphics card has {} MiB of video memory "
+                     "to use (under {} MiB; EDEN_TEXTURE_CACHE_SMALL_CARD=1 keeps it on)",
+                     video_memory >> 20, SMALL_CARD_MEMORY >> 20);
+            return;
+        }
     }
     // On a hard drive its reads and writes would slow the game's own (its maps, its movies), for
     // freezes of seconds: the cache is off there.
@@ -310,6 +354,23 @@ void Stop() {
     std::scoped_lock lock{mutex};
     enabled = false;
     stopping = false;
+    // The entries loaded this run get file times in the order they were last used (after the
+    // newest written), so the least recently used go first after a restart. (Loads used to do
+    // this one by one, a file system write in each read.)
+    std::vector<std::pair<u64, u64>> used;
+    for (auto& [name, entry] : index) {
+        if (entry.used) {
+            used.emplace_back(entry.last_used, name);
+            entry.used = false;
+        }
+    }
+    std::ranges::sort(used);
+    const auto now = fs::file_time_type::clock::now();
+    std::error_code ec;
+    for (size_t i = 0; i < used.size(); ++i) {
+        fs::last_write_time(PathOf(used[i].second),
+                            now + std::chrono::milliseconds{static_cast<s64>(i)}, ec);
+    }
 }
 
 bool Enabled() {
@@ -323,29 +384,30 @@ bool Contains(const Key& key) {
     return enabled && index.contains(name);
 }
 
-std::optional<std::vector<u8>> Load(const Key& key, u64 size) {
+bool LoadInto(const Key& key, std::span<u8> output) {
+    const auto start = std::chrono::steady_clock::now();
     const u64 name = NameOf(key);
     fs::path path;
     {
         std::scoped_lock lock{mutex};
         if (!enabled || !index.contains(name)) {
-            return std::nullopt;
+            return false;
         }
         path = PathOf(name);
     }
-    std::vector<u8> result;
     bool good = false;
     {
+        thread_local std::vector<u8> compressed;
         std::ifstream file{path, std::ios::binary};
         Header header{};
         if (file.read(reinterpret_cast<char*>(&header), sizeof(header)) &&
             header.magic == MAGIC && header.version == VERSION && SameKey(header.key, key) &&
-            header.raw_size == size && header.compressed_size < (1ULL << 31)) {
-            std::vector<u8> compressed(header.compressed_size);
+            header.raw_size == output.size() && header.compressed_size < (1ULL << 31)) {
+            compressed.resize(header.compressed_size);
             if (file.read(reinterpret_cast<char*>(compressed.data()),
                           static_cast<std::streamsize>(compressed.size()))) {
-                result.resize(size);
-                good = Common::Compression::DecompressDataZSTD(compressed, result) == size;
+                good = Common::Compression::DecompressDataZSTD(compressed, output) ==
+                       output.size();
             }
         }
     }
@@ -359,15 +421,21 @@ std::optional<std::vector<u8>> Load(const Key& key, u64 size) {
         }
         std::error_code ec;
         fs::remove(path, ec);
-        return std::nullopt;
+        return false;
     }
     if (it != index.end()) {
         it->second.last_used = ++use_counter;
+        it->second.used = true;
     }
-    std::error_code ec;
-    fs::last_write_time(path, fs::file_time_type::clock::now(), ec);
     ++loaded_count;
-    return result;
+    const u64 ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now() - start)
+                                        .count());
+    read_ns += ns;
+    u64 max = read_max_ns.load();
+    while (ns > max && !read_max_ns.compare_exchange_weak(max, ns)) {
+    }
+    return true;
 }
 
 void Store(const Key& key, std::vector<u8> data) {
@@ -387,7 +455,8 @@ void Store(const Key& key, std::vector<u8> data) {
 
 Counts TakeCounts() {
     std::scoped_lock lock{mutex};
-    return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes};
+    return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes,
+                  read_ns.exchange(0), read_max_ns.exchange(0)};
 }
 
 } // namespace FefwTextureDiskCache

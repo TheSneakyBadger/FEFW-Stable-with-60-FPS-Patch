@@ -761,6 +761,15 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     graphics_queue = logical.GetQueue(graphics_family);
     present_queue = logical.GetQueue(present_family);
+    // Fortune's Eden: presenting on a queue of its own (#63; EDEN_PRESENT_QUEUE=0: off), the last one
+    // made in the graphics family, so a present that blocks (NVIDIA DLSS frame generation pacing
+    // its frames: 2-4.7 s in every 10 on a laptop RTX 4080) doesn't hold up the game's work.
+    if (WantsOwnPresentQueue()) {
+        present_queue = logical.GetQueue(graphics_family, EmulatorGraphicsQueues());
+        has_own_present_queue = true;
+        LOG_INFO(Render_Vulkan, "Presenting on a queue of its own (graphics family queue {})",
+                 EmulatorGraphicsQueues());
+    }
 
 #ifdef EGLANTINE_STREAMLINE
     if (streamline_extensions) {
@@ -1810,11 +1819,14 @@ void Device::CollectToolingInfo() {
 #endif
 }
 
-std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
-    static constexpr std::array<float, 16> QUEUE_PRIORITIES{
-        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+u32 Device::GraphicsFamilyQueueCount() const {
+    const std::vector queue_family_properties = physical.GetQueueFamilyProperties();
+    return graphics_family < queue_family_properties.size()
+               ? queue_family_properties[graphics_family].queueCount
+               : 1;
+}
 
+u32 Device::EmulatorGraphicsQueues() const {
     // NVIDIA Streamline's features may want queues of their own in the graphics family, after
     // the emulator's (DLSS frame generation).
     u32 graphics_queues = 1;
@@ -1822,22 +1834,41 @@ std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
     if (Streamline::WantsDevice()) {
         const Streamline::ExtraQueues extra = Streamline::GetExtraQueues();
         const u32 wanted = 1 + extra.graphics + extra.compute;
-        const std::vector queue_family_properties = physical.GetQueueFamilyProperties();
-        const u32 available =
-            graphics_family < queue_family_properties.size()
-                ? queue_family_properties[graphics_family].queueCount
-                : 1;
-        if (wanted > 1 && wanted <= (std::min)(available, static_cast<u32>(QUEUE_PRIORITIES.size()))) {
+        if (wanted > 1 && wanted <= (std::min)(GraphicsFamilyQueueCount(), 16U)) {
             graphics_queues = wanted;
-            LOG_INFO(Render_Vulkan, "NVIDIA Streamline: {} extra graphics-family queues",
-                     wanted - 1);
-        } else if (wanted > 1) {
-            LOG_WARNING(Render_Vulkan,
-                        "NVIDIA Streamline wants {} extra queues; the graphics family has {}",
-                        wanted - 1, available);
         }
     }
 #endif
+    return graphics_queues;
+}
+
+bool Device::WantsOwnPresentQueue() const {
+    // On wherever the graphics family has a queue to spare (NVIDIA: 16; AMD and Intel usually
+    // 1, where this stays off). EDEN_PRESENT_QUEUE=0 turns it off.
+    static const bool wanted = [] {
+        const char* const value = std::getenv("EDEN_PRESENT_QUEUE");
+        return !(value && value[0] == '0');
+    }();
+    if (!wanted || present_family != graphics_family) {
+        return false;
+    }
+    const u32 needed = EmulatorGraphicsQueues() + 1;
+    return needed <= (std::min)(GraphicsFamilyQueueCount(), 16U);
+}
+
+std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
+    static constexpr std::array<float, 16> QUEUE_PRIORITIES{
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+
+    u32 graphics_queues = EmulatorGraphicsQueues();
+    if (graphics_queues > 1) {
+        LOG_INFO(Render_Vulkan, "NVIDIA Streamline: {} extra graphics-family queues",
+                 graphics_queues - 1);
+    }
+    if (WantsOwnPresentQueue()) {
+        ++graphics_queues;
+    }
 
     ::Common::unordered_set<u32> unique_queue_families{graphics_family, present_family};
     std::vector<VkDeviceQueueCreateInfo> queue_cis;

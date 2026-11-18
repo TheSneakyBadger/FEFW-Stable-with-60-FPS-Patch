@@ -289,6 +289,12 @@ public:
         return present_queue;
     }
 
+    /// Fortune's Eden: whether presents (and the copies into the swapchain) go to a queue of their
+    /// own rather than the graphics queue (#63).
+    bool HasOwnPresentQueue() const {
+        return has_own_present_queue;
+    }
+
     /// Returns main graphics queue family index.
     u32 GetGraphicsFamily() const {
         return graphics_family;
@@ -374,7 +380,9 @@ public:
     FN_MAX_LIMIT_ELEM(DescriptorSetStorageBuffersDynamic) \
     FN_MAX_LIMIT_ELEM(DescriptorSetSampledImages) \
     FN_MAX_LIMIT_ELEM(DescriptorSetStorageImages) \
-    FN_MAX_LIMIT_ELEM(DescriptorSetInputAttachments)
+    FN_MAX_LIMIT_ELEM(DescriptorSetInputAttachments) \
+    FN_MAX_LIMIT_ELEM(FramebufferWidth) \
+    FN_MAX_LIMIT_ELEM(FramebufferHeight)
 #define FN_MAX_LIMIT_ELEM(name) \
     u32 GetMax##name() const { return properties.properties.limits.max##name; }
 FN_MAX_LIMIT_LIST
@@ -1145,6 +1153,12 @@ private:
 
     /// Returns a list of queue initialization descriptors.
     std::vector<VkDeviceQueueCreateInfo> GetDeviceQueueCreateInfos() const;
+    u32 GraphicsFamilyQueueCount() const;
+    /// The graphics-family queues the emulator and NVIDIA Streamline use (the first is the
+    /// emulator's).
+    u32 EmulatorGraphicsQueues() const;
+    /// Whether presents go to a queue of their own (#63; EDEN_PRESENT_QUEUE=0: off).
+    bool WantsOwnPresentQueue() const;
 
     /// Returns true if ASTC textures are natively supported.
     bool ComputeIsOptimalAstcSupported() const;
@@ -1168,6 +1182,7 @@ private:
     vk::Device logical;          ///< Logical device.
     vk::Queue graphics_queue;    ///< Main graphics queue.
     vk::Queue present_queue;     ///< Main present queue.
+    bool has_own_present_queue{}; ///< Fortune's Eden: present_queue isn't graphics_queue (#63).
     vk::PipelineCache static_pipeline_cache;
     bool owns_static_pipeline_cache{};
     u32 instance_version{};      ///< Vulkan instance version.
