@@ -96,10 +96,12 @@ void Conductor::VsyncThread(std::stop_token token) {
         if (m_reflex_paced.load(std::memory_order_relaxed)) {
             // NVIDIA Reflex sets when each vsync comes: the timer isn't waited for (at 60 Hz the
             // two clocks beat, Reflex at 59.5 a second waiting out ticks that came late: the game
-            // averaged 58.6). Never sooner than the timer's own interval after the last one, for
-            // the frames Reflex doesn't sleep before.
+            // averaged 58.6). About the timer's own interval after the last one at the soonest,
+            // for the frames Reflex doesn't sleep before: 1 ms less, as the sleep overshoots by
+            // up to a millisecond (with the whole interval it was the limit itself: 56.7 a second).
             std::this_thread::sleep_until(last_vsync +
-                                          std::chrono::nanoseconds{this->GetNextTicks()});
+                                          std::chrono::nanoseconds{this->GetNextTicks()} -
+                                          std::chrono::milliseconds{1});
         } else {
             m_signal.Wait();
         }
