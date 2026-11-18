@@ -14,4 +14,9 @@ namespace FefwFrameGenHook {
 
 inline std::atomic<bool (*)()> vsync_sleep{nullptr};
 
+/// Who sets when each vsync comes while Reflex sleeps there: the vsync timer, at the frame
+/// generation rate, as with AMD FSR 3.1 (true), with Reflex's limit a little above it; or
+/// Reflex's frame limit (false: EDEN_DLSSG_PACER=reflex).
+inline std::atomic<bool> timer_paces{true};
+
 } // namespace FefwFrameGenHook
