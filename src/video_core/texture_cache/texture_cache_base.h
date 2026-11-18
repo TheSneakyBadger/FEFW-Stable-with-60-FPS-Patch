@@ -93,6 +93,8 @@ struct AsyncDecodeContext {
     bool failed{};
     /// Signalled (with the mutex held) when complete is set, for a draw waiting on it.
     std::condition_variable ready;
+    /// When a texture cache read was queued (for the log).
+    std::chrono::steady_clock::time_point queued_at{};
 };
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
@@ -716,6 +718,10 @@ private:
     // the worker's thread is joined (finishing the decode it is on) only when the worker is
     // destroyed. The other way round, stopping the emulation while a texture was decoding
     // (accelerate_astc=CpuAsynchronous) let that decode write into a freed context and crashed.
+    /// For the log: from a texture cache read being queued to its result (written by the read
+    /// threads, so declared before them).
+    std::atomic<u64> disk_read_latency_ns{};
+    std::atomic<u32> disk_read_latency_count{};
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
@@ -729,6 +735,10 @@ private:
     /// Textures converted on the GPU because their read wasn't ready in time (for the log).
     u32 disk_cache_fallbacks{};
     u32 disk_cache_fallback_frames{};
+    /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
+    u64 disk_hash_ns{};
+    u64 disk_hash_bytes{};
+    u64 disk_wait_ns{};
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;

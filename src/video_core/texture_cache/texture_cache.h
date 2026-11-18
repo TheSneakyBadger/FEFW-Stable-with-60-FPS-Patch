@@ -2155,6 +2155,7 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 }
                 image.flags &= ~ImageFlagBits::IsDecoding;
             }
+            const auto hash_start = std::chrono::steady_clock::now();
             thread_local std::vector<u8> guest_bytes;
             guest_bytes.resize(MapSizeBytes(image));
             gpu_memory->ReadBlock(image.gpu_addr, guest_bytes.data(), guest_bytes.size(),
@@ -2162,6 +2163,10 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
             const u64 hash = Common::CityHash64(
                 reinterpret_cast<const char*>(guest_bytes.data()),
                 (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size()));
+            disk_hash_ns += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                 std::chrono::steady_clock::now() - hash_start)
+                                                 .count());
+            disk_hash_bytes += guest_bytes.size();
             const auto uploads = FullUploadSwizzles(image.info);
             if (auto plan = runtime.PlanDiskCacheLoad(image, hash, uploads)) {
                 runtime.TransitionImageLayout(image);
@@ -2171,17 +2176,25 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 decode->image_id = image_id;
                 decode->sized_by_data = true;
                 async_decodes.push_back(std::move(decode));
-                disk_cache_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
-                    auto data = plan.load();
+                decode_ptr->queued_at = std::chrono::steady_clock::now();
+                disk_cache_worker.QueueWork([this, plan = std::move(*plan), decode_ptr]() mutable {
+                    // Read straight into the result: nothing else touches decoded_data until
+                    // complete is set (under the mutex, below).
+                    decode_ptr->decoded_data.resize_destructive(plan.size);
+                    const bool loaded = plan.load(
+                        std::span<u8>{decode_ptr->decoded_data.data(), plan.size});
                     std::unique_lock lock{decode_ptr->mutex};
-                    if (data) {
-                        decode_ptr->decoded_data.resize_destructive(data->size());
-                        std::memcpy(decode_ptr->decoded_data.data(), data->data(), data->size());
+                    if (loaded) {
                         decode_ptr->copies = std::move(plan.copies);
                     } else {
                         // Gone or damaged: converted on the GPU at the image's next use.
                         decode_ptr->failed = true;
                     }
+                    disk_read_latency_ns += static_cast<u64>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - decode_ptr->queued_at)
+                            .count());
+                    ++disk_read_latency_count;
                     decode_ptr->complete = true;
                     // With the mutex held: once it's released the context may be freed.
                     decode_ptr->ready.notify_all();
@@ -2469,14 +2482,23 @@ void TextureCache<P>::TickAsyncDecode() {
     // than reading them (frames of 0.2-1 s against 0.1-0.2 s), so the cache did nothing.
     disk_cache_wait_left = std::chrono::milliseconds{40};
     if (++disk_cache_fallback_frames >= 600) {
-        if (disk_cache_fallbacks != 0) {
+        const u32 reads = disk_read_latency_count.exchange(0);
+        const u64 latency_ns = disk_read_latency_ns.exchange(0);
+        if (reads != 0 || disk_cache_fallbacks != 0 || disk_hash_bytes != 0) {
             LOG_INFO(HW_GPU,
-                     "Texture cache on disk, last 10 s: {} textures converted on the GPU instead "
-                     "(their reads weren't ready when drawn)",
-                     disk_cache_fallbacks);
+                     "Texture cache on disk, last 10 s: {} reads ready {:.1f} ms after being "
+                     "queued on average; draws waited {:.0f} ms for them; {} converted on the GPU "
+                     "instead (not ready in time); {:.0f} ms hashing {} MiB of the game's "
+                     "textures",
+                     reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
+                     static_cast<double>(disk_wait_ns) / 1e6, disk_cache_fallbacks,
+                     static_cast<double>(disk_hash_ns) / 1e6, disk_hash_bytes >> 20);
         }
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
+        disk_hash_ns = 0;
+        disk_hash_bytes = 0;
+        disk_wait_ns = 0;
     }
     bool has_uploads{};
     // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
@@ -3739,7 +3761,10 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
         const auto start = std::chrono::steady_clock::now();
         decode->ready.wait_for(lock, disk_cache_wait_left,
                                [decode] { return decode->complete.load(); });
-        disk_cache_wait_left -= std::chrono::steady_clock::now() - start;
+        const auto waited = std::chrono::steady_clock::now() - start;
+        disk_cache_wait_left -= waited;
+        disk_wait_ns += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(waited).count());
     }
     image.flags &= ~ImageFlagBits::IsDecoding;
     if (!decode->complete) {

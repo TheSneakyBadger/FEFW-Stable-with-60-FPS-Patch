@@ -2585,9 +2585,13 @@ void TextureCacheRuntime::TickFrame() {
         const auto counts = FefwTextureDiskCache::TakeCounts();
         if (counts.loaded != 0 || counts.stored != 0) {
             LOG_INFO(Render_Vulkan,
-                     "Texture cache on disk, last 10 s: {} textures loaded, {} stored ({} MiB "
-                     "on disk)",
-                     counts.loaded, counts.stored, counts.bytes_on_disk >> 20);
+                     "Texture cache on disk, last 10 s: {} textures loaded ({:.1f} ms each on "
+                     "average, {:.1f} ms at most), {} stored ({} MiB on disk)",
+                     counts.loaded,
+                     counts.loaded ? static_cast<double>(counts.read_ns) / counts.loaded / 1e6
+                                   : 0.0,
+                     static_cast<double>(counts.read_max_ns) / 1e6, counts.stored,
+                     counts.bytes_on_disk >> 20);
         }
     }
     std::erase_if(free_transcodes, [this](PendingTranscode& t) {

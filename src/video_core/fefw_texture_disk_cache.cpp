@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -56,6 +57,7 @@ struct Header {
 struct Entry {
     u64 size;      ///< Bytes on disk.
     u64 last_used; ///< Larger is newer.
+    bool used{};   ///< Loaded this run: its file's time is brought up to date when it stops.
 };
 
 struct Job {
@@ -78,6 +80,8 @@ std::unordered_set<u64> queued;
 u64 queued_bytes = 0;
 std::thread worker;
 std::atomic<u32> loaded_count{0};
+std::atomic<u64> read_ns{0};
+std::atomic<u64> read_max_ns{0};
 std::atomic<u32> stored_count{0};
 
 u64 NameOf(const Key& key) {
@@ -310,6 +314,23 @@ void Stop() {
     std::scoped_lock lock{mutex};
     enabled = false;
     stopping = false;
+    // The entries loaded this run get file times in the order they were last used (after the
+    // newest written), so the least recently used go first after a restart. (Loads used to do
+    // this one by one, a file system write in each read.)
+    std::vector<std::pair<u64, u64>> used;
+    for (auto& [name, entry] : index) {
+        if (entry.used) {
+            used.emplace_back(entry.last_used, name);
+            entry.used = false;
+        }
+    }
+    std::ranges::sort(used);
+    const auto now = fs::file_time_type::clock::now();
+    std::error_code ec;
+    for (size_t i = 0; i < used.size(); ++i) {
+        fs::last_write_time(PathOf(used[i].second),
+                            now + std::chrono::milliseconds{static_cast<s64>(i)}, ec);
+    }
 }
 
 bool Enabled() {
@@ -323,29 +344,30 @@ bool Contains(const Key& key) {
     return enabled && index.contains(name);
 }
 
-std::optional<std::vector<u8>> Load(const Key& key, u64 size) {
+bool LoadInto(const Key& key, std::span<u8> output) {
+    const auto start = std::chrono::steady_clock::now();
     const u64 name = NameOf(key);
     fs::path path;
     {
         std::scoped_lock lock{mutex};
         if (!enabled || !index.contains(name)) {
-            return std::nullopt;
+            return false;
         }
         path = PathOf(name);
     }
-    std::vector<u8> result;
     bool good = false;
     {
+        thread_local std::vector<u8> compressed;
         std::ifstream file{path, std::ios::binary};
         Header header{};
         if (file.read(reinterpret_cast<char*>(&header), sizeof(header)) &&
             header.magic == MAGIC && header.version == VERSION && SameKey(header.key, key) &&
-            header.raw_size == size && header.compressed_size < (1ULL << 31)) {
-            std::vector<u8> compressed(header.compressed_size);
+            header.raw_size == output.size() && header.compressed_size < (1ULL << 31)) {
+            compressed.resize(header.compressed_size);
             if (file.read(reinterpret_cast<char*>(compressed.data()),
                           static_cast<std::streamsize>(compressed.size()))) {
-                result.resize(size);
-                good = Common::Compression::DecompressDataZSTD(compressed, result) == size;
+                good = Common::Compression::DecompressDataZSTD(compressed, output) ==
+                       output.size();
             }
         }
     }
@@ -359,15 +381,21 @@ std::optional<std::vector<u8>> Load(const Key& key, u64 size) {
         }
         std::error_code ec;
         fs::remove(path, ec);
-        return std::nullopt;
+        return false;
     }
     if (it != index.end()) {
         it->second.last_used = ++use_counter;
+        it->second.used = true;
     }
-    std::error_code ec;
-    fs::last_write_time(path, fs::file_time_type::clock::now(), ec);
     ++loaded_count;
-    return result;
+    const u64 ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now() - start)
+                                        .count());
+    read_ns += ns;
+    u64 max = read_max_ns.load();
+    while (ns > max && !read_max_ns.compare_exchange_weak(max, ns)) {
+    }
+    return true;
 }
 
 void Store(const Key& key, std::vector<u8> data) {
@@ -387,7 +415,8 @@ void Store(const Key& key, std::vector<u8> data) {
 
 Counts TakeCounts() {
     std::scoped_lock lock{mutex};
-    return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes};
+    return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes,
+                  read_ns.exchange(0), read_max_ns.exchange(0)};
 }
 
 } // namespace FefwTextureDiskCache

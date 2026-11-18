@@ -74,8 +74,8 @@ public:
         FefwTextureDiskCache::Key key;
         u64 size;
         boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
-        [[nodiscard]] std::optional<std::vector<u8>> load() const {
-            return FefwTextureDiskCache::Load(key, size);
+        [[nodiscard]] bool load(std::span<u8> output) const {
+            return FefwTextureDiskCache::LoadInto(key, output);
         }
     };
     [[nodiscard]] std::optional<DiskCacheLoad> PlanDiskCacheLoad(

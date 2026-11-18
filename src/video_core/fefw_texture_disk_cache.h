@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "common/common_types.h"
@@ -40,8 +41,9 @@ void Stop();
 /// Whether there is an entry for this texture (it may still fail to load).
 [[nodiscard]] bool Contains(const Key& key);
 
-/// The stored data for this texture, exactly `size` bytes, if there is any. Any thread.
-[[nodiscard]] std::optional<std::vector<u8>> Load(const Key& key, u64 size);
+/// Reads the stored data for this texture into output (exactly its size), if there is any. Any
+/// thread.
+[[nodiscard]] bool LoadInto(const Key& key, std::span<u8> output);
 
 /// Stores the data (on the background thread).
 void Store(const Key& key, std::vector<u8> data);
@@ -51,6 +53,8 @@ struct Counts {
     u32 loaded;
     u32 stored;
     u64 bytes_on_disk;
+    u64 read_ns;     ///< Time the loads took on their threads, in all.
+    u64 read_max_ns; ///< The longest load.
 };
 [[nodiscard]] Counts TakeCounts();
 
