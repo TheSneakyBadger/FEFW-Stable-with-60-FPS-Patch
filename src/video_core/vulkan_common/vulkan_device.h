@@ -1157,7 +1157,7 @@ private:
     /// The graphics-family queues the emulator and NVIDIA Streamline use (the first is the
     /// emulator's).
     u32 EmulatorGraphicsQueues() const;
-    /// Whether presents go to a queue of their own (EDEN_PRESENT_QUEUE=1, #63).
+    /// Whether presents go to a queue of their own (#63; EDEN_PRESENT_QUEUE=0: off).
     bool WantsOwnPresentQueue() const;
 
     /// Returns true if ASTC textures are natively supported.
