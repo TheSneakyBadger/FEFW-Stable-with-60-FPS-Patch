@@ -114,6 +114,18 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
             critical_memory = (std::max)(critical_memory,
                                          static_cast<u64>(device_local_memory) / 100 * 92);
         }
+        // Testing (#73): EDEN_TC_EXPECTED_PCT=N (50-95) puts the faster cleanup at N% of the
+        // limit, and the hard one halfway from there to it. On a 6 GB card it starts at about
+        // 48% (2.3 of 4.7 GiB), with GPU-drawn images written back and freed every few seconds;
+        // map patches looked wrong after teleports there.
+        if (const char* pct_text = std::getenv("EDEN_TC_EXPECTED_PCT"); pct_text != nullptr) {
+            const u64 pct = std::clamp<u64>(std::strtoull(pct_text, nullptr, 10), 50, 95);
+            expected_memory = static_cast<u64>(device_local_memory) / 100 * pct;
+            critical_memory = expected_memory +
+                              (static_cast<u64>(device_local_memory) - expected_memory) / 2;
+            LOG_INFO(HW_GPU, "Texture cache memory: faster cleanup at {}% (EDEN_TC_EXPECTED_PCT)",
+                     pct);
+        }
         critical_memory = (std::max)(critical_memory, expected_memory + 256_MiB);
     } else {
         expected_memory = DEFAULT_EXPECTED_MEMORY + 512_MiB;
