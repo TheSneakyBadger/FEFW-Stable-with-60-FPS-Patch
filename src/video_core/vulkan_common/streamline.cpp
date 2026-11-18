@@ -772,6 +772,7 @@ void ApplyFrameLimit(FrameGenRuntime& fg, u32 limit_us) {
 }
 
 sl::FrameToken* Token(u64 index);
+void Marker(sl::PCLMarker marker, const sl::FrameToken& token);
 
 /// The vsync thread, before each vsync it signals: NVIDIA Reflex's sleep, where a native game
 /// calls it (the start of its frame), with Reflex's frame limit as the only pacer: exactly the
@@ -807,6 +808,11 @@ bool VsyncSleep() {
         FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
         fg.reflex_sleep(*token);
     }
+    // The game's frame starts now: its simulation runs from here until the GPU thread has its
+    // frame (FrameGenSimulationEnd). Marked on the GPU thread instead, Reflex saw almost no
+    // simulation time, took the GPU to be the bottleneck and slept up to 30 ms a frame with the
+    // card far from busy (test 88: the game at 53-55 with the vsync thread asleep 8-9 s in 10 s).
+    Marker(sl::PCLMarker::eSimulationStart, *token);
     vsync_paced_ns.store(NowNs(), std::memory_order_relaxed);
     return true;
 }
@@ -937,8 +943,12 @@ void FrameGenSleep(u64 index) {
                   : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
                                      (100 - margin_percent) / 100);
     // With Reflex sleeping at the game's vsync, only the vsync thread sets the limit (both
-    // setting it, it flipped between 119 and 121.4 FPS shown each time frame generation started).
+    // setting it, it flipped between 119 and 121.4 FPS shown each time frame generation started),
+    // sleeps and marks the simulation's start.
     const bool vsync_paced = VsyncPaced();
+    if (vsync_paced) {
+        return;
+    }
     if (FefwFrameGenHook::vsync_sleep.load(std::memory_order_relaxed) == nullptr) {
         ApplyFrameLimit(fg, limit_us);
     }
