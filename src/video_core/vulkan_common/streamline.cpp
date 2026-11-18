@@ -1451,6 +1451,8 @@ NgxParameter* GetNgxParameters() {
     return GetState().params;
 }
 
+void FrameGenSleep(u64 /*index*/) {}
+
 void FrameGenTagFrame(VkCommandBuffer /*cmdbuf*/, const FrameGenInputs& /*inputs*/) {}
 void FrameGenPresentStart(u64 /*index*/, bool /*tagged*/) {}
 void FrameGenPresentEnd(u64 /*index*/, bool /*tagged*/) {}
