@@ -836,9 +836,19 @@ void FrameGenSleep(u64 index) {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_LIMIT");
         return value && value[0] == '0';
     }();
+    // A little above the game's own pacing (2% by default: 109 shown becomes about 111): at the
+    // same rate the two limiters took turns, Reflex holding back each frame that came a fraction
+    // early (1-5 s asleep in every 10 s at the cap), so the frames came unevenly. Reflex still
+    // catches a game running ahead of its pacing. EDEN_DLSSG_REFLEX_MARGIN=<percent> (0: same rate).
+    static const s64 margin_percent = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_REFLEX_MARGIN");
+        return value ? static_cast<s64>(std::clamp(std::atoi(value), 0, 20)) : s64{2};
+    }();
     const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
     const u32 limit_us =
-        limit_off ? 0U : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown);
+        limit_off ? 0U
+                  : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
+                                     (100 - margin_percent) / 100);
     if (limit_us != fg.frame_limit_us) {
         sl::ReflexOptions reflex{};
         reflex.mode = fg.reflex_mode;
