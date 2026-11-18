@@ -1,0 +1,42 @@
+# One-off: once the v1.7.5.5 Linux build (linux-build 10961b2) is on the test-builds branch, put
+# it on the v1.7.5.5 release as Fortunes-Eden-linux-x86_64.tar.gz and Fortunes-Eden-x86_64.AppImage.
+name: Upload v1.7.5.5 Linux assets
+on:
+  push:
+    branches: [release-assets-v1.7.5.5-linux]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Wait for the v1.7.5.5 Linux build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 280); do
+            rm -rf tb
+            git clone -q --depth=1 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
+            if git -C tb log -1 --format=%s | grep -q "Fortunes-Eden-v1.7.5.5-linux-x86_64-10961b2"; then break; fi
+            rm -rf tb
+            sleep 60
+          done
+          test -d tb || { echo "The v1.7.5.5 Linux build never arrived"; exit 1; }
+          cd tb
+          mkdir x && tar -xzf Fortunes-Eden-linux-x86_64.tar.gz -C x
+          cp x/Fortunes-Eden-v1.7.5.5-linux-x86_64-10961b2/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
+          cp Fortunes-Eden-linux-x86_64.tar.gz ..
+          cd ..
+          sha256sum Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage
+      - name: Wait for the v1.7.5.5 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 120); do gh release view v1.7.5.5 -R "${{ github.repository }}" >/dev/null 2>&1 && exit 0; sleep 60; done; exit 1
+      - name: Upload to the v1.7.5.5 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.7.5.5 Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage --clobber -R "${{ github.repository }}"
+          gh release view v1.7.5.5 -R "${{ github.repository }}" --json assets --jq '.assets[] | "\(.name) \(.size)"'
