@@ -936,8 +936,10 @@ void FrameGenSleep(u64 index) {
         limit_off ? 0U
                   : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
                                      (100 - margin_percent) / 100);
+    // With Reflex sleeping at the game's vsync, only the vsync thread sets the limit (both
+    // setting it, it flipped between 119 and 121.4 FPS shown each time frame generation started).
     const bool vsync_paced = VsyncPaced();
-    if (!vsync_paced) {
+    if (FefwFrameGenHook::vsync_sleep.load(std::memory_order_relaxed) == nullptr) {
         ApplyFrameLimit(fg, limit_us);
     }
     static const bool sleep_off = [] {
