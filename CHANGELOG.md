@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.7.5.6
+
+NVIDIA DLSS frame generation paced the way native PC games do it, and extracted games found from the folder that holds them.
+
+- **Much smoother NVIDIA DLSS frame generation** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). NVIDIA Reflex now waits at the start of the game's frame (its vsync), as in a native game, and it's told when each of the game's frames really starts. The game's frames are spaced by the emulator's vsync timer on a fixed schedule, as with AMD FSR 3.1, with Reflex's frame limit just above it so the two never take turns holding frames back. Before, Reflex waited at the wrong point and was told the wrong start of each frame, so it often took the graphics card to be the bottleneck and held the game back with the card far from busy. On an RTX 4090 at a 120 cap (2x), steady play went from 53–59 FPS with hitches of 50–100 ms to a steady 59.5, with the game's frames 16.8 ms apart, as with AMD FSR 3.1 frame generation. Each time frame generation comes back on (after a menu, a cutscene or standing still), Reflex's long first wait (65–90 ms) is also skipped. `EDEN_DLSSG_VSYNC_SLEEP=0` puts the old pacing back; `EDEN_DLSSG_PACER=reflex` lets Reflex's frame limit pace instead.
+- **Tip for frame generation:** use one frame rate cap only. If you also cap in RTSS, the NVIDIA app or the MFG Unlocker, set Fortune's Eden's **Your frame rate cap** to the same number or lower (it paces 1 below it), and turn off RTSS's Reflex limiter for Fortune's Eden. If the motion isn't even, lower the cap a little (110 at 2x, for example).
+- **An extracted game is found from the folder that holds it.** "Choose game folder" found loose files only when you picked their `exefs` folder. Picking the game's own folder (or a folder of games) now works too.
+- The home screen's menu button now says **Mods / Saves** instead of "⋯".
+- Windows' long-path setting is now picked up (the manifest declared it under the wrong name; from Orchid).
+
+Thanks to **jh238800**, whose laptop logs showed Reflex holding the game back with the card far from busy.
+
+Everything else is as in [v1.7.5.5](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.5).
+
 ## v1.7.5.5
 
 Smoother NVIDIA DLSS frame generation, far fewer textures reloaded, the AMD shading fix on Linux, and the texture cache on disk tuned for smaller PCs.

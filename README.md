@@ -23,11 +23,13 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.5)
+## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.6)
 
 - **Much less stutter in places you've been before** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): textures, once converted for your graphics card, are kept on disk (**Texture cache on disk** on the home screen: 2 GB by default, or Off, 4 GB or 8 GB), so they load instead of being converted again. On a hard drive it stays off (v1.7.5.1), as it would slow the game's own reads, and on cards with 4 GB of video memory or less too (v1.7.5.5).
 - **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): video memory from earlier scenes and dungeons is cleaned up, cards with 10 GB or more keep more loaded before cleaning up, and bursts of new textures no longer stall the frame.
+- **NVIDIA DLSS frame generation paced like a native PC game** (v1.7.5.6, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): NVIDIA Reflex waits at the start of the game's frame and is told when it really starts, and the game's frames are spaced as evenly as with AMD FSR 3.1 frame generation.
 - **Smoother NVIDIA DLSS frame generation and far fewer texture reloads** (v1.7.5.5, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and no more black shading on AMD cards on Linux (v1.7.5.5, [#44](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/44)).
+- **Extracted games are found from the folder that holds them** (v1.7.5.6): "Choose game folder" no longer needs the `exefs` folder itself.
 - **DLDSR in fullscreen:** with NVIDIA's DLDSR on, choose **1.78x** or **2.25x** on the home screen and fullscreen plays at that resolution, so DLSS or DLAA looks sharper still. On AMD cards it's **VSR**. The desktop goes back to its own resolution when you leave fullscreen or switch windows.
 - **Fixes ported from Lichii and Orchid:** geometry shaders are drawn instead of skipped, and texture and memory fixes, including for AMD cards.
 - **The Volume setting is back** in *Settings → Audio* ([#72](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/72)).
@@ -128,7 +130,7 @@ NVIDIA DLSS and FSR 4 fall back to FSR 3.1 if they can't start. The status bar a
 | **AMD FSR 3.1** | Any | AMD's FidelityFX SDK frame interpolation and optical flow, built in. |
 | **NVIDIA DLSS** | GeForce RTX 40/50 | Needs hardware-accelerated GPU scheduling on in Windows. Choose it, then click **Download from NVIDIA** in the panel below the setting and accept NVIDIA's licences (NVIDIA's files aren't included). Falls back to AMD's if it can't start. 3x and 4x: RTX 50, or RTX 40 and older with the community [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker) (by dashdogy, MIT), which Fortune's Eden offers to download; there, FSR 3.1 at 3x or 4x is usually smoother. |
 
-**Pacing:** the game's frames are held to what your display can show with the made frames between them (a 165 Hz display at 3x: about 54 a second), evenly, and in 60 FPS mode the game's speed follows. If you cap your frame rate (NVIDIA Reflex, RTSS or the driver), type your cap in **Your frame rate cap** (home screen or Settings) so the frames fit under it.
+**Pacing:** the game's frames are held to what your display can show with the made frames between them (a 165 Hz display at 3x: about 54 a second), evenly, and in 60 FPS mode the game's speed follows. If you cap your frame rate (NVIDIA Reflex, RTSS or the driver), type your cap in **Your frame rate cap** (home screen or Settings) so the frames fit under it. Use one cap only: two limiters at the same rate stutter, and RTSS's Reflex limiter fights Fortune's Eden's own use of Reflex with NVIDIA DLSS frame generation. If the motion isn't even, lower the cap a little (110 at 2x, for example).
 
 It works with any upscaler, HDR and ultrawide. The game's UI is kept still, so menus, prompts and the minimap don't ghost when the camera moves. It only runs in the 3D scenes (menus and movies have no motion data), needs a display faster than the game's frame rate (120 Hz or more for 60 FPS), and adds about half a frame of input delay. The status bar shows which one is running.
 
