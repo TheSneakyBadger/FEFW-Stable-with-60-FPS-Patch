@@ -6,6 +6,7 @@
 
 #include <thread>
 
+#include "common/logging.h"
 #include "common/settings.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
@@ -16,6 +17,7 @@
 #include "video_core/renderer_vulkan/present/lsfg_common.h"
 #endif
 #include "video_core/renderer_vulkan/vk_present_manager.h"
+#include "video_core/renderer_vulkan/fefw_present_timing.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -485,7 +487,15 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
         RecreateSwapchain(frame);
     }
 
-    while (swapchain.AcquireNextImage()) {
+    for (;;) {
+        bool recreate;
+        {
+            FefwPresentTiming::Scope timing{FefwPresentTiming::PresentAcquire};
+            recreate = swapchain.AcquireNextImage();
+        }
+        if (!recreate) {
+            break;
+        }
         RecreateSwapchain(frame);
         if (swapchain.IsOutDated()) {
             // No swapchain can be made while the window has no size. Acquiring again would fail at
@@ -624,9 +634,15 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
 
     // Submit the image copy/blit to the swapchain
     {
+        const auto lock_start = std::chrono::steady_clock::now();
         std::scoped_lock submit_lock{scheduler.submit_mutex};
-        switch (const VkResult result =
-                    device.GetGraphicsQueue().Submit(submit_info, *frame->present_done)) {
+        const auto submit_start = std::chrono::steady_clock::now();
+        FefwPresentTiming::Add(FefwPresentTiming::PresentSubmitLock, submit_start - lock_start);
+        const VkResult submit_result =
+            device.GetGraphicsQueue().Submit(submit_info, *frame->present_done);
+        FefwPresentTiming::Add(FefwPresentTiming::PresentSubmit,
+                               std::chrono::steady_clock::now() - submit_start);
+        switch (const VkResult result = submit_result) {
         case VK_SUCCESS:
             break;
         case VK_ERROR_DEVICE_LOST:
@@ -639,7 +655,17 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
     }
 
     // Present
-    swapchain.Present(render_semaphore);
+    {
+        FefwPresentTiming::Scope timing{FefwPresentTiming::PresentCall};
+        swapchain.Present(render_semaphore);
+    }
+    // About every 10 s: where the threads handing the card its work waited (#63).
+    static std::chrono::steady_clock::time_point report_start = std::chrono::steady_clock::now();
+    if (const auto now = std::chrono::steady_clock::now();
+        now - report_start >= std::chrono::seconds{10}) {
+        report_start = now;
+        LOG_INFO(Render_Vulkan, "Waits, last 10 s: {}", FefwPresentTiming::Take());
+    }
 }
 
 } // namespace Vulkan
