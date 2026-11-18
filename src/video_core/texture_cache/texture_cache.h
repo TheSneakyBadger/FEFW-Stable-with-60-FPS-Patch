@@ -2489,6 +2489,14 @@ void TextureCache<P>::TickAsyncDecode() {
     // with 4 ms nearly all of them (97%) ran out of time and were converted, which costs more
     // than reading them (frames of 0.2-1 s against 0.1-0.2 s), so the cache did nothing.
     disk_cache_wait_left = std::chrono::milliseconds{40};
+    // And up to 100 ms a second in all: where reads keep falling behind (a 4 GB card reloading
+    // thousands of textures a minute from a slow disk, #75) frames waited 4.7 s in 30 s; past
+    // that, textures are converted on the GPU at once. A cut's burst (#74) still gets its 40 ms.
+    if (const auto now = std::chrono::steady_clock::now();
+        now - disk_cache_second_start >= std::chrono::seconds{1}) {
+        disk_cache_second_start = now;
+        disk_cache_second_wait_left = std::chrono::milliseconds{100};
+    }
     if (++disk_cache_fallback_frames >= 600) {
         const u32 reads = disk_read_latency_count.exchange(0);
         const u64 latency_ns = disk_read_latency_ns.exchange(0);
@@ -3765,12 +3773,14 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
     if (decode->cancelled) {
         return;
     }
-    if (!decode->complete && disk_cache_wait_left > std::chrono::nanoseconds::zero()) {
+    const std::chrono::nanoseconds wait_left =
+        (std::min)(disk_cache_wait_left, disk_cache_second_wait_left);
+    if (!decode->complete && wait_left > std::chrono::nanoseconds::zero()) {
         const auto start = std::chrono::steady_clock::now();
-        decode->ready.wait_for(lock, disk_cache_wait_left,
-                               [decode] { return decode->complete.load(); });
+        decode->ready.wait_for(lock, wait_left, [decode] { return decode->complete.load(); });
         const auto waited = std::chrono::steady_clock::now() - start;
         disk_cache_wait_left -= waited;
+        disk_cache_second_wait_left -= waited;
         disk_wait_ns += static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(waited).count());
     }

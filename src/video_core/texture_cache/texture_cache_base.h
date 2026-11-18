@@ -732,6 +732,9 @@ private:
                                            {}, Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
+    /// Waits for disk reads in the current second, at most 100 ms (#75).
+    std::chrono::nanoseconds disk_cache_second_wait_left{};
+    std::chrono::steady_clock::time_point disk_cache_second_start{};
     /// While FillImageViews runs: textures being read from disk that its draw uses, waited for
     /// together when it's done.
     bool defer_disk_waits{};

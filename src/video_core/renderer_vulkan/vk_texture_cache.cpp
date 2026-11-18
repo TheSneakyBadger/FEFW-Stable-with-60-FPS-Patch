@@ -981,7 +981,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                                     compute_pass_descriptor_queue,
                                     Settings::AstcRecompressesToBc7());
             LOG_INFO(Render_Vulkan, "ASTC textures are decoded and re-compressed on the GPU");
-            FefwTextureDiskCache::Start();
+            FefwTextureDiskCache::Start(device.GetDeviceLocalMemory());
         }
     }
     if (!device.IsKhrImageFormatListSupported()) {
