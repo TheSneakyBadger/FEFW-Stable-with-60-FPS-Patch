@@ -720,8 +720,11 @@ template <class P>
 void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compute, bool blacklist) {
     static thread_local LookupMemo<ImageViewId, 1024> memo;
     bool has_blacklisted = false;
+    defer_disk_waits = true;
     do {
         has_deleted_images = false;
+        // Only the last pass's images are waited for: a pass that deleted images is repeated.
+        deferred_disk_waits.clear();
         if (blacklist) {
             has_blacklisted = false;
         }
@@ -747,6 +750,11 @@ void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compu
             }
         }
     } while (has_deleted_images || (blacklist && has_blacklisted));
+    defer_disk_waits = false;
+    for (const ImageId image_id : deferred_disk_waits) {
+        WaitDiskCacheLoad(slot_images[image_id], image_id);
+    }
+    deferred_disk_waits.clear();
 }
 
 template <class P>
@@ -3808,7 +3816,15 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         }
     } else {
         RefreshContents(image, image_id);
-        WaitDiskCacheLoad(image, image_id);
+        // While a draw's views are filled, its textures' reads are all queued first and waited
+        // for together (FillImageViews), so they're read side by side; an image with aliases
+        // is waited for now, as they're synchronized from it next.
+        if (defer_disk_waits && image.aliased_images.empty() &&
+            True(image.flags & ImageFlagBits::IsDecoding)) {
+            deferred_disk_waits.push_back(image_id);
+        } else {
+            WaitDiskCacheLoad(image, image_id);
+        }
         if (!image.aliased_images.empty()) {
             SynchronizeAliases(image_id);
         }
