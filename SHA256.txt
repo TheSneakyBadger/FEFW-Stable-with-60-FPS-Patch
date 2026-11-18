@@ -1,3 +1,4 @@
+8d4f86cdb402849ee03f814caa43eaed23eb3eaa437072bb972a21a1dec37af2  FEFW-Test-v1.7.5.4-test82b.zip
 919c4a02fa796c155ab98dea2d14fdcfe807d32e89f91ecbe29cdf7e6736ddda  FEFW-Test-v1.7.5.3-test79d.zip
 e975c0a6e45155c34c975512f162626cd8accb71d83329e1277e0a4c32f135c5  FEFW-Test-v1.7.4-test77f.zip
 b8669ac2f7cdb892a33d9920c3cb3eda6732d136646e3d02e1d4e83684c91a48  FEFW-Test-v1.7.4-test77e.zip
