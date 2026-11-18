@@ -853,12 +853,22 @@ void FrameGenSleep(u64 index) {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_SLEEP");
         return value && value[0] == '0';
     }();
-    // The emulator has no simulation of its own to mark: the frame's recording is all of it.
+    // The frame's "simulation" is the GPU thread's work on it, from here to its tags.
     if (!sleep_off) {
         FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
         fg.reflex_sleep(*token);
     }
     Marker(sl::PCLMarker::eSimulationStart, *token);
+}
+
+void FrameGenSimulationEnd(u64 index) {
+    if (!LoadFrameGen()) {
+        return;
+    }
+    sl::FrameToken* const token = Token(index);
+    if (!token) {
+        return;
+    }
     Marker(sl::PCLMarker::eSimulationEnd, *token);
 }
 

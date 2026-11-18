@@ -133,6 +133,7 @@ private:
     u32 fsr_fg_unknown{}; ///< The presented buffer wasn't seen being drawn.
     u32 fsr_fg_fallback{}; ///< Its frame wasn't prepared: the newest prepared one was used.
     u64 dlssg_index{};     ///< NVIDIA DLSS frame generation: the last frame index presented.
+    u64 dlssg_slept_for{}; ///< The frame index Reflex's sleep was already done for (0: none).
     /// NVIDIA DLSS frame generation rides through a few frames without motion (a frame the game
     /// had none for, in the middle of play) instead of switching off and on again: the last
     /// frame's inputs are tagged again with a reset, so it stays on.
