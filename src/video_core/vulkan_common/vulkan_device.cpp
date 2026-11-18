@@ -761,7 +761,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     graphics_queue = logical.GetQueue(graphics_family);
     present_queue = logical.GetQueue(present_family);
-    // Fortune's Eden: presenting on a queue of its own (EDEN_PRESENT_QUEUE=1, #63), the last one
+    // Fortune's Eden: presenting on a queue of its own (#63; EDEN_PRESENT_QUEUE=0: off), the last one
     // made in the graphics family, so a present that blocks (NVIDIA DLSS frame generation pacing
     // its frames: 2-4.7 s in every 10 on a laptop RTX 4080) doesn't hold up the game's work.
     if (WantsOwnPresentQueue()) {
@@ -1843,9 +1843,11 @@ u32 Device::EmulatorGraphicsQueues() const {
 }
 
 bool Device::WantsOwnPresentQueue() const {
+    // On wherever the graphics family has a queue to spare (NVIDIA: 16; AMD and Intel usually
+    // 1, where this stays off). EDEN_PRESENT_QUEUE=0 turns it off.
     static const bool wanted = [] {
         const char* const value = std::getenv("EDEN_PRESENT_QUEUE");
-        return value && value[0] == '1';
+        return !(value && value[0] == '0');
     }();
     if (!wanted || present_family != graphics_family) {
         return false;
