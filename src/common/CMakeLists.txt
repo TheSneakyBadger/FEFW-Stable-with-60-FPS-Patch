@@ -83,6 +83,7 @@ add_library(
     multi_level_page_table.cpp
     multi_level_page_table.h
     overflow.h
+    fefw_frame_gen_hook.h
     fefw_hidden_settings.h
     fefw_hang_dump.cpp
     fefw_hang_dump.h

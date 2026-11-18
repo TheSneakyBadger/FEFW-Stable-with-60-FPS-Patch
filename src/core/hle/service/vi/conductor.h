@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <memory>
 #include "common/container/unordered_map.h"
 
@@ -57,6 +59,8 @@ private:
 private:
     s32 m_swap_interval = 1;
     f32 m_compose_speed_scale = 1.0f;
+    /// NVIDIA Reflex paced the last vsync (FefwFrameGenHook).
+    std::atomic<bool> m_reflex_paced{false};
 };
 
 } // namespace Service::VI
