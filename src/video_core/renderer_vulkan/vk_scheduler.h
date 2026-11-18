@@ -189,6 +189,11 @@ public:
     }
 
     std::mutex submit_mutex;
+    /// The present queue's own lock when it isn't the graphics queue (#63).
+    std::mutex present_queue_mutex;
+
+    /// The lock for the present queue: its own, or submit_mutex when it is the graphics queue.
+    [[nodiscard]] std::mutex& PresentQueueMutex();
 
 private:
     class Command {

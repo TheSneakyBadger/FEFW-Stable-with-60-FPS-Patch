@@ -445,8 +445,10 @@ void PresentManager::DiscardFrame(Frame* frame) {
         .pSignalSemaphores = nullptr,
     };
 
-    std::scoped_lock submit_lock{scheduler.submit_mutex};
-    void(device.GetGraphicsQueue().Submit(submit_info, *frame->present_done));
+    std::scoped_lock submit_lock{scheduler.PresentQueueMutex()};
+    const vk::Queue queue =
+        device.HasOwnPresentQueue() ? device.GetPresentQueue() : device.GetGraphicsQueue();
+    void(queue.Submit(submit_info, *frame->present_done));
 }
 
 void PresentManager::CopyToSwapchain(Frame* frame) {
@@ -635,11 +637,12 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
     // Submit the image copy/blit to the swapchain
     {
         const auto lock_start = std::chrono::steady_clock::now();
-        std::scoped_lock submit_lock{scheduler.submit_mutex};
+        std::scoped_lock submit_lock{scheduler.PresentQueueMutex()};
         const auto submit_start = std::chrono::steady_clock::now();
         FefwPresentTiming::Add(FefwPresentTiming::PresentSubmitLock, submit_start - lock_start);
-        const VkResult submit_result =
-            device.GetGraphicsQueue().Submit(submit_info, *frame->present_done);
+        const vk::Queue queue =
+            device.HasOwnPresentQueue() ? device.GetPresentQueue() : device.GetGraphicsQueue();
+        const VkResult submit_result = queue.Submit(submit_info, *frame->present_done);
         FefwPresentTiming::Add(FefwPresentTiming::PresentSubmit,
                                std::chrono::steady_clock::now() - submit_start);
         switch (const VkResult result = submit_result) {

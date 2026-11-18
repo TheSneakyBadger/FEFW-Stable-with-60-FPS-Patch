@@ -539,6 +539,10 @@ void Scheduler::EndRenderPass()
     }
 
 
+std::mutex& Scheduler::PresentQueueMutex() {
+    return device.HasOwnPresentQueue() ? present_queue_mutex : submit_mutex;
+}
+
 size_t Scheduler::QueuedChunks() {
     std::scoped_lock ql{queue_mutex};
     return work_queue.size();
