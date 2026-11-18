@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "common/adpf.h"
+#include "common/fefw_frame_gen_hook.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/core.h"
@@ -95,6 +96,11 @@ void Conductor::VsyncThread(std::stop_token token) {
             return;
         }
 
+        if (auto* const reflex_sleep =
+                FefwFrameGenHook::vsync_sleep.load(std::memory_order_acquire)) {
+            m_reflex_paced.store(reflex_sleep(), std::memory_order_relaxed);
+        }
+
         this->ProcessVsync();
     }
 }
@@ -127,8 +133,9 @@ s64 Conductor::GetNextTicks() const {
     // the frame rate cap) can show them with the frames made between them (165 Hz at 3x: 54 a
     // second), evenly, from the game's own vsync. (Held back on the GPU thread instead, the game
     // still saw a 60 Hz vsync: its frames came 1 or 2 vsyncs apart and the motion stuttered.)
+    // NVIDIA Reflex pacing the vsync itself: its frame limit holds the game to the rate instead.
     if (settings.use_speed_limit.GetValue() && Settings::SpeedLimit() == 100 &&
-        m_compose_speed_scale == 1.f) {
+        m_compose_speed_scale == 1.f && !m_reflex_paced.load(std::memory_order_relaxed)) {
         return (std::max)(ticks, Settings::FrameGenerationPeriodNs());
     }
     return ticks;

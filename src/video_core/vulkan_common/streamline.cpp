@@ -8,6 +8,8 @@
 #include <cmath>
 #include <utility>
 #include <array>
+#include <chrono>
+#include <mutex>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -22,6 +24,7 @@
 #include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "common/fefw_frame_gen_hook.h"
 #include "common/settings.h"
 #include "video_core/vulkan_common/streamline.h"
 #include "video_core/renderer_vulkan/fefw_present_timing.h"
@@ -732,7 +735,85 @@ FrameGenRuntime& GetFrameGen() {
     return runtime;
 }
 
+s64 NowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+/// The last frame index whose tags were recorded, and when (GPU thread).
+std::atomic<u64> last_sim_index{0};
+std::atomic<s64> last_tag_ns{0};
+/// When Reflex last slept at the game's vsync (FefwFrameGenHook).
+std::atomic<s64> vsync_paced_ns{0};
+std::mutex reflex_options_mutex;
+/// Held while the vsync thread uses the runtime, so ResetFrameGen never clears it under it.
+std::mutex vsync_sleep_mutex;
+
+constexpr s64 FRAME_GEN_IDLE_NS = 100'000'000;
+
+bool VsyncPaced() {
+    return NowNs() - vsync_paced_ns.load(std::memory_order_relaxed) < FRAME_GEN_IDLE_NS;
+}
+
+void ApplyFrameLimit(FrameGenRuntime& fg, u32 limit_us) {
+    std::scoped_lock lock{reflex_options_mutex};
+    if (limit_us == fg.frame_limit_us) {
+        return;
+    }
+    sl::ReflexOptions reflex{};
+    reflex.mode = fg.reflex_mode;
+    reflex.frameLimitUs = limit_us;
+    const sl::Result result = fg.reflex_set_options(reflex);
+    LOG_INFO(Render_Vulkan, "NVIDIA Reflex frame limit: {} (result {})",
+             limit_us ? fmt::format("{:.1f} FPS shown", 1e6 / limit_us) : std::string{"off"},
+             static_cast<int>(result));
+    fg.frame_limit_us = limit_us;
+}
+
+sl::FrameToken* Token(u64 index);
+
+/// The vsync thread, before each vsync it signals: NVIDIA Reflex's sleep, where a native game
+/// calls it (the start of its frame), with Reflex's frame limit as the only pacer: exactly the
+/// frame generation rate, as a native game runs Reflex to its cap. Nothing while frame
+/// generation isn't making frames. Not for the first 8 vsyncs after it starts again (Reflex's
+/// first sleeps then were 65-90 ms). EDEN_DLSSG_VSYNC_SLEEP=0: Reflex sleeps on the GPU thread
+/// with the vsync timer pacing the game, as before.
+bool VsyncSleep() {
+    std::scoped_lock vsync_lock{vsync_sleep_mutex};
+    FrameGenRuntime& fg = GetFrameGen();
+    if (!fg.loaded || fg.failed || frame_gen_stopped.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const s64 now = NowNs();
+    if (now - last_tag_ns.load(std::memory_order_relaxed) > FRAME_GEN_IDLE_NS) {
+        return false;
+    }
+    static s64 last_sleep_ns = 0;
+    static u32 skip_left = 0;
+    if (now - last_sleep_ns > FRAME_GEN_IDLE_NS) {
+        skip_left = 8;
+    }
+    last_sleep_ns = now;
+    sl::FrameToken* const token = Token(last_sim_index.load(std::memory_order_relaxed) + 1);
+    if (!token) {
+        return false;
+    }
+    const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
+    ApplyFrameLimit(fg, static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown));
+    if (skip_left > 0) {
+        --skip_left;
+    } else {
+        FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
+        fg.reflex_sleep(*token);
+    }
+    vsync_paced_ns.store(NowNs(), std::memory_order_relaxed);
+    return true;
+}
+
 void ResetFrameGen() {
+    FefwFrameGenHook::vsync_sleep.store(nullptr, std::memory_order_release);
+    std::scoped_lock vsync_lock{vsync_sleep_mutex};
     GetFrameGen() = {};
 }
 
@@ -778,6 +859,12 @@ bool LoadFrameGen() {
     fg.reflex_mode = reflex.mode;
     fg.loaded = true;
     LOG_INFO(Render_Vulkan, "NVIDIA DLSS frame generation ready");
+    if (const char* const value = std::getenv("EDEN_DLSSG_VSYNC_SLEEP");
+        !(value && value[0] == '0')) {
+        FefwFrameGenHook::vsync_sleep.store(&VsyncSleep, std::memory_order_release);
+        LOG_INFO(Render_Vulkan, "NVIDIA Reflex: sleeping at the game's vsync, its frame limit "
+                                "pacing the game");
+    }
     return true;
 }
 
@@ -849,15 +936,9 @@ void FrameGenSleep(u64 index) {
         limit_off ? 0U
                   : static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
                                      (100 - margin_percent) / 100);
-    if (limit_us != fg.frame_limit_us) {
-        sl::ReflexOptions reflex{};
-        reflex.mode = fg.reflex_mode;
-        reflex.frameLimitUs = limit_us;
-        const sl::Result result = fg.reflex_set_options(reflex);
-        LOG_INFO(Render_Vulkan, "NVIDIA Reflex frame limit: {} (result {})",
-                 limit_us ? fmt::format("{:.1f} FPS shown", 1e6 / limit_us) : std::string{"off"},
-                 static_cast<int>(result));
-        fg.frame_limit_us = limit_us;
+    const bool vsync_paced = VsyncPaced();
+    if (!vsync_paced) {
+        ApplyFrameLimit(fg, limit_us);
     }
     static const bool sleep_off = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_SLEEP");
@@ -880,7 +961,7 @@ void FrameGenSleep(u64 index) {
     // The frame's "simulation" is the GPU thread's work on it, from here to its tags.
     if (skip_left > 0) {
         --skip_left;
-    } else if (!sleep_off) {
+    } else if (!sleep_off && !vsync_paced) {
         FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
         fg.reflex_sleep(*token);
     }
@@ -896,6 +977,8 @@ void FrameGenSimulationEnd(u64 index) {
         return;
     }
     Marker(sl::PCLMarker::eSimulationEnd, *token);
+    last_sim_index.store(index, std::memory_order_relaxed);
+    last_tag_ns.store(NowNs(), std::memory_order_relaxed);
 }
 
 void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
