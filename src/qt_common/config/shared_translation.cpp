@@ -232,6 +232,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "frame rate cap: above it, frames are dropped and it stutters. Takes effect when a "
               "game starts. Experimental."));
     INSERT(Settings, dlss_mfg_max_seen, QString(), QString());
+    INSERT(Settings, fefw_texture_cache_small_card, QString(), QString());
     INSERT(Settings, mfg_frame_cap_fps,
            tr("Your frame rate cap, if you have one (0: none):"),
            tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, "

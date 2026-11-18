@@ -450,6 +450,10 @@ struct Values {
     // The most frames DLSS frame generation said it could make for each of the game's, the last
     // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.
     Setting<u32> dlss_mfg_max_seen{linkage, 0, "dlss_mfg_max_seen", Category::Renderer};
+    /// Fortune's Eden: the graphics card had too little video memory for the texture cache on
+    /// disk the last time the game ran (FefwTextureDiskCache::Start), for the home screen's note.
+    Setting<bool> fefw_texture_cache_small_card{linkage, false, "fefw_texture_cache_small_card",
+                                                Category::Renderer};
     // HDR10 output: the window uses an HDR10 (PQ) swapchain when Windows HDR is on, and Switch 2
     // games are told the display is HDR, so they send their own HDR picture. Takes effect when a
     // game starts.

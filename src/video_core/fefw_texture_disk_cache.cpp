@@ -255,7 +255,7 @@ u32 ReadThreads() {
     return threads;
 }
 
-void Start() {
+void Start(u64 video_memory) {
     Stop();
     u64 limit = 0;
     switch (Settings::values.texture_disk_cache.GetValue()) {
@@ -287,6 +287,20 @@ void Start() {
         LOG_WARNING(Render_Vulkan, "Texture cache on disk: can't create {}: {}",
                     folder.string(), ec.message());
         return;
+    }
+    // Too little video memory: textures are freed and reloaded so often that reading them back
+    // from disk falls behind converting them on the GPU (#75). Remembered for the home screen.
+    const bool small_card = video_memory != 0 && video_memory < SMALL_CARD_MEMORY;
+    Settings::values.fefw_texture_cache_small_card.SetValue(small_card);
+    if (small_card) {
+        const char* const keep = std::getenv("EDEN_TEXTURE_CACHE_SMALL_CARD");
+        if (!keep || keep[0] != '1') {
+            LOG_INFO(Render_Vulkan,
+                     "Texture cache on disk: off, the graphics card has {} MiB of video memory "
+                     "to use (under {} MiB; EDEN_TEXTURE_CACHE_SMALL_CARD=1 keeps it on)",
+                     video_memory >> 20, SMALL_CARD_MEMORY >> 20);
+            return;
+        }
     }
     // On a hard drive its reads and writes would slow the game's own (its maps, its movies), for
     // freezes of seconds: the cache is off there.

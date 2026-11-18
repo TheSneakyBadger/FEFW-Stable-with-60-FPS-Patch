@@ -35,8 +35,15 @@ struct Key {
 /// EDEN_DISK_READERS overrides it (1 to 16).
 [[nodiscard]] u32 ReadThreads();
 
-/// Reads the setting and indexes the folder (when the renderer starts). 0 bytes: off.
-void Start();
+/// The video memory Fortune's Eden may use below which the cache is off (#75): a 4 GB card (about
+/// 2.9 GiB usable) can't hold a scene's textures, frees and reloads thousands a minute, and
+/// reading them back from disk fell behind converting them on the GPU (frames waited 4.7 s in
+/// 30 s). EDEN_TEXTURE_CACHE_SMALL_CARD=1 keeps it on.
+inline constexpr u64 SMALL_CARD_MEMORY = 4ULL << 30;
+
+/// Reads the setting and indexes the folder (when the renderer starts), given the video memory
+/// Fortune's Eden may use. 0 bytes: off.
+void Start(u64 video_memory);
 
 /// Waits for queued writes (when the renderer stops).
 void Stop();
