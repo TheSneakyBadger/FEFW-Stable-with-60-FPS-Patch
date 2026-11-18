@@ -93,7 +93,8 @@ void Conductor::VsyncThread(std::stop_token token) {
 
     std::chrono::steady_clock::time_point last_vsync{};
     while (!token.stop_requested()) {
-        if (m_reflex_paced.load(std::memory_order_relaxed)) {
+        if (m_reflex_paced.load(std::memory_order_relaxed) &&
+            !FefwFrameGenHook::timer_paces.load(std::memory_order_relaxed)) {
             // NVIDIA Reflex sets when each vsync comes: the timer isn't waited for (at 60 Hz the
             // two clocks beat, Reflex at 59.5 a second waiting out ticks that came late: the game
             // averaged 58.6). About the timer's own interval after the last one at the soonest,
@@ -150,7 +151,9 @@ s64 Conductor::GetNextTicks() const {
     // still saw a 60 Hz vsync: its frames came 1 or 2 vsyncs apart and the motion stuttered.)
     // NVIDIA Reflex pacing the vsync itself: its frame limit holds the game to the rate instead.
     if (settings.use_speed_limit.GetValue() && Settings::SpeedLimit() == 100 &&
-        m_compose_speed_scale == 1.f && !m_reflex_paced.load(std::memory_order_relaxed)) {
+        m_compose_speed_scale == 1.f &&
+        (!m_reflex_paced.load(std::memory_order_relaxed) ||
+         FefwFrameGenHook::timer_paces.load(std::memory_order_relaxed))) {
         return (std::max)(ticks, Settings::FrameGenerationPeriodNs());
     }
     return ticks;
