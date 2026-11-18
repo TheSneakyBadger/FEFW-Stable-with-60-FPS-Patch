@@ -23,6 +23,7 @@
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/fefw_present_timing.h"
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -340,7 +341,10 @@ void Scheduler::WorkerThread(std::stop_token stop_token) {
                 BackStats::Max(BackStats::shared.worker_age_max,
                                frame > work->FirstFrame() ? frame - work->FirstFrame() : 0);
             }
-            work->ExecuteAll(current_cmdbuf, current_upload_cmdbuf);
+            {
+                FefwPresentTiming::Scope timing{FefwPresentTiming::WorkerRecord};
+                work->ExecuteAll(current_cmdbuf, current_upload_cmdbuf);
+            }
             if (busy_start != 0) {
                 namespace BackStats = VideoCommon::BackStats;
                 idle_start = BackStats::Stamp();
@@ -409,9 +413,15 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             on_submit();
         }
 
+        const auto lock_start = std::chrono::steady_clock::now();
         std::scoped_lock lock{submit_mutex};
-        switch (const VkResult result = master_semaphore->SubmitQueue(
-                    cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, signal_value)) {
+        const auto submit_start = std::chrono::steady_clock::now();
+        FefwPresentTiming::Add(FefwPresentTiming::WorkerSubmitLock, submit_start - lock_start);
+        const VkResult submit_result = master_semaphore->SubmitQueue(
+            cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, signal_value);
+        FefwPresentTiming::Add(FefwPresentTiming::WorkerSubmit,
+                               std::chrono::steady_clock::now() - submit_start);
+        switch (const VkResult result = submit_result) {
         case VK_SUCCESS:
             // Log successful queue submission
             if (GPU::Logging::IsActive() &&
@@ -528,6 +538,10 @@ void Scheduler::EndRenderPass()
         num_renderpass_images = 0;
     }
 
+
+std::mutex& Scheduler::PresentQueueMutex() {
+    return device.HasOwnPresentQueue() ? present_queue_mutex : submit_mutex;
+}
 
 size_t Scheduler::QueuedChunks() {
     std::scoped_lock ql{queue_mutex};

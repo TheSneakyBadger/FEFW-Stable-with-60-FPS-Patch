@@ -615,16 +615,20 @@ void FefwHome::BuildGamePage(QWidget* page) {
     extras->addLayout(labelled(tr("Button icons"), button_icons_box));
     extras->addLayout(labelled(tr("Texture cache on disk"), texture_cache_box));
     {
-        // Off on a hard drive (FefwTextureDiskCache::Start): the note says so.
+        // Off on a hard drive, or on a card with little video memory (as found the last time the
+        // game ran; FefwTextureDiskCache::Start): the note says so.
         const bool hard_drive = FefwTextureDiskCache::OnHardDrive(
             Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir));
+        const bool small_card = Settings::values.fefw_texture_cache_small_card.GetValue();
         QLabel* const note = new QLabel(
-            hard_drive ? tr("Off on this PC: Fortune's Eden is on a hard drive, where it would "
-                            "slow the game down. It works from an SSD.")
-                       : tr("Stores textures so places you've been load without stutter. Most "
-                            "useful on graphics cards with less video memory."),
+            hard_drive   ? tr("Off on this PC: Fortune's Eden is on a hard drive, where it would "
+                              "slow the game down. It works from an SSD.")
+            : small_card ? tr("Off on this PC: the graphics card has too little video memory "
+                              "(4 GB or less), so textures are reloaded too often for the disk "
+                              "to keep up.")
+                         : tr("Stores textures so places you've been load without stutter."),
             right);
-        texture_cache_box->setEnabled(!hard_drive);
+        texture_cache_box->setEnabled(!hard_drive && !small_card);
         note->setObjectName(QStringLiteral("fefwHomeCaption"));
         note->setWordWrap(true);
         note->setMinimumWidth(200);

@@ -174,7 +174,12 @@ void Swapchain::Create(
     // Submitted work may still wait on the old acquire/present semaphores; destroying them under
     // it loses the device on MoltenVK (window moved to a display with a different scale).
     if (swapchain) {
+        // Every queue is idle while it waits: the present queue's lock too when it has its own.
         std::scoped_lock lock{scheduler.submit_mutex};
+        std::unique_lock present_lock{scheduler.present_queue_mutex, std::defer_lock};
+        if (device.HasOwnPresentQueue()) {
+            present_lock.lock();
+        }
         const VkResult result = device.GetLogical().WaitIdle();
         if (result == VK_ERROR_DEVICE_LOST) {
             device.ReportLoss();
@@ -272,7 +277,7 @@ void Swapchain::Present(VkSemaphore render_semaphore) {
         .pImageIndices = &image_index,
         .pResults = nullptr,
     };
-    std::scoped_lock lock{scheduler.submit_mutex};
+    std::scoped_lock lock{scheduler.PresentQueueMutex()};
     switch (const VkResult result = present_queue.Present(present_info)) {
     case VK_SUCCESS:
         break;

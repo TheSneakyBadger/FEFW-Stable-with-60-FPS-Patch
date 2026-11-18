@@ -114,6 +114,18 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
             critical_memory = (std::max)(critical_memory,
                                          static_cast<u64>(device_local_memory) / 100 * 92);
         }
+        // Testing (#73): EDEN_TC_EXPECTED_PCT=N (50-95) puts the faster cleanup at N% of the
+        // limit, and the hard one halfway from there to it. On a 6 GB card it starts at about
+        // 48% (2.3 of 4.7 GiB), with GPU-drawn images written back and freed every few seconds;
+        // map patches looked wrong after teleports there.
+        if (const char* pct_text = std::getenv("EDEN_TC_EXPECTED_PCT"); pct_text != nullptr) {
+            const u64 pct = std::clamp<u64>(std::strtoull(pct_text, nullptr, 10), 50, 95);
+            expected_memory = static_cast<u64>(device_local_memory) / 100 * pct;
+            critical_memory = expected_memory +
+                              (static_cast<u64>(device_local_memory) - expected_memory) / 2;
+            LOG_INFO(HW_GPU, "Texture cache memory: faster cleanup at {}% (EDEN_TC_EXPECTED_PCT)",
+                     pct);
+        }
         critical_memory = (std::max)(critical_memory, expected_memory + 256_MiB);
     } else {
         expected_memory = DEFAULT_EXPECTED_MEMORY + 512_MiB;
@@ -192,7 +204,19 @@ u32 TextureCache<P>::RunGarbageCollector() {
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
+        // Fortune's Eden: below the expected level, only images unused for 30 s (EDEN_TC_IDLE_AGE
+        // frames), not 50 frames. Since passes stopped spending their 10 iterations on converted
+        // ASTC textures they can't free (v1.7.5, from Lichii), each pass below the expected level
+        // freed up to 10 other textures unused for under a second: 1,500-2,800 a minute on a
+        // 12 GB card with less than half its memory in use (#63), each loaded again the next
+        // time it was drawn (a unit's portrait and menus on battle maps). Up to v1.7.1 it was
+        // 1-40 a minute.
+        static const u64 idle_age = [] {
+            const char* value = std::getenv("EDEN_TC_IDLE_AGE");
+            return value != nullptr ? (std::max)(std::strtoull(value, nullptr, 10), 50ULL)
+                                    : 1800ULL;
+        }();
+        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : idle_age;
         num_iterations = aggressive_mode ? 800 : (high_priority_mode ? 400 : 10);
         // Free down to 256 MiB below the expected level. Images freed in the last few frames
         // still count in use until they are destroyed: over the hard limit a pass runs every
@@ -486,7 +510,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
     static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
     const bool hard_pass = total_used_memory >= critical_memory;
     allow_writebacks = !hard_pass;
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    if (frame_tick > ticks_to_destroy) {
+        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    }
     allow_writebacks = true;
     FlushWritebacks();
     if (hard_pass) {
@@ -720,8 +746,11 @@ template <class P>
 void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compute, bool blacklist) {
     static thread_local LookupMemo<ImageViewId, 1024> memo;
     bool has_blacklisted = false;
+    defer_disk_waits = true;
     do {
         has_deleted_images = false;
+        // Only the last pass's images are waited for: a pass that deleted images is repeated.
+        deferred_disk_waits.clear();
         if (blacklist) {
             has_blacklisted = false;
         }
@@ -747,6 +776,11 @@ void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compu
             }
         }
     } while (has_deleted_images || (blacklist && has_blacklisted));
+    defer_disk_waits = false;
+    for (const ImageId image_id : deferred_disk_waits) {
+        WaitDiskCacheLoad(slot_images[image_id], image_id);
+    }
+    deferred_disk_waits.clear();
 }
 
 template <class P>
@@ -2155,6 +2189,7 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 }
                 image.flags &= ~ImageFlagBits::IsDecoding;
             }
+            const auto hash_start = std::chrono::steady_clock::now();
             thread_local std::vector<u8> guest_bytes;
             guest_bytes.resize(MapSizeBytes(image));
             gpu_memory->ReadBlock(image.gpu_addr, guest_bytes.data(), guest_bytes.size(),
@@ -2162,6 +2197,10 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
             const u64 hash = Common::CityHash64(
                 reinterpret_cast<const char*>(guest_bytes.data()),
                 (std::min<size_t>)(image.guest_size_bytes, guest_bytes.size()));
+            disk_hash_ns += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                 std::chrono::steady_clock::now() - hash_start)
+                                                 .count());
+            disk_hash_bytes += guest_bytes.size();
             const auto uploads = FullUploadSwizzles(image.info);
             if (auto plan = runtime.PlanDiskCacheLoad(image, hash, uploads)) {
                 runtime.TransitionImageLayout(image);
@@ -2171,17 +2210,25 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 decode->image_id = image_id;
                 decode->sized_by_data = true;
                 async_decodes.push_back(std::move(decode));
-                disk_cache_worker.QueueWork([plan = std::move(*plan), decode_ptr]() mutable {
-                    auto data = plan.load();
+                decode_ptr->queued_at = std::chrono::steady_clock::now();
+                disk_cache_worker.QueueWork([this, plan = std::move(*plan), decode_ptr]() mutable {
+                    // Read straight into the result: nothing else touches decoded_data until
+                    // complete is set (under the mutex, below).
+                    decode_ptr->decoded_data.resize_destructive(plan.size);
+                    const bool loaded = plan.load(
+                        std::span<u8>{decode_ptr->decoded_data.data(), plan.size});
                     std::unique_lock lock{decode_ptr->mutex};
-                    if (data) {
-                        decode_ptr->decoded_data.resize_destructive(data->size());
-                        std::memcpy(decode_ptr->decoded_data.data(), data->data(), data->size());
+                    if (loaded) {
                         decode_ptr->copies = std::move(plan.copies);
                     } else {
                         // Gone or damaged: converted on the GPU at the image's next use.
                         decode_ptr->failed = true;
                     }
+                    disk_read_latency_ns += static_cast<u64>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - decode_ptr->queued_at)
+                            .count());
+                    ++disk_read_latency_count;
                     decode_ptr->complete = true;
                     // With the mutex held: once it's released the context may be freed.
                     decode_ptr->ready.notify_all();
@@ -2468,15 +2515,32 @@ void TextureCache<P>::TickAsyncDecode() {
     // with 4 ms nearly all of them (97%) ran out of time and were converted, which costs more
     // than reading them (frames of 0.2-1 s against 0.1-0.2 s), so the cache did nothing.
     disk_cache_wait_left = std::chrono::milliseconds{40};
+    // And up to 100 ms a second in all: where reads keep falling behind (a 4 GB card reloading
+    // thousands of textures a minute from a slow disk, #75) frames waited 4.7 s in 30 s; past
+    // that, textures are converted on the GPU at once. A cut's burst (#74) still gets its 40 ms.
+    if (const auto now = std::chrono::steady_clock::now();
+        now - disk_cache_second_start >= std::chrono::seconds{1}) {
+        disk_cache_second_start = now;
+        disk_cache_second_wait_left = std::chrono::milliseconds{100};
+    }
     if (++disk_cache_fallback_frames >= 600) {
-        if (disk_cache_fallbacks != 0) {
+        const u32 reads = disk_read_latency_count.exchange(0);
+        const u64 latency_ns = disk_read_latency_ns.exchange(0);
+        if (reads != 0 || disk_cache_fallbacks != 0 || disk_hash_bytes != 0) {
             LOG_INFO(HW_GPU,
-                     "Texture cache on disk, last 10 s: {} textures converted on the GPU instead "
-                     "(their reads weren't ready when drawn)",
-                     disk_cache_fallbacks);
+                     "Texture cache on disk, last 10 s: {} reads ready {:.1f} ms after being "
+                     "queued on average; draws waited {:.0f} ms for them; {} converted on the GPU "
+                     "instead (not ready in time); {:.0f} ms hashing {} MiB of the game's "
+                     "textures",
+                     reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
+                     static_cast<double>(disk_wait_ns) / 1e6, disk_cache_fallbacks,
+                     static_cast<double>(disk_hash_ns) / 1e6, disk_hash_bytes >> 20);
         }
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
+        disk_hash_ns = 0;
+        disk_hash_bytes = 0;
+        disk_wait_ns = 0;
     }
     bool has_uploads{};
     // Fortune's Eden: textures from the texture cache on disk go to the GPU at most 32 MiB a
@@ -3735,11 +3799,16 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
     if (decode->cancelled) {
         return;
     }
-    if (!decode->complete && disk_cache_wait_left > std::chrono::nanoseconds::zero()) {
+    const std::chrono::nanoseconds wait_left =
+        (std::min)(disk_cache_wait_left, disk_cache_second_wait_left);
+    if (!decode->complete && wait_left > std::chrono::nanoseconds::zero()) {
         const auto start = std::chrono::steady_clock::now();
-        decode->ready.wait_for(lock, disk_cache_wait_left,
-                               [decode] { return decode->complete.load(); });
-        disk_cache_wait_left -= std::chrono::steady_clock::now() - start;
+        decode->ready.wait_for(lock, wait_left, [decode] { return decode->complete.load(); });
+        const auto waited = std::chrono::steady_clock::now() - start;
+        disk_cache_wait_left -= waited;
+        disk_cache_second_wait_left -= waited;
+        disk_wait_ns += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(waited).count());
     }
     image.flags &= ~ImageFlagBits::IsDecoding;
     if (!decode->complete) {
@@ -3783,7 +3852,15 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         }
     } else {
         RefreshContents(image, image_id);
-        WaitDiskCacheLoad(image, image_id);
+        // While a draw's views are filled, its textures' reads are all queued first and waited
+        // for together (FillImageViews), so they're read side by side; an image with aliases
+        // is waited for now, as they're synchronized from it next.
+        if (defer_disk_waits && image.aliased_images.empty() &&
+            True(image.flags & ImageFlagBits::IsDecoding)) {
+            deferred_disk_waits.push_back(image_id);
+        } else {
+            WaitDiskCacheLoad(image, image_id);
+        }
         if (!image.aliased_images.empty()) {
             SynchronizeAliases(image_id);
         }

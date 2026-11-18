@@ -121,7 +121,14 @@ struct FrameGenInputs {
     bool reset{};
 };
 
-/// On the GPU thread, recording the frame: latency markers, constants and tags for it.
+/// On the GPU thread, before the frame's tags are recorded: NVIDIA Reflex's sleep (its frame limit,
+/// which paces DLSS frame generation) and the simulation markers. Not on the Vulkan worker: a
+/// sleep there holds up everything queued for the card (#63: the card's work backed up while
+/// the card was 70-80% busy, the worker asleep in Reflex 40-50% of the time).
+/// EDEN_DLSSG_REFLEX_SLEEP=0: no sleep (testing).
+void FrameGenSleep(u64 index);
+
+/// On the Vulkan worker, recording the frame: render markers, constants and tags for it.
 void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& inputs);
 
 /// On the present thread, around the present of a frame: tagged (FrameGenTagFrame ran for this

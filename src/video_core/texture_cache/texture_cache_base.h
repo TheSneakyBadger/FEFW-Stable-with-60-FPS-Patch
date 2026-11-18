@@ -42,6 +42,7 @@
 #include "video_core/control/channel_state_cache.h"
 #include "video_core/delayed_destruction_ring.h"
 #include "video_core/engines/fermi_2d.h"
+#include "video_core/fefw_texture_disk_cache.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/descriptor_table.h"
 #include "video_core/texture_cache/dependency_cache.h"
@@ -93,6 +94,8 @@ struct AsyncDecodeContext {
     bool failed{};
     /// Signalled (with the mutex held) when complete is set, for a draw waiting on it.
     std::condition_variable ready;
+    /// When a texture cache read was queued (for the log).
+    std::chrono::steady_clock::time_point queued_at{};
 };
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
@@ -716,19 +719,33 @@ private:
     // the worker's thread is joined (finishing the decode it is on) only when the worker is
     // destroyed. The other way round, stopping the emulation while a texture was decoding
     // (accelerate_astc=CpuAsynchronous) let that decode write into a freed context and crashed.
+    /// For the log: from a texture cache read being queued to its result (written by the read
+    /// threads, so declared before them).
+    std::atomic<u64> disk_read_latency_ns{};
+    std::atomic<u32> disk_read_latency_count{};
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},
                                                Common::ThreadPlacement::Efficiency};
-    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed, up to 8 at a
-    /// time, half the CPU's threads at most).
-    Common::ThreadWorker disk_cache_worker{
-        std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U), "TextureDiskRead", {},
-        Common::ThreadPlacement::Efficiency};
+    /// Fortune's Eden: reads from the texture cache on disk (read and decompressed; how many at a
+    /// time: FefwTextureDiskCache::ReadThreads).
+    Common::ThreadWorker disk_cache_worker{FefwTextureDiskCache::ReadThreads(), "TextureDiskRead",
+                                           {}, Common::ThreadPlacement::Efficiency};
     /// What draws may still wait this frame for a texture being read from disk.
     std::chrono::nanoseconds disk_cache_wait_left{};
+    /// Waits for disk reads in the current second, at most 100 ms (#75).
+    std::chrono::nanoseconds disk_cache_second_wait_left{};
+    std::chrono::steady_clock::time_point disk_cache_second_start{};
+    /// While FillImageViews runs: textures being read from disk that its draw uses, waited for
+    /// together when it's done.
+    bool defer_disk_waits{};
+    boost::container::small_vector<ImageId, 32> deferred_disk_waits;
     /// Textures converted on the GPU because their read wasn't ready in time (for the log).
     u32 disk_cache_fallbacks{};
     u32 disk_cache_fallback_frames{};
+    /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
+    u64 disk_hash_ns{};
+    u64 disk_hash_bytes{};
+    u64 disk_wait_ns{};
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;

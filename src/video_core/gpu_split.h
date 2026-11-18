@@ -23,6 +23,10 @@ class EngineInterface;
 
 namespace VideoCommon {
 
+/// Cores of the fastest kind (performance cores on a hybrid CPU, every core otherwise), or 0
+/// when that can't be told (Windows only for now).
+[[nodiscard]] u32 FastCoreCount();
+
 // Splits the GPU thread in two (ported from Eglantine's gpu_split, NX2_GPU_THREAD_SPLIT.md).
 // The GPU thread (the front) takes the CPU's commands, parses command lists and runs the puller;
 // engine method calls and everything behind them (register state, draws, dispatches, the
