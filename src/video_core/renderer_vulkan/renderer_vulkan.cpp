@@ -283,6 +283,8 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     scheduler.Flush(*frame->render_ready);
 
+    // Read before the frame goes to the present thread, which reuses it.
+    const bool dlssg_tagged = frame->sl_tagged;
     present_manager.Present(frame);
     // With asynchronous presentation the hand-over to the present thread is a recorded command:
     // send it to the worker now, not with whatever is recorded next. (Was only done with frame
@@ -291,6 +293,23 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     gpu.RendererFrameEndNotify();
     rasterizer.TickFrame();
+#ifdef EGLANTINE_STREAMLINE
+    // NVIDIA Reflex's sleep for the next frame at the start of its work, not just before its
+    // tags (#63): there Reflex saw no time between the start of the frame and its submit, so it
+    // slept until the card was nearly idle and the card then waited for the whole frame's work
+    // (a 4080 laptop: 6-7 ms asleep a frame, the game at 45-50 with the card 70-85% busy).
+    // EDEN_DLSSG_SLEEP_EARLY=0: as before.
+    static const bool sleep_early = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_SLEEP_EARLY");
+        return !(value && value[0] == '0');
+    }();
+    if (sleep_early && dlssg_tagged &&
+        Settings::values.frame_generation.GetValue() == Settings::FrameGeneration::NvidiaDlss &&
+        Streamline::IsFrameGenerationAvailable()) {
+        Streamline::FrameGenSleep(dlssg_index + 1);
+        dlssg_slept_for = dlssg_index + 1;
+    }
+#endif
 }
 
 VkSurfaceKHR RendererVulkan::SwapchainSurface() {
@@ -535,9 +554,14 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                 .jitter = images.jitter,
                 .reset = reset,
             };
-            // Reflex's sleep here on the GPU thread, not in the recorded work: there it held up
-            // the Vulkan worker and everything queued behind it (#63).
-            Streamline::FrameGenSleep(inputs.index);
+            // Reflex's sleep on the GPU thread, not in the recorded work: there it held up the
+            // Vulkan worker and everything queued behind it (#63). Normally it was already done
+            // at the end of the last frame (see Composite); here only when it wasn't.
+            if (dlssg_slept_for != inputs.index) {
+                Streamline::FrameGenSleep(inputs.index);
+            }
+            dlssg_slept_for = 0;
+            Streamline::FrameGenSimulationEnd(inputs.index);
             scheduler.Record([inputs](vk::CommandBuffer cmdbuf) {
                 Streamline::FrameGenTagFrame(*cmdbuf, inputs);
             });
