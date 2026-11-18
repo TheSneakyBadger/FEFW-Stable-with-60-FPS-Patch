@@ -535,6 +535,9 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
                 .jitter = images.jitter,
                 .reset = reset,
             };
+            // Reflex's sleep here on the GPU thread, not in the recorded work: there it held up
+            // the Vulkan worker and everything queued behind it (#63).
+            Streamline::FrameGenSleep(inputs.index);
             scheduler.Record([inputs](vk::CommandBuffer cmdbuf) {
                 Streamline::FrameGenTagFrame(*cmdbuf, inputs);
             });

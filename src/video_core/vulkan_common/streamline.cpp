@@ -818,16 +818,15 @@ sl::Resource FrameGenResource(const FrameGenImage& image) {
 
 } // Anonymous namespace
 
-void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
+void FrameGenSleep(u64 index) {
     if (!LoadFrameGen()) {
         return;
     }
     FrameGenRuntime& fg = GetFrameGen();
-    sl::FrameToken* const token = Token(in.index);
+    sl::FrameToken* const token = Token(index);
     if (!token) {
         return;
     }
-    const sl::ViewportHandle viewport{0u};
     // Frame generation's pacing also as Reflex's frame limit, so the driver spaces the frames it
     // makes evenly (NVIDIA's frame generation is made to work with Reflex's limiter, not
     // others). The limit is on the frames shown, made ones included (test 75o set it to the
@@ -850,13 +849,28 @@ void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
                  static_cast<int>(result));
         fg.frame_limit_us = limit_us;
     }
+    static const bool sleep_off = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_REFLEX_SLEEP");
+        return value && value[0] == '0';
+    }();
     // The emulator has no simulation of its own to mark: the frame's recording is all of it.
-    {
+    if (!sleep_off) {
         FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
         fg.reflex_sleep(*token);
     }
     Marker(sl::PCLMarker::eSimulationStart, *token);
     Marker(sl::PCLMarker::eSimulationEnd, *token);
+}
+
+void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
+    if (!LoadFrameGen()) {
+        return;
+    }
+    sl::FrameToken* const token = Token(in.index);
+    if (!token) {
+        return;
+    }
+    const sl::ViewportHandle viewport{0u};
     Marker(sl::PCLMarker::eRenderSubmitStart, *token);
 
     // The camera isn't known: a plausible perspective (reversed, infinite depth) and motion that
