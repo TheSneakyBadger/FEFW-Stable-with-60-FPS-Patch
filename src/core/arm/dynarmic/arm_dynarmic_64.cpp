@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <ranges>
+#include <thread>
 #include <unordered_map>
 
 #include "common/settings.h"
@@ -389,6 +390,23 @@ void ArmDynarmic64::FefwWarmUp() {
 HaltReason ArmDynarmic64::RunThread(Kernel::KThread* thread) {
     if (!m_warm_checked) {
         FefwWarmUp();
+        m_warm_saved_at = std::chrono::steady_clock::now();
+    }
+    // The list is also saved every 3 minutes of play (on a thread of its own), not only when the
+    // core is destroyed: a session that ended without that (the emulator closed while the game
+    // was shutting down) lost its whole list, 51 minutes of play (#63).
+    if (m_warm_active) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - m_warm_saved_at >= std::chrono::minutes{3}) {
+            m_warm_saved_at = now;
+            std::vector<u64> compiled = m_jit->FefwTakeCompiledLocations();
+            if (!compiled.empty()) {
+                std::thread{[build_id = m_warm_build_id, core = m_core_index, base = m_warm_base,
+                             size = m_warm_size, compiled = std::move(compiled)] {
+                    FefwJitWarm::Save(build_id, core, base, size, compiled);
+                }}.detach();
+            }
+        }
     }
     m_jit->ClearExclusiveState();
     return TranslateHaltReason(m_jit->Run());

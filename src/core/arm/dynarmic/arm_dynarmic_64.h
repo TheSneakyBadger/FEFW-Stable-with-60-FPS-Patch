@@ -7,6 +7,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include "common/container/unordered_map.h"
 
@@ -121,6 +122,7 @@ private:
     u64 m_warm_base{};
     u64 m_warm_size{};
     std::array<u8, 0x20> m_warm_build_id{};
+    std::chrono::steady_clock::time_point m_warm_saved_at{};
 
     // SVC callback
     u32 m_svc{};

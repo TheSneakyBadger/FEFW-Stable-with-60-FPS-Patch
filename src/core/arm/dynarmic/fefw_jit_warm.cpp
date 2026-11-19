@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <system_error>
 #include <unordered_set>
 
@@ -134,6 +135,9 @@ void Save(const std::array<u8, 0x20>& build_id, std::size_t core, u64 base, u64 
     if (!Enabled() || !ValidBuild(build_id) || compiled.empty()) {
         return;
     }
+    // Saves during play run on threads of their own; one file at a time.
+    static std::mutex save_mutex;
+    std::scoped_lock lock{save_mutex};
     const fs::path path = PathFor(build_id, core);
     std::vector<u64> entries = ReadRelative(path);
     std::unordered_set<u64> seen(entries.begin(), entries.end());
