@@ -146,6 +146,18 @@ void Conductor::VsyncGrace(std::stop_token token) {
                                                          : std::string{"off"});
         return static_cast<s64>(ms) * 1'000'000;
     }();
+    // Not while NVIDIA Reflex paces the vsync (DLSS frame generation): with the grace, Reflex
+    // settled into sleeping a fixed time before every frame, 24 ms (test 91b) or 17.5 ms (test
+    // 91c, waiting inside the vsync), holding the game at 41.7 or 57 FPS for minutes (#63),
+    // for about 0.3 FPS gained elsewhere. EDEN_VSYNC_GRACE_DLSS=1 keeps it on there.
+    static const bool with_reflex = [] {
+        const char* const value = std::getenv("EDEN_VSYNC_GRACE_DLSS");
+        return value && value[0] == '1';
+    }();
+    if (!with_reflex && FefwFrameGenHook::vsync_sleep.load(std::memory_order_acquire) &&
+        m_reflex_paced.load(std::memory_order_relaxed)) {
+        return;
+    }
     const auto& settings = Settings::values;
     if (grace_ns <= 0 || !FefwFrameRate::Enabled() || m_swap_interval != 1 ||
         m_compose_speed_scale != 1.f || !settings.use_speed_limit.GetValue() ||
