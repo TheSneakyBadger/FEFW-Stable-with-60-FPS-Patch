@@ -235,12 +235,18 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, fefw_texture_cache_small_card, QString(), QString());
     INSERT(Settings, mfg_frame_cap_fps,
            tr("Your frame rate cap, if you have one (0: none):"),
-           tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, "
-              "RTSS or the MFG Unlocker's menu), set this to the same number, so frame "
-              "generation's pacing stays just under your cap (with a 158 cap at 3x, the game runs "
-              "at about 52 FPS). If you don't have a cap, leave it at 0: Fortune's Eden then caps "
-              "to your display's refresh rate itself, and you don't need one. A cap of your own "
-              "below the refresh rate with this at 0 makes it stutter."));
+           tr("A frame rate cap for Fortune's Eden: frame generation's pacing stays just under "
+              "it (with a 158 cap at 3x, the game runs at about 52 FPS). Fortune's Eden already "
+              "stays under your display's refresh rate and, with \"Stay under RTSS and NVIDIA "
+              "caps\" on, under the caps set in RTSS and the NVIDIA app or Control Panel; it "
+              "uses the lowest of them all. Set this for a cap it can't read (the MFG Unlocker's "
+              "menu) or for a lower one of your own."));
+    INSERT(Settings, mfg_read_caps, tr("Stay under RTSS and NVIDIA caps"),
+           tr("With frame generation, Fortune's Eden reads the frame rate caps set in RTSS "
+              "(while it runs) and the NVIDIA driver's Max Frame Rate (the NVIDIA app or Control "
+              "Panel) when a game starts, and paces its frames just under the lowest of them, "
+              "your display's refresh rate and your cap here, so none of them drops frames "
+              "(stutter). The log says which one it used."));
     INSERT(Settings, mfg_frame_cap, tr("Frame generation pacing:"),
            tr("Display refresh rate: with frame generation on, the game's frame rate is held to "
               "your display's refresh rate divided by the frames shown for each of the game's (for "

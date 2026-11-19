@@ -16,6 +16,7 @@
 #include <string_view>
 #include <utility>
 #include <boost/algorithm/string/split.hpp>
+#include "common/fefw_external_caps.h"
 #include "common/fefw_version.h"
 #include "common/fs/path_util.h"
 #include "common/settings.h"
@@ -2104,6 +2105,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
             }
         };
         set_refresh(screen());
+        // And the frame rate caps set in RTSS and the NVIDIA driver, which may have changed.
+        FefwExternalCaps::Detect();
         if (QWindow* const handle = windowHandle(); handle && !refresh_rate_connected) {
             refresh_rate_connected = true;
             connect(handle, &QWindow::screenChanged, this, set_refresh);

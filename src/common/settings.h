@@ -447,6 +447,11 @@ struct Values {
                                                    Specialization::Countable,
                                                    true,
                                                    true};
+    // Frame generation's pacing also stays under the frame rate caps RTSS and the NVIDIA driver
+    // (Max Frame Rate) are set to, read when a game starts. Off: only the display's refresh rate
+    // and the cap above.
+    SwitchableSetting<bool> mfg_read_caps{linkage, true, "mfg_read_caps",
+                                          Category::Renderer};
     // The most frames DLSS frame generation said it could make for each of the game's, the last
     // time it ran (0: not run yet), for the settings to say when 3x or 4x isn't available.
     Setting<u32> dlss_mfg_max_seen{linkage, 0, "dlss_mfg_max_seen", Category::Renderer};
@@ -1216,6 +1221,21 @@ void SetActiveFrameGeneration(const char* name);
 /// The refresh rate of the display the game window is on (0: unknown), set by the frontend.
 [[nodiscard]] f32 DisplayRefreshRate();
 void SetDisplayRefreshRate(f32 hz);
+/// The lowest limit on the frames shown a second, and where it comes from.
+struct FrameLimit {
+    enum class Source { None, Display, Rtss, Nvidia, YourCap };
+    f32 fps = 0.0f; ///< What frame generation paces to (the limit less its margin); 0: none.
+    f32 cap = 0.0f; ///< The limit itself (refresh rate or cap).
+    Source source = Source::None;
+};
+/// Frame rate caps found outside Fortune's Eden (RTSS, the NVIDIA driver), 0 for none.
+void SetExternalFrameCaps(f32 rtss, f32 nvidia);
+/// What frame generation paces to at this refresh rate: the lowest of the refresh rate less 3,
+/// RTSS's and the NVIDIA driver's caps less 2 (unless mfg_read_caps is off) and the cap set in
+/// Fortune's Eden less 1.
+[[nodiscard]] FrameLimit FrameGenerationLimit(f32 refresh);
+/// "your RTSS cap of 120", for the log and the home screen.
+[[nodiscard]] std::string DescribeFrameLimit(const FrameLimit& limit);
 /// While frame generation makes frames and its pacing is on: the time between the game's frames
 /// that fits the display (or the frame rate cap) with the frames made between them, in ns (at
 /// most 1/30 s). 0 otherwise.

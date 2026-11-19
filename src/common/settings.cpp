@@ -431,19 +431,73 @@ void SetDisplayRefreshRate(f32 hz) {
     display_refresh_rate.store(hz, std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<f32> rtss_frame_cap{0.0f};
+std::atomic<f32> nvidia_frame_cap{0.0f};
+std::atomic<int> logged_frame_limit{-1};
+} // Anonymous namespace
+
+void SetExternalFrameCaps(f32 rtss, f32 nvidia) {
+    rtss_frame_cap.store(rtss, std::memory_order_relaxed);
+    nvidia_frame_cap.store(nvidia, std::memory_order_relaxed);
+}
+
+FrameLimit FrameGenerationLimit(f32 refresh) {
+    // Frame generation's frames must fit under every limit on them, so it paces to the lowest:
+    // the display's refresh rate less 3 (as caps for variable refresh are set), RTSS's and the
+    // NVIDIA driver's caps less 2 (Reflex's limit sits 2% above the pacing; just under a cap,
+    // frames still come a little early now and then and the cap holds them back), and the cap
+    // typed in Fortune's Eden less 1 (as before).
+    FrameLimit best{};
+    const auto consider = [&best](f32 cap, f32 margin, FrameLimit::Source source) {
+        if (cap <= 0.0f) {
+            return;
+        }
+        if (best.fps <= 0.0f || cap - margin < best.fps) {
+            best = FrameLimit{cap - margin, cap, source};
+        }
+    };
+    consider(refresh, 3.0f, FrameLimit::Source::Display);
+    if (values.mfg_read_caps.GetValue()) {
+        consider(rtss_frame_cap.load(std::memory_order_relaxed), 2.0f, FrameLimit::Source::Rtss);
+        consider(nvidia_frame_cap.load(std::memory_order_relaxed), 2.0f,
+                 FrameLimit::Source::Nvidia);
+    }
+    consider(static_cast<f32>(values.mfg_frame_cap_fps.GetValue()), 1.0f,
+             FrameLimit::Source::YourCap);
+    return best;
+}
+
+std::string DescribeFrameLimit(const FrameLimit& limit) {
+    switch (limit.source) {
+    case FrameLimit::Source::Display:
+        return fmt::format("your display's {:.0f} Hz refresh rate", limit.cap);
+    case FrameLimit::Source::Rtss:
+        return fmt::format("your RTSS cap of {:.0f}", limit.cap);
+    case FrameLimit::Source::Nvidia:
+        return fmt::format("your NVIDIA Max Frame Rate of {:.0f}", limit.cap);
+    case FrameLimit::Source::YourCap:
+        return fmt::format("the cap of {:.0f} set here", limit.cap);
+    case FrameLimit::Source::None:
+        break;
+    }
+    return "no limit known";
+}
+
 s64 FrameGenerationPeriodNs() {
-    // The frames a second the display can take: a cap set below the refresh rate (the cap would
-    // drop the frames above it), else the refresh rate less 3 (as caps for variable refresh are
-    // set), so the frames always fit.
-    const int cap = values.mfg_frame_cap_fps.GetValue();
-    const f32 refresh = DisplayRefreshRate();
-    const f32 limit = cap > 0 && (refresh <= 0.0f || static_cast<f32>(cap) - 1.0f < refresh - 3.0f)
-                          ? static_cast<f32>(cap) - 1.0f
-                          : refresh - 3.0f;
+    // The frames a second the display (and every cap on the way to it) can take, with the
+    // frames made between the game's, so the frames always fit.
+    const FrameLimit frame_limit = FrameGenerationLimit(DisplayRefreshRate());
+    const f32 limit = frame_limit.fps;
     if (values.frame_generation.GetValue() == FrameGeneration::Off ||
         values.mfg_frame_cap.GetValue() != MfgFrameCap::Display || limit < 30.0f ||
         ActiveFrameGeneration() == nullptr) {
         return 0;
+    }
+    const int key = static_cast<int>(limit * 10.0f) * 8 + static_cast<int>(frame_limit.source);
+    if (logged_frame_limit.exchange(key, std::memory_order_relaxed) != key) {
+        LOG_INFO(Common, "Frame generation paced to {:.0f} frames shown a second: {}", limit,
+                 DescribeFrameLimit(frame_limit));
     }
     const f32 shown = static_cast<f32>(values.mfg_multiplier.GetValue()) + 2.0f;
     // Never below 30 of the game's frames a second: the 60 FPS mode's game speed follows the
