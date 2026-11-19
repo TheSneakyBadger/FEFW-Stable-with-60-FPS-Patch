@@ -23,11 +23,12 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.7)
+## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.8)
 
 - **Much less stutter in places you've been before** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): textures, once converted for your graphics card, are kept on disk (**Texture cache on disk** on the home screen: 2 GB by default, or Off, 4 GB or 8 GB), so they load instead of being converted again. On a hard drive it stays off (v1.7.5.1), as it would slow the game's own reads, and on cards with 4 GB of video memory or less too (v1.7.5.5).
 - **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): video memory from earlier scenes and dungeons is cleaned up, cards with 10 GB or more keep more loaded before cleaning up, and bursts of new textures no longer stall the frame.
 - **No stutter as an area loads, and no black textures** (v1.7.5.7, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): a texture still being read from disk shows its average colour for a moment instead of holding up the frame, and the game's code compiled in earlier sessions is compiled at start. Both from your second session on.
+- **NVIDIA DLSS frame generation no longer gets stuck at about 39 FPS** after a loading screen (v1.7.5.8, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): NVIDIA Reflex is reset when it holds the game back.
 - **Frame generation stays under your other caps** (v1.7.5.7): it reads RTSS's limit and the NVIDIA driver's Max Frame Rate and paces under the lowest, and the texture cleanup follows the video memory Windows allows right now, so other programs taking some no longer make the game choppy.
 - **NVIDIA DLSS frame generation paced like a native PC game** (v1.7.5.6, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): NVIDIA Reflex waits at the start of the game's frame and is told when it really starts, and the game's frames are spaced as evenly as with AMD FSR 3.1 frame generation.
 - **Smoother NVIDIA DLSS frame generation and far fewer texture reloads** (v1.7.5.5, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and no more black shading on AMD cards on Linux (v1.7.5.5, [#44](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/44)).

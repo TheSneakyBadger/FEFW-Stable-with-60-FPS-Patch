@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.5.8
+
+- **No more getting stuck at about 39 FPS with NVIDIA DLSS frame generation** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). After a loading screen, NVIDIA Reflex could keep making every frame wait about 50 ms, for minutes, with the CPU and graphics card nearly idle (19.4 game frames a second, about 39 shown at 2x), until it happened to reset itself. Fortune's Eden now notices when Reflex waits that long on 30 frames in a row and resets it.
+
+Everything else is as in [v1.7.5.7](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.7).
+
 ## v1.7.5.7
 
 No more stutter when entering an area, without black textures; game code compiled once instead of every session; and frame generation that reads your other frame rate caps.
