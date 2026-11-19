@@ -10,6 +10,8 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #include <boost/icl/interval_set.hpp>
 #include "common/assert.h"
@@ -268,6 +270,9 @@ private:
                         .address_space_bits = conf.page_table_address_space_bits});
         Optimization::Optimize(ir_block, conf, polyfill_options);
         const CodePtr entrypoint = emitter.Emit(ir_block).entrypoint;
+        if (!arch_descriptor.SingleStepping()) {
+            fefw_compiled.push_back(descriptor.Value());
+        }
         auto& stats = FefwJitStats::Get();
         stats.blocks.fetch_add(1, std::memory_order_relaxed);
         stats.compile_ns.fetch_add(
@@ -276,6 +281,40 @@ private:
                                            .count()),
             std::memory_order_relaxed);
         return entrypoint;
+    }
+
+    std::vector<u64> FefwTakeCompiledLocations() {
+        return std::exchange(fefw_compiled, {});
+    }
+
+    size_t FefwPrecompile(const std::vector<u64>& locations, u64 max_ns) {
+        ASSERT(!is_executing);
+        const auto start = std::chrono::steady_clock::now();
+        // Room kept for what the game compiles itself; GetBlock clears the whole cache under 1 MiB.
+        constexpr size_t KEEP_FREE = 64 * 1024 * 1024;
+        size_t compiled = 0;
+        for (const u64 value : locations) {
+            const IR::LocationDescriptor descriptor{value};
+            const A64::LocationDescriptor arch_descriptor{descriptor};
+            if (arch_descriptor.SingleStepping() || emitter.GetBasicBlock(descriptor)) {
+                continue;
+            }
+            if (!conf.callbacks->MemoryReadCode(arch_descriptor.PC())) {
+                continue;
+            }
+            if (block_of_code.SpaceRemaining() < KEEP_FREE) {
+                break;
+            }
+            GetBlock(descriptor);
+            ++compiled;
+            if ((compiled & 255) == 0 &&
+                static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now() - start)
+                                     .count()) > max_ns) {
+                break;
+            }
+        }
+        return compiled;
     }
 
     void PerformRequestedCacheInvalidation(HaltReason hr) {
@@ -312,6 +351,8 @@ private:
     bool invalidate_entire_cache = false;
     boost::icl::interval_set<u64> invalid_cache_ranges;
     std::mutex invalidation_mutex;
+    /// Fortune's Eden: locations compiled since FefwTakeCompiledLocations (JIT warm-up).
+    std::vector<u64> fefw_compiled;
 };
 
 Jit::Jit(UserConfig conf)
@@ -333,6 +374,14 @@ void Jit::ClearCache() {
 
 void Jit::InvalidateCacheRange(u64 start_address, size_t length) {
     impl->InvalidateCacheRange(start_address, length);
+}
+
+std::vector<std::uint64_t> Jit::FefwTakeCompiledLocations() {
+    return impl->FefwTakeCompiledLocations();
+}
+
+std::size_t Jit::FefwPrecompile(const std::vector<std::uint64_t>& locations, std::uint64_t max_ns) {
+    return impl->FefwPrecompile(locations, max_ns);
 }
 
 void Jit::Reset() {

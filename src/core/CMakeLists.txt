@@ -1304,6 +1304,8 @@ if (ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64 OR ARCHITECTURE_riscv64 OR ARCHITE
     target_sources(core PRIVATE
         arm/dynarmic/arm_dynarmic.h
         arm/dynarmic/arm_dynarmic_64.cpp
+        arm/dynarmic/fefw_jit_warm.cpp
+        arm/dynarmic/fefw_jit_warm.h
         arm/dynarmic/arm_dynarmic_64.h
         arm/dynarmic/arm_dynarmic_32.cpp
         arm/dynarmic/arm_dynarmic_32.h
