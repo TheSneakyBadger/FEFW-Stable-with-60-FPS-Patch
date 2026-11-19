@@ -89,6 +89,8 @@ std::atomic<u64> read_max_ns{0};
 std::atomic<u32> stored_count{0};
 /// Stand-in colours by entry name (StandInColor), kept in standins.bin between runs.
 std::unordered_map<u64, u32> colors;
+/// Colours added since standins.bin was last written.
+bool colors_dirty = false;
 constexpr u32 STAND_IN_MAGIC = 0x49534546; // "FESI"
 constexpr u32 STAND_IN_VERSION = 1;
 
@@ -226,6 +228,9 @@ void SaveStandInsLocked() {
     std::error_code ec;
     if (written) {
         fs::rename(temp, path, ec);
+        if (!ec) {
+            colors_dirty = false;
+        }
     } else {
         fs::remove(temp, ec);
     }
@@ -264,7 +269,16 @@ void TrimLocked() {
 void WorkerLoop() {
     std::unique_lock lock{mutex};
     while (true) {
-        wake.wait(lock, [] { return stopping || !queue.empty(); });
+        // The stand-in colours are written every minute they've changed, not only when the
+        // renderer stops: sessions that ended with Fortune's Eden closing abruptly kept none, so
+        // every session on that install was a first one (#63).
+        if (!wake.wait_for(lock, std::chrono::minutes{1},
+                           [] { return stopping || !queue.empty(); })) {
+            if (colors_dirty) {
+                SaveStandInsLocked();
+            }
+            continue;
+        }
         if (queue.empty()) {
             return;
         }
@@ -315,6 +329,7 @@ void WorkerLoop() {
             total_bytes += size;
             if (color) {
                 colors.insert_or_assign(job.name, *color);
+                colors_dirty = true;
             }
             ++stored_count;
             TrimLocked();
@@ -589,6 +604,7 @@ bool LoadInto(const Key& key, std::span<u8> output) {
         if (!colors.contains(name)) {
             if (const std::optional<u32> color = ComputeColor(key, output)) {
                 colors.emplace(name, *color);
+                colors_dirty = true;
             }
         }
     }

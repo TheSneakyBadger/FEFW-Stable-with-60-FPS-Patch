@@ -390,7 +390,9 @@ void ArmDynarmic64::FefwWarmUp() {
 HaltReason ArmDynarmic64::RunThread(Kernel::KThread* thread) {
     if (!m_warm_checked) {
         FefwWarmUp();
-        m_warm_saved_at = std::chrono::steady_clock::now();
+        // The first save a minute in (a short session that ends abruptly keeps its list), then
+        // every 3 minutes.
+        m_warm_saved_at = std::chrono::steady_clock::now() - std::chrono::minutes{2};
     }
     // The list is also saved every 3 minutes of play (on a thread of its own), not only when the
     // core is destroyed: a session that ended without that (the emulator closed while the game
