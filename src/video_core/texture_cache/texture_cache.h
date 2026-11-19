@@ -597,13 +597,19 @@ void TextureCache<P>::TickFrame() {
                 // budget, cleaned up faster from 85% of that.
                 const u64 others = usage > total_used_memory ? usage - total_used_memory : 0;
                 const u64 room = budget / 10 * 9 > others ? budget / 10 * 9 - others : 0;
-                const u64 critical = std::clamp<u64>(room, 1_GiB, base_critical_memory);
+                // Within 256 MiB of the levels set at start counts as room enough: the budget
+                // moved a few MiB either side of them every few minutes on a 12 GB card, and
+                // each move was logged.
+                const u64 critical = room + 256_MiB >= base_critical_memory
+                                         ? base_critical_memory
+                                         : std::clamp<u64>(room, 1_GiB, base_critical_memory);
                 const u64 expected =
                     std::clamp<u64>(room / 100 * 85, 768_MiB, base_expected_memory);
                 const bool limited = critical < base_critical_memory;
                 const bool moved = critical + 256_MiB < critical_memory ||
                                    critical > critical_memory + 256_MiB;
-                expected_memory = (std::min)(expected, critical - 256_MiB);
+                expected_memory = limited ? (std::min)(expected, critical - 256_MiB)
+                                          : base_expected_memory;
                 critical_memory = critical;
                 if (limited != budget_limited || (limited && moved)) {
                     budget_limited = limited;
