@@ -100,8 +100,11 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         // The limit here is what may be used (Conservative: about 75% of the card), so a 10 GB
         // card has about 7.5 GiB and a 12 GB one 9 GiB: those count as large too (#63, an RTX
         // 4080 Laptop with 12 GB cleaned up from 6.3 GB, evicting and reloading 3,500 textures a
-        // minute on battle maps). 8 GB cards (about 6 GiB) don't.
-        const bool large_card = device_local_memory >= static_cast<s64>(7_GiB);
+        // minute on battle maps). 6 and 8 GB cards (about 4.7 and 6 GiB) too: on a 6 GB card the
+        // faster cleanup began at about half full (2.3 of 4.7 GiB) and freed images the game had
+        // drawn itself, which came back as dark or garbled map patches after teleports; at 85%
+        // they were gone (#73, an RX 5600 XT on Linux). 4 GB cards (about 3 GiB) keep theirs.
+        const bool large_card = device_local_memory >= static_cast<s64>(4_GiB + 512_MiB);
         expected_memory = (std::min)(expected_memory,
                                      static_cast<u64>(device_local_memory) / 20 *
                                          (large_card ? 17 : 14));
