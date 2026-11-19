@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.5.10
+
+- **Texture colours and the compiled-code list are saved while you play.** The stand-in colours (v1.7.5.7) were only written when the game stopped cleanly, and the compiled-code list first after 3 minutes. On a PC where Fortune's Eden closed abruptly on Stop, neither was ever saved, so every session loaded areas like the first. The colours are now written every minute they change, and the code list first after a minute of play, then every 3 minutes.
+
+Everything else is as in [v1.7.5.9](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.9).
+
 ## v1.7.5.9
 
 - **Less stutter in a new install's first session.** The game code compiled while testing Fortune's Eden now comes with the Windows build (`jit-warmup`, about 4 MB: only where the game's code blocks are, no game code and nothing about anyone), so it's compiled when the game starts (about 3 s) instead of in the middle of play. In a first session that was 235,000 blocks (over 2 s of hitches) in the first area alone. It covers the start of the game, Dagsion and the battles tested so far, and grows with each release; what you play beyond it is still remembered for your next session, as in v1.7.5.7.
