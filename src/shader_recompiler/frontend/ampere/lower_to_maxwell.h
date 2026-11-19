@@ -1014,13 +1014,17 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         case 0x89c: { // Uniform predicate AND with an optionally inverted third source.
             const u32 target = insn.Bits(81, 3);
             const u32 lut = insn.Bits(64, 3) | (insn.Bits(72, 5) << 3);
-            if (native_predicate != 7 || target == 7 || insn.Bits(84, 3) != 7 ||
+            // Fortune's Eden: also guarded by a uniform predicate (@UPn UPLOP3, rejected 9-357
+            // times a session up to v1.7.4: [0000189c 00000000 03f0e870 000fe200] under @UP1).
+            // With the uniform predicates loaded into P0-P6 below (UPn in P(6-n)), the guard is
+            // that P; with it false the target keeps its value and is written back unchanged.
+            if (target == 7 || insn.Bits(84, 3) != 7 || native_predicate == 15 ||
                 insn.Bits(16, 8) || insn.words[1] || (lut != 0x80 && lut != 0x40))
                 return fail(index, "native uniform predicate LUT mode");
             const auto mapped = [](u32 source) { return ((source & 7) == 7 ? 7 : 6 - (source & 7)) | (source & 8); };
             emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{0x7f} << 20));
             emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{0x7f} << 20));
-            emit(0x5090000000070000ULL | (u64{6 - target} << 3) | 7 |
+            emit(0x5090000000000000ULL | (u64{mapped(native_predicate)} << 16) | (u64{6 - target} << 3) | 7 |
                  (u64{mapped(insn.Bits(87, 4))} << 12) | (u64{mapped(insn.Bits(77, 4))} << 29) |
                  (u64{mapped(insn.Bits(68, 4)) ^ (lut == 0x40 ? 8U : 0U)} << 39));
             emit(0x38e8000000070000ULL | 239 | (u64{239} << 8) | (u64{1} << (26 - target)));
