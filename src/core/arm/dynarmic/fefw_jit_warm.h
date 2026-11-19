@@ -14,7 +14,9 @@
 /// blocks, 200-460 ms in all, much of it in frames over 50 ms (#63). Which blocks each CPU core
 /// compiled is kept in user/cache/jit (their addresses, relative to the game's code, not the
 /// compiled code), and the next session compiles them before the core first runs, so they are
-/// ready when the game reaches them. EDEN_JIT_WARM=0 turns it off.
+/// ready when the game reaches them. A list that comes with Fortune's Eden (jit-warmup next to the
+/// program, from testers' play) is merged in, so a new install's first session gets them too.
+/// EDEN_JIT_WARM=0 turns it off.
 namespace FefwJitWarm {
 
 [[nodiscard]] bool Enabled();
