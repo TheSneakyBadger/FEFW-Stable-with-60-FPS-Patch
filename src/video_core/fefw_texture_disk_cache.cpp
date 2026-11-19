@@ -248,7 +248,13 @@ u32 ReadThreads() {
                      fast_cores);
             return 1U;
         }
-        const u32 count = std::clamp(std::thread::hardware_concurrency() / 2, 2U, 8U);
+        // All but 4 of the CPU's threads (the game's busiest), 2 to 16. Half of them, up to 8,
+        // fell behind when a new area needed 600-1,500 textures at once: frames waited 0.5 s in
+        // 10 s and 400-760 were converted on the GPU instead (#63, 8 threads on a 16-thread
+        // Ryzen 7 9800X3D and a 32-thread i9-14900HX). The readers only work during such bursts,
+        // when frames are waiting for them anyway.
+        const u32 hardware = std::thread::hardware_concurrency();
+        const u32 count = std::clamp(hardware > 4 ? hardware - 4 : 2U, 2U, 16U);
         LOG_INFO(Render_Vulkan, "Texture cache on disk: {} read threads", count);
         return count;
     }();
