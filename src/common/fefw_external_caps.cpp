@@ -18,6 +18,7 @@
 #include <fstream>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <windows.h>
@@ -104,6 +105,7 @@ struct RtssLimit {
     long limit = 0;
     long denominator = 1;
     long limit_time = 0;
+    long sync_limiter = -1; ///< SyncLimiter: the limiter's mode (async, edge sync, Reflex...).
 };
 
 /// The [Framerate] section of an RTSS profile (Limit=120, LimitDenominator=1 for 120 FPS;
@@ -140,6 +142,8 @@ std::optional<RtssLimit> ReadRtssProfile(const std::filesystem::path& file) {
             result.denominator = value > 0 ? value : 1;
         } else if (key == "LimitTime") {
             result.limit_time = value;
+        } else if (key == "SyncLimiter") {
+            result.sync_limiter = value;
         }
     }
     return result;
@@ -172,7 +176,10 @@ void DetectRtss(Caps& caps) {
     }
     if (limit->limit > 0) {
         caps.rtss = static_cast<float>(limit->limit) / static_cast<float>(limit->denominator);
-        caps.rtss_detail = fmt::format("{:.2f} FPS ({})", caps.rtss, where);
+        // The limiter's mode goes in the log too: in its NVIDIA Reflex mode RTSS runs Reflex's
+        // sleep in the process as well, beside DLSS frame generation's own.
+        caps.rtss_detail = fmt::format("{:.2f} FPS ({}, limiter mode {})", caps.rtss, where,
+                                       limit->sync_limiter);
     } else if (limit->limit_time > 0) {
         // A frame time limit instead: not read (its units aren't documented).
         caps.rtss_detail = fmt::format("a frame time limit, not read ({})", where);
@@ -192,6 +199,7 @@ using NvLoadSettings = NvStatus (*)(void* session);
 using NvFindApplicationByName = NvStatus (*)(void* session, const std::uint16_t* name,
                                              void** profile, void* application);
 using NvGetCurrentGlobalProfile = NvStatus (*)(void* session, void** profile);
+using NvGetBaseProfile = NvStatus (*)(void* session, void** profile);
 using NvGetSetting = NvStatus (*)(void* session, void* profile, std::uint32_t id, void* setting);
 
 constexpr unsigned int NvInitializeId = 0x0150E828;
@@ -200,21 +208,27 @@ constexpr unsigned int NvDestroySessionId = 0xDAD9CFF8;
 constexpr unsigned int NvLoadSettingsId = 0x375DBD6B;
 constexpr unsigned int NvFindApplicationByNameId = 0xEEE566B2;
 constexpr unsigned int NvGetCurrentGlobalProfileId = 0x617BFF9F;
+constexpr unsigned int NvGetBaseProfileId = 0xDA8466A0;
 constexpr unsigned int NvGetSettingId = 0x73BF8338;
 /// "Max Frame Rate" (Frame Rate Limiter v3): the frames a second, 0 off.
 constexpr std::uint32_t MaxFrameRateSetting = 0x10835002;
 
 constexpr std::size_t UnicodeChars = 2048;
-// NVDRS_APPLICATION_V1: version, isPredefined, appName, userFriendlyName, launcher.
+// NVDRS_APPLICATION, newest first: V4 = V3 + commandLine; V3 = V2 + a 32-bit flags word
+// (isMetro...); V2 = V1 + fileInFolder; V1 = version, isPredefined, appName, userFriendlyName,
+// launcher. Drivers refuse a version they don't take, so each is tried in turn.
 constexpr std::size_t ApplicationV1Size = 4 + 4 + 3 * UnicodeChars * 2;
+constexpr std::size_t ApplicationV2Size = ApplicationV1Size + UnicodeChars * 2;
+constexpr std::size_t ApplicationV3Size = ApplicationV2Size + 4;
+constexpr std::size_t ApplicationV4Size = ApplicationV3Size + UnicodeChars * 2;
 // NVDRS_SETTING_V1: version, settingName, settingId, settingType, settingLocation,
 // isCurrentPredefined, isPredefinedValid, then the predefined and current values (unions of
 // a 4100-byte binary value, a string and a u32).
 constexpr std::size_t SettingV1Size = 4 + UnicodeChars * 2 + 5 * 4 + 2 * 4100;
 constexpr std::size_t SettingCurrentOffset = 4 + UnicodeChars * 2 + 5 * 4 + 4100;
 
-std::uint32_t Version(std::size_t size) {
-    return static_cast<std::uint32_t>(size) | (1u << 16);
+std::uint32_t Version(std::size_t size, std::uint32_t version = 1) {
+    return static_cast<std::uint32_t>(size) | (version << 16);
 }
 
 void DetectNvidia(Caps& caps) {
@@ -237,6 +251,7 @@ void DetectNvidia(Caps& caps) {
         reinterpret_cast<NvFindApplicationByName>(query(NvFindApplicationByNameId));
     const auto global_profile =
         reinterpret_cast<NvGetCurrentGlobalProfile>(query(NvGetCurrentGlobalProfileId));
+    const auto base_profile = reinterpret_cast<NvGetBaseProfile>(query(NvGetBaseProfileId));
     const auto get_setting = reinterpret_cast<NvGetSetting>(query(NvGetSettingId));
     if (!initialize || !create_session || !destroy_session || !load_settings ||
         !find_application || !global_profile || !get_setting) {
@@ -286,21 +301,45 @@ void DetectNvidia(Caps& caps) {
         for (std::size_t i = 0; i < file.size() && i + 1 < name.size(); ++i) {
             name[i] = static_cast<std::uint16_t>(file[i]);
         }
-        std::vector<std::uint8_t> application(ApplicationV1Size + 64);
-        const std::uint32_t version = Version(ApplicationV1Size);
-        std::memcpy(application.data(), &version, sizeof(version));
-        void* profile{};
-        if (find_application(session, name.data(), &profile, application.data()) == 0 &&
-            profile) {
-            cap = read_cap(profile);
-            where = "Fortune's Eden's profile";
+        // An explicit value in Fortune's Eden's profile (0 included: off for it) wins over
+        // the one for all programs; not set there, the one for all programs applies.
+        std::vector<std::uint8_t> application(ApplicationV4Size + 64);
+        constexpr std::pair<std::size_t, std::uint32_t> versions[] = {
+            {ApplicationV4Size, 4}, {ApplicationV3Size, 3}, {ApplicationV2Size, 2},
+            {ApplicationV1Size, 1}};
+        for (const auto& [size, number] : versions) {
+            std::fill(application.begin(), application.end(), std::uint8_t{0});
+            const std::uint32_t version = Version(size, number);
+            std::memcpy(application.data(), &version, sizeof(version));
+            void* profile{};
+            const NvStatus status =
+                find_application(session, name.data(), &profile, application.data());
+            if (status == 0 && profile) {
+                cap = read_cap(profile);
+                where = "Fortune's Eden's profile";
+                break;
+            }
+            // Only a refused structure version (NVAPI_INCOMPATIBLE_STRUCT_VERSION) tries the
+            // next; not found (no profile for Fortune's Eden) or anything else stops.
+            if (status != -9) {
+                break;
+            }
         }
     }
+    // For all programs: the current global profile, then the base profile (where the NVIDIA app
+    // and Control Panel store global settings; usually the same one).
     if (!cap) {
         void* profile{};
         if (global_profile(session, &profile) == 0 && profile) {
             cap = read_cap(profile);
             where = "all programs";
+        }
+    }
+    if (!cap && base_profile) {
+        void* profile{};
+        if (base_profile(session, &profile) == 0 && profile) {
+            cap = read_cap(profile);
+            where = "all programs (base profile)";
         }
     }
     destroy_session(session);
