@@ -815,11 +815,44 @@ bool VsyncSleep() {
     const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
     ApplyFrameLimit(fg, static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
                                          (timer_paces ? 98 : 100) / 100));
+    // Reflex stuck holding the game back: after a loading screen (game frames 51 ms apart),
+    // Reflex kept sleeping the whole 51.5 ms of every vsync for 100 s, the game at 19.4 FPS with
+    // the card and CPU nearly idle, until a 100 ms gap made Streamline reset its frame timer
+    // (#63, an RTX 4080 Laptop entering the Dagsion sewers). Its own sleeps fed the frame time it
+    // paced to. After 30 sleeps in a row of over 40 ms (2.4 vsyncs; the game is never that slow
+    // at a steady 60 Hz), its options are set again and 8 vsyncs go without a sleep, so it measures
+    // the game's real frames again.
+    static u32 long_sleeps = 0;
+    static u32 unstuck_count = 0;
     if (skip_left > 0) {
         --skip_left;
     } else {
-        FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
-        fg.reflex_sleep(*token);
+        const s64 sleep_start = NowNs();
+        {
+            FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
+            fg.reflex_sleep(*token);
+        }
+        static constexpr s64 STUCK_SLEEP_NS = 40'000'000;
+        long_sleeps = NowNs() - sleep_start > STUCK_SLEEP_NS ? long_sleeps + 1 : 0;
+        if (long_sleeps >= 30) {
+            long_sleeps = 0;
+            skip_left = 8;
+            ++unstuck_count;
+            {
+                std::scoped_lock lock{reflex_options_mutex};
+                sl::ReflexOptions reflex{};
+                reflex.mode = fg.reflex_mode;
+                reflex.frameLimitUs = fg.frame_limit_us;
+                fg.reflex_set_options(reflex);
+            }
+            if (unstuck_count <= 5 || unstuck_count % 50 == 0) {
+                LOG_WARNING(Render_Vulkan,
+                            "NVIDIA Reflex slept over 40 ms on 30 vsyncs in a row (holding the "
+                            "game back): its options set again and 8 vsyncs without a sleep ({} "
+                            "so far)",
+                            unstuck_count);
+            }
+        }
     }
     // The game's frame starts now: its simulation runs from here until the GPU thread has its
     // frame (FrameGenSimulationEnd). Marked on the GPU thread instead, Reflex saw almost no
