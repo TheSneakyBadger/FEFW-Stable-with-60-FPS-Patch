@@ -662,10 +662,14 @@ bool LoadInto(const Key& key, std::span<u8> output) {
     if (it != index.end()) {
         it->second.last_used = ++use_counter;
         it->second.used = true;
-        if (!colors.contains(name)) {
-            if (const std::optional<u32> color = ComputeColor(key, output)) {
-                RecordColorLocked(name, key, *color);
+        if (const auto known = colors.find(name); known != colors.end()) {
+            // A colour from before they were kept by game texture too (v1.7.5.10).
+            if (guest_colors.size() < MAX_GUEST_COLORS &&
+                guest_colors.try_emplace(GuestNameOf(key), known->second).second) {
+                colors_dirty = true;
             }
+        } else if (const std::optional<u32> color = ComputeColor(key, output)) {
+            RecordColorLocked(name, key, *color);
         }
     }
     ++loaded_count;
