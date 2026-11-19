@@ -7,11 +7,17 @@
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <unordered_set>
 #include <vector>
 #include <boost/container/small_vector.hpp>
 
 #include "common/assert.h"
 #include "common/cityhash.h"
+#include "common/fs/path_util.h"
+#include "common/logging.h"
 #include "shader_recompiler/frontend/maxwell/control_flow.h"
 #include "shader_recompiler/exception.h"
 #include "shader_recompiler/object_pool.h"
@@ -26,6 +32,47 @@
 #include "video_core/texture_cache/util.h"
 
 namespace VideoCommon {
+
+namespace {
+/// Fortune's Eden: each distinct rejected native program (by its first bytes) once: logged with
+/// its reason, and saved with it to user/log/rejected-shaders/ (the program from its start, up to
+/// 64 KiB) so rejections can be fixed as they're found. Repeats are only counted.
+std::mutex rejected_seen_mutex;
+std::unordered_set<u64> rejected_seen;
+
+void NoteDistinctRejection(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, u64 hash,
+                           const char* error) {
+    size_t distinct;
+    {
+        std::scoped_lock lock{rejected_seen_mutex};
+        if (!rejected_seen.insert(hash).second) {
+            return;
+        }
+        distinct = rejected_seen.size();
+    }
+    LOG_ERROR(HW_GPU, "Native shader {:016x} rejected ({} distinct so far): {}", hash, distinct,
+              error);
+    size_t size = 64 * 1024;
+    while (size >= 16 && !gpu_memory.IsFullyMappedRange(gpu_addr, size)) {
+        size /= 2;
+    }
+    if (size < 16) {
+        return;
+    }
+    std::vector<u8> program(size);
+    gpu_memory.ReadBlockUnsafe(gpu_addr, program.data(), size);
+    std::error_code fs_error;
+    const auto folder = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "rejected-shaders";
+    std::filesystem::create_directories(folder, fs_error);
+    if (fs_error) {
+        return;
+    }
+    const std::string name = fmt::format("{:016x}", hash);
+    std::ofstream{folder / (name + ".bin"), std::ios::binary}.write(
+        reinterpret_cast<const char*>(program.data()), static_cast<std::streamsize>(size));
+    std::ofstream{folder / (name + ".txt")} << error << '\n';
+}
+} // Anonymous namespace
 
 void ShaderCache::InvalidateRegion(VAddr addr, size_t size) {
     std::scoped_lock lock{invalidation_mutex};
@@ -118,11 +165,22 @@ bool ShaderCache::RefreshStages(std::array<u64, 6>& unique_hashes) try {
     if (!native.native_turing) throw;
     native.native_execution_failed = true;
     last_shaders_valid = false;
-    // Rate-limited: the first 32, then every 1024th with the running total.
+    // Each distinct program is logged once, with its reason (NoteDistinctRejection); the running
+    // total at the 1st, 10th, 100th... (it was the first 32 only, so the count was lost).
     static std::atomic<u64> rejected_native_shaders{};
     const u64 count = ++rejected_native_shaders;
-    if (count <= 32 || count % 1024 == 0) {
-        LOG_ERROR(HW_GPU, "Native graphics shader rejected: {} (rejections so far: {})", error.what(), count);
+    u64 mark = 1;
+    while (mark < count) {
+        mark *= 10;
+    }
+    if (mark == count) {
+        size_t distinct;
+        {
+            std::scoped_lock lock{rejected_seen_mutex};
+            distinct = rejected_seen.size();
+        }
+        LOG_WARNING(HW_GPU, "Native graphics shader rejections: {} so far, {} distinct ({})",
+                    count, distinct, error.what());
     }
     return false;
 }
@@ -234,12 +292,14 @@ void ShaderCache::DropRejections(VAddr addr, size_t size) {
     }
 }
 
+
 void ShaderCache::RememberRejection(VAddr cpu_addr, GPUVAddr gpu_addr, const char* error) {
     const size_t size = MappedPrefix(*gpu_memory, gpu_addr);
     if (size == 0) {
         return;
     }
     const u64 hash = PrefixHash(*gpu_memory, gpu_addr, size);
+    NoteDistinctRejection(*gpu_memory, gpu_addr, hash, error);
     std::scoped_lock lock{lookup_mutex};
     max_rejected_prefix = (std::max)(max_rejected_prefix, size);
     rejected_shaders.insert_or_assign(cpu_addr, RejectedShader{hash, size, error});
