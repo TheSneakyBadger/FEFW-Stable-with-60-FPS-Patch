@@ -82,6 +82,11 @@ public:
         const Image& image, u64 guest_hash,
         std::span<const VideoCommon::SwizzleParameters> swizzles) const;
 
+    /// Fills the image with its stand-in colour (FefwTextureDiskCache::StandInColor) while its
+    /// read is in flight, so draws needn't wait for it. False: it has none (or isn't a plain 2D
+    /// texture), and draws wait as before.
+    bool UploadDiskCacheStandIn(Image& image, const DiskCacheLoad& load);
+
     void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);

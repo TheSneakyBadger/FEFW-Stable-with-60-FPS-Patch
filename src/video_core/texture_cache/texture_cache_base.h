@@ -92,6 +92,9 @@ struct AsyncDecodeContext {
     /// size); failed: it couldn't be read.
     bool sized_by_data{};
     bool failed{};
+    /// The image shows its stand-in colour until the read is uploaded: draws don't wait for it
+    /// (main thread only).
+    bool stand_in{};
     /// Signalled (with the mutex held) when complete is set, for a draw waiting on it.
     std::condition_variable ready;
     /// When a texture cache read was queued (for the log).
@@ -741,6 +744,8 @@ private:
     boost::container::small_vector<ImageId, 32> deferred_disk_waits;
     /// Textures converted on the GPU because their read wasn't ready in time (for the log).
     u32 disk_cache_fallbacks{};
+    /// Textures shown in their stand-in colour while being read (for the log).
+    u32 disk_cache_stand_ins{};
     u32 disk_cache_fallback_frames{};
     /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
     u64 disk_hash_ns{};

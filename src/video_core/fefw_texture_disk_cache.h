@@ -60,6 +60,16 @@ void Stop();
 /// Stores the data (on the background thread).
 void Store(const Key& key, std::vector<u8> data);
 
+/// The texture's stand-in: its average colour (RGBA8, R in the low byte; alpha 0 where the
+/// texture has see-through parts, 255 otherwise), shown while it is read from disk instead of
+/// holding up the frame. Known once it has been stored or loaded (kept in standins.bin). Any
+/// thread. EDEN_TC_STAND_IN=0: none.
+[[nodiscard]] std::optional<u32> StandInColor(const Key& key);
+
+/// One compressed block of a single colour (rgba as StandInColor), for this encoding (1: BC1,
+/// 8 bytes; 3: BC3 and 7: BC7, 16 bytes). Returns the block's size.
+u32 SolidBlock(u32 encoding, u32 rgba, std::span<u8, 16> block);
+
 /// Textures loaded and stored since the last call (for the log).
 struct Counts {
     u32 loaded;
@@ -67,6 +77,7 @@ struct Counts {
     u64 bytes_on_disk;
     u64 read_ns;     ///< Time the loads took on their threads, in all.
     u64 read_max_ns; ///< The longest load.
+    u32 stand_ins;   ///< Textures with a stand-in colour known.
 };
 [[nodiscard]] Counts TakeCounts();
 
