@@ -391,6 +391,18 @@ cmake_language(DEFER CALL eden_render_isa_options)
         } else {
             Write-Warning 'jit-warmup\*.bin not found: the package will have no JIT warm-up list.'
         }
+        # The texture colours that come with Fortune's Eden (texture-colours\colours.bin next to
+        # the exe): one average colour per game texture, by a hash of the texture, shown while a
+        # new texture waits its turn to be converted. Merged from the main install's
+        # user\cache\textures\colours.bin before each release.
+        $colorsShipped = Join-Path $root 'texture-colours\colours.bin'
+        if (Test-Path $colorsShipped) {
+            $colorsDest = Join-Path $outDir 'texture-colours'
+            New-Item -ItemType Directory -Force -Path $colorsDest | Out-Null
+            Copy-Item -LiteralPath $colorsShipped -Destination $colorsDest
+        } else {
+            Write-Warning 'texture-colours\colours.bin not found: the package will have no texture colours.'
+        }
         $fpsText = @"
 
 60 FPS MODE AND PERFORMANCE (Fortune's Weave 1.1.0)
