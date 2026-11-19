@@ -2235,9 +2235,25 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 // Its stand-in colour until the read is ready, rather than a draw waiting for it
                 // or converting it on the GPU after all (both a stutter as an area loads, #63).
                 // Not with aliases: they're synchronized from it as soon as it's used.
-                if (image.aliased_images.empty() && runtime.UploadDiskCacheStandIn(image, *plan)) {
-                    decode->stand_in = true;
-                    ++disk_cache_stand_ins;
+                if (!image.aliased_images.empty()) {
+                    ++disk_cache_no_stand_in[3];
+                } else {
+                    using StandIn = typename P::Runtime::StandIn;
+                    switch (runtime.UploadDiskCacheStandIn(image, *plan)) {
+                    case StandIn::Shown:
+                        decode->stand_in = true;
+                        ++disk_cache_stand_ins;
+                        break;
+                    case StandIn::NoColor:
+                        ++disk_cache_no_stand_in[0];
+                        break;
+                    case StandIn::Shape:
+                        ++disk_cache_no_stand_in[1];
+                        break;
+                    case StandIn::TooBig:
+                        ++disk_cache_no_stand_in[2];
+                        break;
+                    }
                 }
                 async_decodes.push_back(std::move(decode));
                 decode_ptr->queued_at = std::chrono::steady_clock::now();
@@ -2559,15 +2575,19 @@ void TextureCache<P>::TickAsyncDecode() {
         if (reads != 0 || disk_cache_fallbacks != 0 || disk_hash_bytes != 0) {
             LOG_INFO(HW_GPU,
                      "Texture cache on disk, last 10 s: {} reads ready {:.1f} ms after being "
-                     "queued on average; {} shown in a stand-in colour meanwhile; draws waited "
+                     "queued on average; {} shown in a stand-in colour meanwhile (none for {} "
+                     "with no colour yet, {} not 2D, {} too big, {} aliased); draws waited "
                      "{:.0f} ms for the others; {} converted on the GPU instead (not ready in "
                      "time); {:.0f} ms hashing {} MiB of the game's textures",
                      reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
-                     disk_cache_stand_ins, static_cast<double>(disk_wait_ns) / 1e6,
+                     disk_cache_stand_ins, disk_cache_no_stand_in[0], disk_cache_no_stand_in[1],
+                     disk_cache_no_stand_in[2], disk_cache_no_stand_in[3],
+                     static_cast<double>(disk_wait_ns) / 1e6,
                      disk_cache_fallbacks, static_cast<double>(disk_hash_ns) / 1e6,
                      disk_hash_bytes >> 20);
         }
         disk_cache_stand_ins = 0;
+        std::ranges::fill(disk_cache_no_stand_in, 0U);
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
         disk_hash_ns = 0;

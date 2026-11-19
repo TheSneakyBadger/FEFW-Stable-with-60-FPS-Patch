@@ -746,6 +746,8 @@ private:
     u32 disk_cache_fallbacks{};
     /// Textures shown in their stand-in colour while being read (for the log).
     u32 disk_cache_stand_ins{};
+    /// Reads queued without one: no colour known yet, not a 2D texture, too big, or aliased.
+    u32 disk_cache_no_stand_in[4]{};
     u32 disk_cache_fallback_frames{};
     /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
     u64 disk_hash_ns{};
