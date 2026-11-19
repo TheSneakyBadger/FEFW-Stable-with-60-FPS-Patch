@@ -274,11 +274,16 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
         auto& native = maxwell3d->GetNativeMacroEngine();
         if (native.native_turing && !submitted) {
             native.native_execution_failed = true;
-            // Rate-limited: the first 32, then every 1024th with the running total.
+            // The running total at the 1st, 10th, 100th... draw (the first 32 were each a line).
             static std::atomic<u64> failed_draws{};
             const u64 count = ++failed_draws;
-            if (count <= 32 || count % 1024 == 0) {
-                LOG_ERROR(HW_GPU, "Native graphics draw failed; refusing submission completion (failed draws so far: {})", count);
+            u64 mark = 1;
+            while (mark < count) {
+                mark *= 10;
+            }
+            if (mark == count) {
+                LOG_ERROR(HW_GPU, "Native graphics draws dropped (a shader was rejected): {} so far",
+                          count);
             }
         }
     };
