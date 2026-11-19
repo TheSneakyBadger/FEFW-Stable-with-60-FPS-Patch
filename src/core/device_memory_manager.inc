@@ -25,6 +25,28 @@
 #include "core/device_memory_manager.h"
 #include "core/memory.h"
 
+namespace Core::FefwUnmappedLog {
+/// Fortune's Eden: unmapped device reads and writes are common in Fortune's Weave and harmless
+/// (the game reads graphics memory it has already given back: zeros come back), about 200 in a
+/// 20-minute session, each logged as an error. Now the 1st, 10th, 100th... of each kind, as
+/// warnings with the count so far, so a flood still shows.
+inline bool ShouldReport(std::atomic<u64>& counter, const char* kind) {
+    const u64 count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    u64 mark = 1;
+    while (mark < count) {
+        mark *= 10;
+    }
+    if (mark != count) {
+        return false;
+    }
+    LOG_WARNING(HW_Memory, "Unmapped device {}: {} so far (logged at the 1st, 10th, 100th...)",
+                kind, count);
+    return true;
+}
+inline std::atomic<u64> unmapped_reads{0};
+inline std::atomic<u64> unmapped_writes{0};
+} // namespace Core::FefwUnmappedLog
+
 namespace Core {
 
 namespace {
@@ -461,13 +483,15 @@ void DeviceMemoryManager<Traits>::ReadBlock(DAddr address, void* dest_pointer, s
                 // from a lost one (from Lichii f0bf0cfd).
                 const u32 mapping_asid = MappingProvenanceForDiagnostics(current_vaddr);
                 if (mapping_asid != 0) {
-                    LOG_ERROR(HW_Memory,
+                    if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_reads, "ReadBlock"))
+                        LOG_WARNING(HW_Memory,
                               "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
                               "size = {}, last mapped under process asid {}, {} live processes)",
                               current_vaddr, address, size, mapping_asid - 1,
                               LiveProcessCountForDiagnostics());
                 } else {
-                    LOG_ERROR(HW_Memory,
+                    if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_reads, "ReadBlock"))
+                        LOG_WARNING(HW_Memory,
                               "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
                               "size = {}, no recorded mapping, {} live processes)",
                               current_vaddr, address, size, LiveProcessCountForDiagnostics());
@@ -492,7 +516,8 @@ void DeviceMemoryManager<Traits>::WriteBlock(DAddr address, const void* src_poin
         [&](size_t copy_amount, DAddr current_vaddr) {
             if (!reported) {
                 reported = true;
-                LOG_ERROR(HW_Memory,
+                if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_writes, "WriteBlock"))
+                    LOG_WARNING(HW_Memory,
                           "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
                           current_vaddr, address, size);
             }
@@ -540,13 +565,15 @@ void DeviceMemoryManager<Traits>::ReadBlockUnsafe(DAddr address, void* dest_poin
                 // from a lost one (from Lichii f0bf0cfd).
                 const u32 mapping_asid = MappingProvenanceForDiagnostics(current_vaddr);
                 if (mapping_asid != 0) {
-                    LOG_ERROR(HW_Memory,
+                    if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_reads, "ReadBlock"))
+                        LOG_WARNING(HW_Memory,
                               "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
                               "size = {}, last mapped under process asid {}, {} live processes)",
                               current_vaddr, address, size, mapping_asid - 1,
                               LiveProcessCountForDiagnostics());
                 } else {
-                    LOG_ERROR(HW_Memory,
+                    if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_reads, "ReadBlock"))
+                        LOG_WARNING(HW_Memory,
                               "Unmapped Device ReadBlock @ {:#016x} (start address = {:#016x}, "
                               "size = {}, no recorded mapping, {} live processes)",
                               current_vaddr, address, size, LiveProcessCountForDiagnostics());
@@ -572,7 +599,8 @@ void DeviceMemoryManager<Traits>::WriteBlockUnsafe(DAddr address, const void* sr
         [&](size_t copy_amount, DAddr current_vaddr) {
             if (!reported) {
                 reported = true;
-                LOG_ERROR(HW_Memory,
+                if (Core::FefwUnmappedLog::ShouldReport(Core::FefwUnmappedLog::unmapped_writes, "WriteBlock"))
+                    LOG_WARNING(HW_Memory,
                           "Unmapped Device WriteBlock @ {:#016x} (start address = {:#016x}, size = {})",
                           current_vaddr, address, size);
             }
