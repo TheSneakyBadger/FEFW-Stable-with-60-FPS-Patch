@@ -2,7 +2,7 @@
 
 ## v1.7.5.9
 
-- **Less stutter in a new install's first session.** The game code compiled while testing Fortune's Eden now comes with it (`jit-warmup`, about 4 MB: only where the game's code blocks are, no game code and nothing about anyone), so it's compiled when the game starts (about 3 s) instead of in the middle of play. In a first session that was 235,000 blocks (over 2 s of hitches) in the first area alone. It covers the start of the game, Dagsion and the battles tested so far, and grows with each release; what you play beyond it is still remembered for your next session, as in v1.7.5.7.
+- **Less stutter in a new install's first session.** The game code compiled while testing Fortune's Eden now comes with the Windows build (`jit-warmup`, about 4 MB: only where the game's code blocks are, no game code and nothing about anyone), so it's compiled when the game starts (about 3 s) instead of in the middle of play. In a first session that was 235,000 blocks (over 2 s of hitches) in the first area alone. It covers the start of the game, Dagsion and the battles tested so far, and grows with each release; what you play beyond it is still remembered for your next session, as in v1.7.5.7.
 - **The compiled-code list is saved every 3 minutes of play**, not only when the game stops cleanly. A 51-minute session that ended with Fortune's Eden closing on Stop saved nothing.
 - The video memory budget from v1.7.5.7 no longer logs small moves of a few MiB as "lowered" and back.
 
