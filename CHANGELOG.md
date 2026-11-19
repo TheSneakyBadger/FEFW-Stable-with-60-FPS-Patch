@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.7.5.7
+
+No more stutter when entering an area, without black textures; game code compiled once instead of every session; and frame generation that reads your other frame rate caps.
+
+- **No more stutter as an area loads, and no black textures** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). A texture still being read from the texture cache on disk now shows its average colour for a moment instead of the frame waiting for it (or showing it black); the real texture replaces it as soon as it's read. Textures with see-through parts (leaves, hair) stay hidden for that moment instead. Each texture gets its colour the first time it's loaded with this version, so the smoothness shows from your second session on. On an RTX 4090, an area load went from 576 textures converted on the graphics card and frames waiting about 130 ms per 10 s to none converted and under 10 ms. `EDEN_TC_STAND_IN=0` turns it off.
+- **The game's code is compiled at start instead of while you play.** The code compiled in earlier sessions is remembered (in `user/cache/jit`) and compiled again when the game starts (about 3 s), so entering a new area no longer stalls on it: 145,000 blocks (1.2 s) compiled during the first 10 s of play became 1,600 (0.05 s). Also from the second session on. `EDEN_JIT_WARM=0` turns it off.
+- **Frame generation reads your other frame rate caps.** It paces to the lowest of your display's refresh rate, an RTSS limit (while RTSS is running), the NVIDIA app's or Control Panel's Max Frame Rate, and **Your frame rate cap**, so two limiters no longer fight. The home screen says which one it's using. Turn off **Stay under RTSS and NVIDIA caps** to ignore theirs.
+- **No lurch forward after a hitch in 60 FPS mode** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). After a few long frames, the game's timing came back to 60 slowly, so the game ran up to 1.5x fast for a moment. It now goes straight back once two frames in a row are fast again.
+- **Busy scenes at 60 Hz without frame generation** ([#78](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/78)): a game frame that finishes just after a vsync is shown within 4 ms instead of a whole vsync later. Off while DLSS frame generation is on, where it could lock the frame rate lower.
+- **Fewer textures reloaded after a loading screen** on cards with video memory to spare (7 GB or more for Fortune's Eden to use): the previous area's textures are kept while there's room, so walking back in doesn't reload 1,500–2,000 of them.
+- **Fixed stutter and reloading on 6 and 8 GB cards** ([#73](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/73), [#81](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/81)): their textures are now cleaned up from 85% of video memory as on larger cards, instead of only when nearly full.
+- **No more slowdown and audio cutting out when other programs take video memory.** The texture cleanup now follows how much video memory Windows lets Fortune's Eden use right now, not just at start. When a browser, Discord or a recorder took video memory, textures spilled into system memory and a 12 GB RTX 3060 ran at 15–25 FPS with the audio cutting out for minutes. It now cleans up to stay under, and goes back up when the memory is free again.
+- The texture cache on disk reads with up to 16 threads (all but 4 of your CPU's), instead of 8.
+- More of the game's native shaders translated (geometry shader arithmetic, a guarded logic instruction), and harmless messages no longer fill the log as errors.
+
+Thanks to **jh238800**, **Sunzong236** and **InfinitePicaro** for the logs behind these fixes.
+
+Everything else is as in [v1.7.5.6](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.6).
+
 ## v1.7.5.6
 
 NVIDIA DLSS frame generation paced the way native PC games do it, and extracted games found from the folder that holds them.

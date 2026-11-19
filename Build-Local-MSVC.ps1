@@ -405,7 +405,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.6 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.7 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -476,6 +476,16 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.5.7:
+- No stutter as an area loads, and no black textures (#63): a texture still being read from
+  the texture cache on disk shows its average colour for a moment, and the game's code from
+  earlier sessions is compiled at start. Both work from your second session on.
+- Frame generation reads RTSS's and the NVIDIA driver's frame rate caps and paces under the
+  lowest. The texture cleanup follows the video memory Windows allows right now (no more
+  choppiness and audio cutting out when other programs take some), and 6 and 8 GB cards
+  clean up earlier (#73, #81).
+- No lurch forward after a hitch in 60 FPS mode.
 
 New in v1.7.5.6:
 - Much smoother NVIDIA DLSS frame generation (#63): NVIDIA Reflex waits at the start of the
