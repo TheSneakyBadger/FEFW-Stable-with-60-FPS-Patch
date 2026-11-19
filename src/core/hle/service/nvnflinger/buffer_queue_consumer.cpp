@@ -218,6 +218,11 @@ Status BufferQueueConsumer::Disconnect() {
     return Status::NoError;
 }
 
+bool BufferQueueConsumer::HasQueuedBuffer() const {
+    std::scoped_lock lock{core->mutex};
+    return !core->queue.empty();
+}
+
 Status BufferQueueConsumer::GetReleasedBuffers(u64* out_slot_mask) {
     if (out_slot_mask == nullptr) {
         LOG_ERROR(Service_Nvnflinger, "out_slot_mask may not be nullptr");

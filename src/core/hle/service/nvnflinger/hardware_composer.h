@@ -27,9 +27,14 @@ public:
     u32 ComposeLocked(f32* out_speed_scale, Display& display,
                       Nvidia::Devices::nvdisp_disp0& nvdisp);
     void RemoveLayerLocked(Display& display, ConsumerId consumer_id);
+    /// Whether the last ComposeLocked showed a new frame from the game (not an overlay's).
+    bool LastComposeShowedGameFrame() const {
+        return m_last_showed_game_frame;
+    }
 
 private:
     u64 m_frame_number{0};
+    bool m_last_showed_game_frame{false};
 
 private:
     using ReleaseFrameNumber = u64;

@@ -6,7 +6,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
+
+#include <fmt/format.h>
+
+#include "common/logging.h"
 
 #include "common/adpf.h"
 #include "common/fefw_frame_gen_hook.h"
@@ -14,6 +19,7 @@
 #include "common/thread.h"
 #include "core/core.h"
 #include "core/core_timing.h"
+#include "core/fefw_frame_rate.h"
 #include "core/hle/service/vi/conductor.h"
 #include "core/hle/service/vi/container.h"
 #include "core/hle/service/vi/display_list.h"
@@ -118,6 +124,76 @@ void Conductor::VsyncThread(std::stop_token token) {
 
         last_vsync = std::chrono::steady_clock::now();
         this->ProcessVsync();
+        this->VsyncGrace(token);
+    }
+}
+
+/// Fortune's Eden, 60 FPS mode: a game frame finished just after a vsync is shown as soon as it
+/// is queued (within a few ms) instead of a whole vsync later. Without it, frames taking 17-20 ms
+/// (a busy battle) alternated between 16.7 and 33.3 ms on screen, 40 FPS in all (#63, #78), where
+/// the game could have made about 55. Only when the vsync just showed nothing new from the game,
+/// so it never shows more than one game frame per vsync. Not with swap intervals over 1 (the
+/// game's own 30 FPS), movies or a speed limit other than 100%.
+/// EDEN_VSYNC_GRACE_MS=<ms> (0-8, default 4; 0: off).
+void Conductor::VsyncGrace(std::stop_token token) {
+    static const s64 grace_ns = [] {
+        const char* const value = std::getenv("EDEN_VSYNC_GRACE_MS");
+        const int ms = value ? std::clamp(std::atoi(value), 0, 8) : 4;
+        LOG_INFO(Service_VI, "Vsync grace: {}", ms > 0 ? fmt::format("{} ms", ms)
+                                                         : std::string{"off"});
+        return static_cast<s64>(ms) * 1'000'000;
+    }();
+    const auto& settings = Settings::values;
+    if (grace_ns <= 0 || !FefwFrameRate::Enabled() || m_swap_interval != 1 ||
+        m_compose_speed_scale != 1.f || !settings.use_speed_limit.GetValue() ||
+        Settings::SpeedLimit() != 100 || m_system.GetNVDECActive() ||
+        m_container.LastComposeShowedGameFrame()) {
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto deadline = start + std::chrono::nanoseconds{grace_ns};
+    bool shown = false;
+    while (!token.stop_requested() && !m_system.IsShuttingDown()) {
+        std::this_thread::sleep_for(std::chrono::microseconds{250});
+        bool queued = false;
+        for (const auto& [display_id, manager] : m_vsync_managers) {
+            queued = queued || m_container.HasQueuedGameFrame(display_id);
+        }
+        if (queued) {
+            this->ProcessVsync();
+            shown = true;
+            break;
+        }
+        if (Clock::now() >= deadline) {
+            break;
+        }
+    }
+    if (shown) {
+        ++m_grace_shown;
+        m_grace_wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                                start)
+                               .count();
+    } else {
+        ++m_grace_missed;
+    }
+    const auto now = Clock::now();
+    if (m_grace_log_time == Clock::time_point{}) {
+        m_grace_log_time = now;
+    } else if (now - m_grace_log_time >= std::chrono::seconds{10}) {
+        if (m_grace_shown > 0) {
+            LOG_INFO(Service_VI,
+                     "Vsync grace since the last report: {} late game frames shown {:.1f} ms after their "
+                     "vsync on average (instead of a whole vsync later); {} vsyncs without one",
+                     m_grace_shown,
+                     static_cast<double>(m_grace_wait_ns) / 1e6 /
+                         static_cast<double>(m_grace_shown),
+                     m_grace_missed);
+        }
+        m_grace_log_time = now;
+        m_grace_shown = 0;
+        m_grace_missed = 0;
+        m_grace_wait_ns = 0;
     }
 }
 

@@ -38,6 +38,12 @@ public:
     void AddDisplay(u64 display_id);
     void RemoveDisplay(u64 display_id);
     bool ComposeDisplay(s32* out_swap_interval, f32* out_compose_speed_scale, u64 display_id);
+    /// Fortune's Eden, vsync grace: whether the last composite showed a new frame from the game,
+    /// and whether the game has one queued now.
+    bool LastComposeShowedGameFrame() const {
+        return m_composer.LastComposeShowedGameFrame();
+    }
+    bool HasQueuedGameFrame(u64 display_id);
 
     void CreateLayer(s32 consumer_binder_id);
     void DestroyLayer(s32 consumer_binder_id);
