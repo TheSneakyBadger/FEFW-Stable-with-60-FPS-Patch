@@ -11,6 +11,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <utility>
 #include "common/container/unordered_map.h"
 #include <vector>
 
@@ -982,6 +983,11 @@ FN_MAX_LIMIT_LIST
     /// inside the allocator's memory blocks (space a cleanup freed but the block still holds).
     /// The texture and buffer caches clean up by this, as freeing textures lowers it at once.
     u64 GetDeviceMemoryInUse() const;
+
+    /// Fortune's Eden: the video memory the system lets this program use right now (the heaps'
+    /// budgets; it falls as other programs take video memory), and what the driver counts as
+    /// this program's. 0 and 0 without VK_EXT_memory_budget.
+    std::pair<u64, u64> GetDeviceMemoryBudget() const;
 
     u32 GetSetsPerPool() const {
         return sets_per_pool;

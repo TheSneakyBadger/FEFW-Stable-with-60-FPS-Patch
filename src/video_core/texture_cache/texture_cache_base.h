@@ -677,6 +677,11 @@ private:
 #endif
     DelayedDestructionRing<Image, TICKS_TO_DESTROY> sentenced_images;
     u64 memory_limit = ~0ULL;        ///< Video memory the emulator may use
+    /// Fortune's Eden: the cleanup levels set at start, before the live budget lowers them.
+    u64 base_expected_memory = 0;
+    u64 base_critical_memory = 0;
+    u64 budget_check_frame = 0;
+    bool budget_limited = false;
     /// Bytes freed by recent cleanup passes (frame, bytes): images are destroyed, and stop
     /// counting in the memory in use, TICKS_TO_DESTROY frames after a pass frees them.
     std::array<std::pair<u64, u64>, 16> recent_frees{};
