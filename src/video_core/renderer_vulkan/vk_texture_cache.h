@@ -103,6 +103,11 @@ public:
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Fortune's Eden: Device::GetDeviceMemoryBudget.
+    std::pair<u64, u64> GetDeviceMemoryBudget() const {
+        return device.GetDeviceMemoryBudget();
+    }
+
     bool CanReportMemoryUsage() const;
 
     bool CanDownloadMsaa(const VideoCommon::ImageInfo& info) const;

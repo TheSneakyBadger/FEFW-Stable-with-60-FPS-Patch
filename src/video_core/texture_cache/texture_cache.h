@@ -138,6 +138,8 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
     LOG_INFO(HW_GPU,
              "Texture cache memory: collects above {} MiB, faster above {} MiB, hard above {} MiB",
              minimum_memory >> 20, expected_memory >> 20, critical_memory >> 20);
+    base_expected_memory = expected_memory;
+    base_critical_memory = critical_memory;
 
     const bool gpu_unswizzle_enabled = Settings::values.gpu_unswizzle_enabled.GetValue();
 
@@ -578,6 +580,44 @@ void TextureCache<P>::TickFrame() {
     // If we can obtain the memory info, use it instead of the estimate.
     if (runtime.CanReportMemoryUsage()) {
         total_used_memory = runtime.GetDeviceMemoryUsage();
+    }
+    // Fortune's Eden: the cleanup levels follow the video memory Windows lets the emulator use
+    // right now, not only what it could use at start. Once other programs (a browser, Discord,
+    // a recorder) take video memory, the budget falls; past it, the driver moved images to
+    // system memory, read over PCIe: frames at 15-25 instead of 30 and the audio cutting out,
+    // for minutes, on a 12 GB RTX 3060 whose budget fell to 5.6 GiB with 8.2 in use. Checked
+    // every second; the levels come back up when the budget does.
+    if constexpr (requires { runtime.GetDeviceMemoryBudget(); }) {
+        if (frame_tick >= budget_check_frame && base_critical_memory != 0) {
+            budget_check_frame = frame_tick + 60;
+            const auto [budget, usage] = runtime.GetDeviceMemoryBudget();
+            if (budget != 0) {
+                // What isn't cleaned up by this (the swapchain, upscalers, the driver's own,
+                // free space in the allocator's blocks) stays; the rest fits in 90% of the
+                // budget, cleaned up faster from 85% of that.
+                const u64 others = usage > total_used_memory ? usage - total_used_memory : 0;
+                const u64 room = budget / 10 * 9 > others ? budget / 10 * 9 - others : 0;
+                const u64 critical = std::clamp<u64>(room, 1_GiB, base_critical_memory);
+                const u64 expected =
+                    std::clamp<u64>(room / 100 * 85, 768_MiB, base_expected_memory);
+                const bool limited = critical < base_critical_memory;
+                const bool moved = critical + 256_MiB < critical_memory ||
+                                   critical > critical_memory + 256_MiB;
+                expected_memory = (std::min)(expected, critical - 256_MiB);
+                critical_memory = critical;
+                if (limited != budget_limited || (limited && moved)) {
+                    budget_limited = limited;
+                    LOG_INFO(HW_GPU,
+                             "Video memory budget {} MiB ({} MiB in use, {} MiB of it by other "
+                             "than textures and buffers): cleanup faster above {} MiB, hard "
+                             "above {} MiB{}",
+                             budget >> 20, usage >> 20, others >> 20, expected_memory >> 20,
+                             critical_memory >> 20,
+                             limited ? " (lowered: other programs are using video memory)"
+                                     : " (as at start)");
+                }
+            }
+        }
     }
     // The driver still counts the images a pass freed until sentenced_images destroys them,
     // TICKS_TO_DESTROY frames later, so the next passes saw no drop and evicted again (on 8 GB

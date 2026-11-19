@@ -1716,6 +1716,21 @@ u64 Device::GetDeviceMemoryInUse() const {
     return result;
 }
 
+std::pair<u64, u64> Device::GetDeviceMemoryBudget() const {
+    if (!extensions.memory_budget) {
+        return {0, 0};
+    }
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    u64 budget{};
+    u64 usage{};
+    for (const size_t heap : valid_heap_memory) {
+        budget += budgets[heap].budget;
+        usage += budgets[heap].usage;
+    }
+    return {budget, usage};
+}
+
 void Device::CollectPhysicalMemoryInfo() {
     // Calculate limits using memory budget
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
