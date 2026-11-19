@@ -4,6 +4,7 @@
 #include "video_core/fefw_texture_disk_cache.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -17,6 +18,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <bc_decoder.h>
 #include <fmt/format.h>
 
 #include "common/cityhash.h"
@@ -85,6 +87,149 @@ std::atomic<u32> loaded_count{0};
 std::atomic<u64> read_ns{0};
 std::atomic<u64> read_max_ns{0};
 std::atomic<u32> stored_count{0};
+/// Stand-in colours by entry name (StandInColor), kept in standins.bin between runs.
+std::unordered_map<u64, u32> colors;
+constexpr u32 STAND_IN_MAGIC = 0x49534546; // "FESI"
+constexpr u32 STAND_IN_VERSION = 1;
+
+bool StandInsAllowed() {
+    static const bool allowed = [] {
+        const char* const value = std::getenv("EDEN_TC_STAND_IN");
+        return !(value && value[0] == '0');
+    }();
+    return allowed;
+}
+
+/// The average colour of the texture's smallest level (its first layer), from up to 8x8 of
+/// its blocks: alpha 255 where every texel looked at is opaque, else 0 (a cut-out, leaves or
+/// hair: hidden for a moment rather than drawn as a solid card).
+std::optional<u32> ComputeColor(const Key& key, std::span<const u8> data) {
+    if (key.width == 0 || key.height == 0 || key.levels == 0 || key.layers == 0) {
+        return std::nullopt;
+    }
+    const u64 block_bytes = key.encoding == 1 ? 8 : 16;
+    u64 offset = 0;
+    u32 level_width = 0;
+    u32 level_height = 0;
+    u32 blocks_x = 0;
+    u32 blocks_y = 0;
+    for (u32 level = 0; level < key.levels; ++level) {
+        level_width = (std::max)(key.width >> level, 1U);
+        level_height = (std::max)(key.height >> level, 1U);
+        blocks_x = (level_width + 3) / 4;
+        blocks_y = (level_height + 3) / 4;
+        if (level + 1 < key.levels) {
+            offset += u64{blocks_x} * blocks_y * key.layers * block_bytes;
+        }
+    }
+    if (offset + u64{blocks_x} * blocks_y * block_bytes > data.size()) {
+        return std::nullopt;
+    }
+    const u32 step_x = (std::max)(blocks_x / 8, 1U);
+    const u32 step_y = (std::max)(blocks_y / 8, 1U);
+    u64 sum[4]{};
+    u64 count = 0;
+    u32 min_alpha = 255;
+    std::array<u8, 64> texels{};
+    for (u32 by = 0; by < blocks_y; by += step_y) {
+        for (u32 bx = 0; bx < blocks_x; bx += step_x) {
+            const u8* const block =
+                data.data() + offset + (u64{by} * blocks_x + bx) * block_bytes;
+            switch (key.encoding) {
+            case 1:
+                bcn::DecodeBc1(block, texels.data(), 0, 0, 4, 4);
+                break;
+            case 3:
+                bcn::DecodeBc3(block, texels.data(), 0, 0, 4, 4);
+                break;
+            case 7:
+                bcn::DecodeBc7(block, texels.data(), 0, 0, 4, 4);
+                break;
+            default:
+                return std::nullopt;
+            }
+            const u32 valid_x = (std::min)(4U, level_width - bx * 4);
+            const u32 valid_y = (std::min)(4U, level_height - by * 4);
+            for (u32 y = 0; y < valid_y; ++y) {
+                for (u32 x = 0; x < valid_x; ++x) {
+                    const u8* const texel = texels.data() + (y * 4 + x) * 4;
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += texel[c];
+                    }
+                    min_alpha = (std::min)(min_alpha, u32{texel[3]});
+                    ++count;
+                }
+            }
+        }
+    }
+    if (count == 0) {
+        return std::nullopt;
+    }
+    const auto average = [&](int c) { return static_cast<u32>((sum[c] + count / 2) / count); };
+    const u32 alpha = min_alpha >= 250 ? 255U : 0U;
+    return average(0) | (average(1) << 8) | (average(2) << 16) | (alpha << 24);
+}
+
+fs::path StandInPath() {
+    return folder / "standins.bin";
+}
+
+/// With the mutex held, after the index is read: the colours of the entries it has.
+void LoadStandInsLocked() {
+    colors.clear();
+    std::ifstream file{StandInPath(), std::ios::binary};
+    u32 head[3]{};
+    if (!file.read(reinterpret_cast<char*>(head), sizeof(head)) || head[0] != STAND_IN_MAGIC ||
+        head[1] != STAND_IN_VERSION || head[2] > (1U << 24)) {
+        return;
+    }
+    std::vector<std::pair<u64, u32>> items(head[2]);
+    for (auto& [name, color] : items) {
+        if (!file.read(reinterpret_cast<char*>(&name), sizeof(name)) ||
+            !file.read(reinterpret_cast<char*>(&color), sizeof(color))) {
+            return;
+        }
+    }
+    for (const auto& [name, color] : items) {
+        if (index.contains(name)) {
+            colors.emplace(name, color);
+        }
+    }
+}
+
+/// With the mutex held: writes the colours of the entries there are.
+void SaveStandInsLocked() {
+    if (folder.empty()) {
+        return;
+    }
+    std::vector<std::pair<u64, u32>> items;
+    items.reserve(colors.size());
+    for (const auto& [name, color] : colors) {
+        if (index.contains(name)) {
+            items.emplace_back(name, color);
+        }
+    }
+    const fs::path path = StandInPath();
+    fs::path temp = path;
+    temp += ".tmp";
+    bool written = false;
+    {
+        std::ofstream file{temp, std::ios::binary | std::ios::trunc};
+        const u32 head[3]{STAND_IN_MAGIC, STAND_IN_VERSION, static_cast<u32>(items.size())};
+        file.write(reinterpret_cast<const char*>(head), sizeof(head));
+        for (const auto& [name, color] : items) {
+            file.write(reinterpret_cast<const char*>(&name), sizeof(name));
+            file.write(reinterpret_cast<const char*>(&color), sizeof(color));
+        }
+        written = file.good();
+    }
+    std::error_code ec;
+    if (written) {
+        fs::rename(temp, path, ec);
+    } else {
+        fs::remove(temp, ec);
+    }
+}
 
 u64 NameOf(const Key& key) {
     static_assert(sizeof(Key) == 32, "Key has no padding (it is hashed and compared as bytes)");
@@ -111,6 +256,7 @@ void TrimLocked() {
         std::error_code ec;
         fs::remove(PathOf(oldest->first), ec);
         total_bytes -= (std::min)(total_bytes, oldest->second.size);
+        colors.erase(oldest->first);
         index.erase(oldest);
     }
 }
@@ -127,6 +273,7 @@ void WorkerLoop() {
         queued_bytes -= (std::min)(queued_bytes, static_cast<u64>(job.data.size()));
         lock.unlock();
 
+        const std::optional<u32> color = ComputeColor(job.key, job.data);
         const std::vector<u8> compressed =
             Common::Compression::CompressDataZSTD(job.data.data(), job.data.size(), 3);
         const Header header{
@@ -166,6 +313,9 @@ void WorkerLoop() {
                 it->second = Entry{size, ++use_counter};
             }
             total_bytes += size;
+            if (color) {
+                colors.insert_or_assign(job.name, *color);
+            }
             ++stored_count;
             TrimLocked();
         }
@@ -279,6 +429,7 @@ void Start(u64 video_memory) {
     }
     std::scoped_lock lock{mutex};
     index.clear();
+    colors.clear();
     total_bytes = 0;
     use_counter = 0;
     enabled = false;
@@ -338,13 +489,15 @@ void Start(u64 video_memory) {
         index.emplace(entry.first, Entry{entry.second, ++use_counter});
         total_bytes += entry.second;
     }
+    LoadStandInsLocked();
     limit_bytes = limit;
     TrimLocked();
     enabled = true;
     stopping = false;
     worker = std::thread{WorkerLoop};
-    LOG_INFO(Render_Vulkan, "Texture cache on disk: {} textures, {} MiB of {} MiB", index.size(),
-             total_bytes >> 20, limit >> 20);
+    LOG_INFO(Render_Vulkan,
+             "Texture cache on disk: {} textures ({} with a stand-in colour), {} MiB of {} MiB",
+             index.size(), colors.size(), total_bytes >> 20, limit >> 20);
 }
 
 void Stop() {
@@ -360,6 +513,7 @@ void Stop() {
     std::scoped_lock lock{mutex};
     enabled = false;
     stopping = false;
+    SaveStandInsLocked();
     // The entries loaded this run get file times in the order they were last used (after the
     // newest written), so the least recently used go first after a restart. (Loads used to do
     // this one by one, a file system write in each read.)
@@ -432,6 +586,11 @@ bool LoadInto(const Key& key, std::span<u8> output) {
     if (it != index.end()) {
         it->second.last_used = ++use_counter;
         it->second.used = true;
+        if (!colors.contains(name)) {
+            if (const std::optional<u32> color = ComputeColor(key, output)) {
+                colors.emplace(name, *color);
+            }
+        }
     }
     ++loaded_count;
     const u64 ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -462,7 +621,75 @@ void Store(const Key& key, std::vector<u8> data) {
 Counts TakeCounts() {
     std::scoped_lock lock{mutex};
     return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes,
-                  read_ns.exchange(0), read_max_ns.exchange(0)};
+                  read_ns.exchange(0), read_max_ns.exchange(0),
+                  static_cast<u32>(colors.size())};
+}
+
+std::optional<u32> StandInColor(const Key& key) {
+    if (!StandInsAllowed()) {
+        return std::nullopt;
+    }
+    const u64 name = NameOf(key);
+    std::scoped_lock lock{mutex};
+    if (!enabled) {
+        return std::nullopt;
+    }
+    const auto it = colors.find(name);
+    if (it == colors.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+u32 SolidBlock(u32 encoding, u32 rgba, std::span<u8, 16> block) {
+    std::ranges::fill(block, u8{0});
+    const u32 r = rgba & 0xFF;
+    const u32 g = (rgba >> 8) & 0xFF;
+    const u32 b = (rgba >> 16) & 0xFF;
+    const u32 a = rgba >> 24;
+    const auto put16 = [&](size_t at, u32 value) {
+        block[at] = static_cast<u8>(value);
+        block[at + 1] = static_cast<u8>(value >> 8);
+    };
+    // RGB565, rounded.
+    const u32 rgb565 = (((r * 31 + 127) / 255) << 11) | (((g * 63 + 127) / 255) << 5) |
+                       ((b * 31 + 127) / 255);
+    if (encoding == 1) {
+        // Equal endpoints: the three-colour mode, where index 0 is the colour and 3 is
+        // transparent black.
+        put16(0, rgb565);
+        put16(2, rgb565);
+        if (a < 128) {
+            std::fill(block.begin() + 4, block.begin() + 8, u8{0xFF});
+        }
+        return 8;
+    }
+    if (encoding == 3) {
+        block[0] = static_cast<u8>(a);
+        block[1] = static_cast<u8>(a);
+        put16(8, rgb565);
+        put16(10, rgb565);
+        return 16;
+    }
+    // BC7 mode 6: 7-bit RGBA endpoints and a p-bit each, both endpoints the colour, indices 0.
+    u32 bit = 0;
+    const auto write = [&](u32 value, u32 bits) {
+        for (u32 i = 0; i < bits; ++i, ++bit) {
+            if ((value >> i) & 1) {
+                block[bit / 8] |= static_cast<u8>(1U << (bit % 8));
+            }
+        }
+    };
+    write(1U << 6, 7);
+    for (const u32 channel : {r, g, b, a}) {
+        write(channel >> 1, 7);
+        write(channel >> 1, 7);
+    }
+    // The p-bit is each endpoint's lowest bit for all four channels: alpha's (0 or 255) is
+    // exact, the colour within 1.
+    write(a & 1, 1);
+    write(a & 1, 1);
+    return 16;
 }
 
 } // namespace FefwTextureDiskCache

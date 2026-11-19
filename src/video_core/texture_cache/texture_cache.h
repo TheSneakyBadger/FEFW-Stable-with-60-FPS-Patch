@@ -2232,6 +2232,13 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 AsyncDecodeContext* const decode_ptr = decode.get();
                 decode->image_id = image_id;
                 decode->sized_by_data = true;
+                // Its stand-in colour until the read is ready, rather than a draw waiting for it
+                // or converting it on the GPU after all (both a stutter as an area loads, #63).
+                // Not with aliases: they're synchronized from it as soon as it's used.
+                if (image.aliased_images.empty() && runtime.UploadDiskCacheStandIn(image, *plan)) {
+                    decode->stand_in = true;
+                    ++disk_cache_stand_ins;
+                }
                 async_decodes.push_back(std::move(decode));
                 decode_ptr->queued_at = std::chrono::steady_clock::now();
                 disk_cache_worker.QueueWork([this, plan = std::move(*plan), decode_ptr]() mutable {
@@ -2552,13 +2559,15 @@ void TextureCache<P>::TickAsyncDecode() {
         if (reads != 0 || disk_cache_fallbacks != 0 || disk_hash_bytes != 0) {
             LOG_INFO(HW_GPU,
                      "Texture cache on disk, last 10 s: {} reads ready {:.1f} ms after being "
-                     "queued on average; draws waited {:.0f} ms for them; {} converted on the GPU "
-                     "instead (not ready in time); {:.0f} ms hashing {} MiB of the game's "
-                     "textures",
+                     "queued on average; {} shown in a stand-in colour meanwhile; draws waited "
+                     "{:.0f} ms for the others; {} converted on the GPU instead (not ready in "
+                     "time); {:.0f} ms hashing {} MiB of the game's textures",
                      reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
-                     static_cast<double>(disk_wait_ns) / 1e6, disk_cache_fallbacks,
-                     static_cast<double>(disk_hash_ns) / 1e6, disk_hash_bytes >> 20);
+                     disk_cache_stand_ins, static_cast<double>(disk_wait_ns) / 1e6,
+                     disk_cache_fallbacks, static_cast<double>(disk_hash_ns) / 1e6,
+                     disk_hash_bytes >> 20);
         }
+        disk_cache_stand_ins = 0;
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
         disk_hash_ns = 0;
@@ -3820,6 +3829,11 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
     AsyncDecodeContext* const decode = it->get();
     std::unique_lock lock{decode->mutex};
     if (decode->cancelled) {
+        return;
+    }
+    // Showing its stand-in colour: drawn as it is, uploaded when the read is done
+    // (TickAsyncDecode). With aliases since, they need its real contents now.
+    if (decode->stand_in && !decode->complete && image.aliased_images.empty()) {
         return;
     }
     const std::chrono::nanoseconds wait_left =
