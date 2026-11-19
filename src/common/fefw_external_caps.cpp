@@ -5,6 +5,7 @@
 
 #include <fmt/format.h>
 
+#include "common/fs/fs_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
 
@@ -171,7 +172,9 @@ void DetectRtss(Caps& caps) {
         limit = ReadRtssProfile(profiles / L"Global");
     }
     if (!limit) {
-        caps.rtss_detail = "running, its profiles not found";
+        // The folder tried, in the log (no user folder in it: RTSS installs under Program Files).
+        caps.rtss_detail = fmt::format("running, its profiles not found in {}",
+                                       Common::FS::PathToUTF8String(profiles));
         return;
     }
     if (limit->limit > 0) {

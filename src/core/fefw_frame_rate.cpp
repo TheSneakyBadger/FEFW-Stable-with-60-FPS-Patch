@@ -177,8 +177,14 @@ void OnPresent(Core::Memory::Memory& memory) {
     // too, the rate stayed low for 5-8 frames after a hitch of two or three long frames (a
     // stall as NVIDIA DLSS frame generation comes back on), and the game ran up to 1.5x fast
     // while the frames came at 60 again: a sudden lurch forward (#63). Small changes (frame
-    // jitter) still ease both ways, so they don't bias the rate upwards.
-    if (sample < measure.average_ms * 0.85) {
+    // jitter) still ease both ways, so they don't bias the rate upwards. Only after two fast
+    // frames in a row: where frames alternate between one and two vsyncs (16.7 / 33.3 ms, a
+    // busy battle), the median alternates too, and snapping on every fast one held the rate
+    // near 60 for frames that took 33 ms: the game ran slow and its motion unevenly (#63).
+    const double previous_gap =
+        measure.recent_count >= 2 ? measure.recent_ms[(measure.recent_count - 2) % 3] : gap_ms;
+    const double fast = measure.average_ms * 0.85;
+    if (sample < fast && gap_ms < fast && previous_gap < fast) {
         measure.average_ms = sample;
     } else {
         measure.average_ms += (sample - measure.average_ms) * 0.25;

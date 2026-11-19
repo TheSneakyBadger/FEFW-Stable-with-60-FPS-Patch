@@ -607,12 +607,32 @@ void TextureCache<P>::TickFrame() {
             if (scene_load.bytes >= 4_MiB && scene_load.start_frame > 0) {
                 LOG_INFO(HW_GPU, "Loading screen: {} MiB of map data read over {} frames",
                          scene_load.bytes >> 20, scene_load.last_frame - scene_load.start_frame);
-                scene_sweep_below = scene_load.start_frame;
                 scene_start_frame = scene_load.start_frame;
-                scene_sweep_is_age = false;
-                const u32 freed = RunGarbageCollector();
-                if (freed != 0) {
-                    collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+                // Fortune's Eden: on cards with 7 GiB or more to use, the previous scene's images
+                // stay while use is over 1 GiB below the faster cleanup's level; the usual cleanups
+                // free the least recently used of them once memory fills. Freed at every loading
+                // screen, walking back into an area a minute later reloaded 1,500-2,000 textures,
+                // half of them converted on the GPU again: 250-600 ms hitches on a 12 GB laptop
+                // (#63, 2.8 GB freed with 6.4 of 7.5 GiB in use). Smaller cards, and
+                // EDEN_TC_SCENE_SWEEP=1, free them as before.
+                static const bool always_sweep = [] {
+                    const char* const value = std::getenv("EDEN_TC_SCENE_SWEEP");
+                    return value && value[0] == '1';
+                }();
+                const bool room_left = memory_limit >= 7_GiB && memory_limit != ~0ULL &&
+                                       total_used_memory + 1_GiB < expected_memory;
+                if (room_left && !always_sweep) {
+                    LOG_INFO(HW_GPU,
+                             "Loading screen: the previous scene's images kept ({} MiB in use, "
+                             "faster cleanup from {} MiB)",
+                             total_used_memory >> 20, expected_memory >> 20);
+                } else {
+                    scene_sweep_below = scene_load.start_frame;
+                    scene_sweep_is_age = false;
+                    const u32 freed = RunGarbageCollector();
+                    if (freed != 0) {
+                        collect_quiet_until = frame_tick + TICKS_TO_DESTROY;
+                    }
                 }
             }
             scene_load.active = false;
