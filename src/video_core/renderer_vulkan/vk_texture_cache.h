@@ -87,6 +87,17 @@ public:
     enum class StandIn { Shown, NoColor, Shape, TooBig };
     StandIn UploadDiskCacheStandIn(Image& image, const DiskCacheLoad& load);
 
+    /// The same for an ASTC texture the cache doesn't have yet, by its colour from any earlier
+    /// session or the list that comes with Fortune's Eden (FefwTextureDiskCache::GuestColor):
+    /// shown while it waits its turn to be converted on the GPU.
+    StandIn UploadConversionStandIn(Image& image, u64 guest_hash,
+                                    std::span<const VideoCommon::SwizzleParameters> swizzles);
+
+private:
+    StandIn UploadStandInColor(Image& image, u32 encoding, u32 rgba);
+
+public:
+
     void Finish();
 
     StagingBufferRef UploadStagingBuffer(size_t size, bool deferred = false);

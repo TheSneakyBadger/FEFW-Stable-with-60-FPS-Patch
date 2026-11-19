@@ -2327,6 +2327,31 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                 });
                 return;
             }
+            // Fortune's Eden: a texture the cache doesn't have yet but whose colour is known (from
+            // an earlier session, or the list that comes with Fortune's Eden) shows that colour
+            // and waits its turn to be converted, a few a frame (TickAsyncDecode), rather than a
+            // new area's hundreds all being converted in the frames that first draw them: the
+            // first-session stutter. EDEN_TC_DEFER_CONVERT=0: converted at once, as before.
+            static const bool defer_converts = [] {
+                const char* const value = std::getenv("EDEN_TC_DEFER_CONVERT");
+                return !(value && value[0] == '0');
+            }();
+            if (defer_converts && image.aliased_images.empty()) {
+                using StandIn = typename P::Runtime::StandIn;
+                runtime.TransitionImageLayout(image);
+                if (runtime.UploadConversionStandIn(image, hash, uploads) == StandIn::Shown) {
+                    image.flags |= ImageFlagBits::IsDecoding;
+                    auto decode = std::make_unique<AsyncDecodeContext>();
+                    decode->image_id = image_id;
+                    decode->sized_by_data = true;
+                    decode->stand_in = true;
+                    decode->deferred_convert = true;
+                    decode->queued_at = std::chrono::steady_clock::now();
+                    async_decodes.push_back(std::move(decode));
+                    ++deferred_converts;
+                    return;
+                }
+            }
             auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
             std::memcpy(staging.mapped_span.data(), guest_bytes.data(),
                         (std::min)(guest_bytes.size(), staging.mapped_span.size()));
@@ -2624,15 +2649,19 @@ void TextureCache<P>::TickAsyncDecode() {
                      "queued on average; {} shown in a stand-in colour meanwhile (none for {} "
                      "with no colour yet, {} not 2D, {} too big, {} aliased); draws waited "
                      "{:.0f} ms for the others; {} converted on the GPU instead (not ready in "
-                     "time); {:.0f} ms hashing {} MiB of the game's textures",
+                     "time); {} new ones shown in their colour while waiting to be converted ({} "
+                     "waiting at most); {:.0f} ms hashing {} MiB of the game's textures",
                      reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
                      disk_cache_stand_ins, disk_cache_no_stand_in[0], disk_cache_no_stand_in[1],
                      disk_cache_no_stand_in[2], disk_cache_no_stand_in[3],
                      static_cast<double>(disk_wait_ns) / 1e6,
-                     disk_cache_fallbacks, static_cast<double>(disk_hash_ns) / 1e6,
+                     disk_cache_fallbacks, deferred_converts, deferred_converts_most,
+                     static_cast<double>(disk_hash_ns) / 1e6,
                      disk_hash_bytes >> 20);
         }
         disk_cache_stand_ins = 0;
+        deferred_converts = 0;
+        deferred_converts_most = 0;
         std::ranges::fill(disk_cache_no_stand_in, 0U);
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
@@ -2646,10 +2675,43 @@ void TextureCache<P>::TickAsyncDecode() {
     // uploading them all in one frame took up to a second (test77f).
     static constexpr u64 DISK_CACHE_UPLOAD_BUDGET = 32ULL << 20;
     u64 disk_cache_uploaded = 0;
+    // New textures waiting to be converted (showing their colour): at most 12 a frame and 16
+    // million texels (the first level of each), oldest first.
+    static constexpr u32 CONVERT_PER_FRAME = 12;
+    static constexpr u64 CONVERT_TEXELS_PER_FRAME = 16ULL << 20;
+    u32 converted = 0;
+    u64 converted_texels = 0;
+    u32 waiting_to_convert = 0;
     auto i = async_decodes.begin();
     while (i != async_decodes.end()) {
         auto* async_decode = i->get();
         std::unique_lock lock{async_decode->mutex};
+        if (async_decode->deferred_convert) {
+            if (async_decode->cancelled) {
+                lock.unlock();
+                i = async_decodes.erase(i);
+                continue;
+            }
+            Image& image = slot_images[async_decode->image_id];
+            const u64 texels = u64{image.info.size.width} * image.info.size.height *
+                               static_cast<u64>(image.info.resources.layers);
+            if (converted >= CONVERT_PER_FRAME ||
+                (converted != 0 && converted_texels + texels > CONVERT_TEXELS_PER_FRAME)) {
+                ++waiting_to_convert;
+                lock.unlock();
+                ++i;
+                continue;
+            }
+            ++converted;
+            converted_texels += texels;
+            image.flags &= ~ImageFlagBits::IsDecoding;
+            lock.unlock();
+            i = async_decodes.erase(i);
+            auto staging = runtime.UploadStagingBuffer(MapSizeBytes(image));
+            UploadImageContents(image, staging);
+            has_uploads = true;
+            continue;
+        }
         if (!async_decode->complete) {
             ++i;
             continue;
@@ -2705,6 +2767,7 @@ void TextureCache<P>::TickAsyncDecode() {
         lock.unlock();
         i = async_decodes.erase(i);
     }
+    deferred_converts_most = (std::max)(deferred_converts_most, waiting_to_convert);
     if (has_uploads) {
         runtime.InsertUploadMemoryBarrier();
     }
@@ -3882,7 +3945,7 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
 }
 
 template <class P>
-void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
+void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id, bool force) {
     if (False(image.flags & ImageFlagBits::IsDecoding)) {
         return;
     }
@@ -3899,12 +3962,13 @@ void TextureCache<P>::WaitDiskCacheLoad(Image& image, ImageId image_id) {
     }
     // Showing its stand-in colour: drawn as it is, uploaded when the read is done
     // (TickAsyncDecode). With aliases since, they need its real contents now.
-    if (decode->stand_in && !decode->complete && image.aliased_images.empty()) {
+    if (decode->stand_in && !decode->complete && image.aliased_images.empty() && !force) {
         return;
     }
     const std::chrono::nanoseconds wait_left =
         (std::min)(disk_cache_wait_left, disk_cache_second_wait_left);
-    if (!decode->complete && wait_left > std::chrono::nanoseconds::zero()) {
+    if (!decode->complete && !decode->deferred_convert &&
+        wait_left > std::chrono::nanoseconds::zero()) {
         const auto start = std::chrono::steady_clock::now();
         decode->ready.wait_for(lock, wait_left, [decode] { return decode->complete.load(); });
         const auto waited = std::chrono::steady_clock::now() - start;
@@ -3949,6 +4013,17 @@ template <class P>
 void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool invalidate) {
     Image& image = slot_images[image_id];
     if (invalidate) {
+        // Fortune's Eden: about to be overwritten whole on the GPU: a read or conversion still
+        // pending for it (showing its stand-in colour) must not land on top later.
+        if (True(image.flags & ImageFlagBits::IsDecoding)) {
+            for (auto& async_decode : async_decodes) {
+                if (async_decode->image_id == image_id && async_decode->sized_by_data) {
+                    std::scoped_lock decode_lock{async_decode->mutex};
+                    async_decode->cancelled = true;
+                }
+            }
+            image.flags &= ~ImageFlagBits::IsDecoding;
+        }
         image.flags &= ~(ImageFlagBits::CpuModified | ImageFlagBits::GpuModified);
         if (False(image.flags & ImageFlagBits::Tracked)) {
             TrackImage(image, image_id);
@@ -3958,11 +4033,12 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         // While a draw's views are filled, its textures' reads are all queued first and waited
         // for together (FillImageViews), so they're read side by side; an image with aliases
         // is waited for now, as they're synchronized from it next.
-        if (defer_disk_waits && image.aliased_images.empty() &&
+        // One the GPU writes to gets its real contents first, stand-in or not.
+        if (defer_disk_waits && !is_modification && image.aliased_images.empty() &&
             True(image.flags & ImageFlagBits::IsDecoding)) {
             deferred_disk_waits.push_back(image_id);
         } else {
-            WaitDiskCacheLoad(image, image_id);
+            WaitDiskCacheLoad(image, image_id, is_modification);
         }
         if (!image.aliased_images.empty()) {
             SynchronizeAliases(image_id);
