@@ -257,11 +257,20 @@ void DetectNvidia(Caps& caps) {
         destroy_session(session);
         return;
     }
+    // NvAPI's answer when a profile doesn't set it (NVAPI_SETTING_NOT_FOUND); any other failure
+    // goes in the log, so a wrong structure version shows as one.
+    constexpr NvStatus SettingNotFound = -160;
+    NvStatus last_status = SettingNotFound;
     const auto read_cap = [&](void* profile) -> std::optional<std::uint32_t> {
         std::vector<std::uint8_t> setting(SettingV1Size + 64);
         const std::uint32_t version = Version(SettingV1Size);
         std::memcpy(setting.data(), &version, sizeof(version));
-        if (get_setting(session, profile, MaxFrameRateSetting, setting.data()) != 0) {
+        if (const NvStatus status =
+                get_setting(session, profile, MaxFrameRateSetting, setting.data());
+            status != 0) {
+            if (status != SettingNotFound) {
+                last_status = status;
+            }
             return std::nullopt;
         }
         std::uint32_t value{};
@@ -296,7 +305,9 @@ void DetectNvidia(Caps& caps) {
     }
     destroy_session(session);
     if (!cap) {
-        caps.nvidia_detail = "Max Frame Rate not set";
+        caps.nvidia_detail = last_status == SettingNotFound
+                                 ? std::string{"Max Frame Rate not set"}
+                                 : fmt::format("Max Frame Rate not read (NvAPI {})", last_status);
     } else if (*cap == 0 || *cap > 1000) {
         caps.nvidia_detail = fmt::format("Max Frame Rate off ({})", where);
     } else {
