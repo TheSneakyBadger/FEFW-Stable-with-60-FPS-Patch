@@ -379,6 +379,18 @@ cmake_language(DEFER CALL eden_render_isa_options)
         } else {
             Write-Warning 'externals\FidelityFX-SDK\LICENSE.txt not found: the package will lack the FSR 3.1 notice.'
         }
+        # The JIT warm-up list that comes with Fortune's Eden (jit-warmup next to the exe): the
+        # game code blocks compiled in testers' play, kept in jit-warmup here (the newest of the
+        # main install's user\cache\jit before each release). Only block offsets and the game's
+        # build ID: no game code, no paths, nothing about the player.
+        $jitShipped = Join-Path $root 'jit-warmup'
+        if (Test-Path (Join-Path $jitShipped '*.bin')) {
+            $jitDest = Join-Path $outDir 'jit-warmup'
+            New-Item -ItemType Directory -Force -Path $jitDest | Out-Null
+            Copy-Item -Path (Join-Path $jitShipped '*.bin') -Destination $jitDest
+        } else {
+            Write-Warning 'jit-warmup\*.bin not found: the package will have no JIT warm-up list.'
+        }
         $fpsText = @"
 
 60 FPS MODE AND PERFORMANCE (Fortune's Weave 1.1.0)
