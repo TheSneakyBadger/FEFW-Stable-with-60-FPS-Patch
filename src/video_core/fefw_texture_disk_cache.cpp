@@ -91,8 +91,83 @@ std::atomic<u32> stored_count{0};
 std::unordered_map<u64, u32> colors;
 /// Colours added since standins.bin was last written.
 bool colors_dirty = false;
+/// The same colours by the game's texture alone (the key without what it was encoded to), the
+/// same on every PC: shown while a texture the cache doesn't have yet is converted over the next
+/// frames instead of in the frame that needs it. Kept in colours.bin, with the list that comes
+/// with Fortune's Eden (texture-colours next to the program) read in too.
+std::unordered_map<u64, u32> guest_colors;
 constexpr u32 STAND_IN_MAGIC = 0x49534546; // "FESI"
 constexpr u32 STAND_IN_VERSION = 1;
+constexpr u32 GUEST_COLOR_MAGIC = 0x43474546; // "FEGC"
+constexpr std::size_t MAX_GUEST_COLORS = 1U << 21;
+
+u64 NameOf(const Key& key);
+
+u64 GuestNameOf(Key key) {
+    key.encoding = 0;
+    return NameOf(key);
+}
+
+/// Name and colour pairs (u32 magic, u32 version, u32 count, then the pairs).
+std::vector<std::pair<u64, u32>> ReadColorFile(const fs::path& path, u32 magic) {
+    std::ifstream file{path, std::ios::binary};
+    u32 head[3]{};
+    if (!file.read(reinterpret_cast<char*>(head), sizeof(head)) || head[0] != magic ||
+        head[1] != STAND_IN_VERSION || head[2] > (1U << 24)) {
+        return {};
+    }
+    std::vector<std::pair<u64, u32>> items(head[2]);
+    for (auto& [name, color] : items) {
+        if (!file.read(reinterpret_cast<char*>(&name), sizeof(name)) ||
+            !file.read(reinterpret_cast<char*>(&color), sizeof(color))) {
+            return {};
+        }
+    }
+    return items;
+}
+
+bool WriteColorFile(const fs::path& path, u32 magic,
+                    const std::vector<std::pair<u64, u32>>& items) {
+    fs::path temp = path;
+    temp += ".tmp";
+    bool written = false;
+    {
+        std::ofstream file{temp, std::ios::binary | std::ios::trunc};
+        const u32 head[3]{magic, STAND_IN_VERSION, static_cast<u32>(items.size())};
+        file.write(reinterpret_cast<const char*>(head), sizeof(head));
+        for (const auto& [name, color] : items) {
+            file.write(reinterpret_cast<const char*>(&name), sizeof(name));
+            file.write(reinterpret_cast<const char*>(&color), sizeof(color));
+        }
+        written = file.good();
+    }
+    std::error_code ec;
+    if (written) {
+        fs::rename(temp, path, ec);
+        return !ec;
+    }
+    fs::remove(temp, ec);
+    return false;
+}
+
+fs::path ShippedColorPath() {
+#ifdef _WIN32
+    return Common::FS::GetExeDirectory() / "texture-colours" / "colours.bin";
+#else
+    std::error_code ec;
+    const fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    return ec ? fs::path{} : exe.parent_path() / "texture-colours" / "colours.bin";
+#endif
+}
+
+/// With the mutex held: records a colour by entry and by game texture.
+void RecordColorLocked(u64 name, const Key& key, u32 color) {
+    colors.insert_or_assign(name, color);
+    if (guest_colors.size() < MAX_GUEST_COLORS) {
+        guest_colors.insert_or_assign(GuestNameOf(key), color);
+    }
+    colors_dirty = true;
+}
 
 bool StandInsAllowed() {
     static const bool allowed = [] {
@@ -176,30 +251,35 @@ fs::path StandInPath() {
     return folder / "standins.bin";
 }
 
-/// With the mutex held, after the index is read: the colours of the entries it has.
+/// With the mutex held, after the index is read: the colours of the entries it has, and the
+/// colours by game texture (this install's, then the list that comes with Fortune's Eden).
 void LoadStandInsLocked() {
     colors.clear();
-    std::ifstream file{StandInPath(), std::ios::binary};
-    u32 head[3]{};
-    if (!file.read(reinterpret_cast<char*>(head), sizeof(head)) || head[0] != STAND_IN_MAGIC ||
-        head[1] != STAND_IN_VERSION || head[2] > (1U << 24)) {
-        return;
-    }
-    std::vector<std::pair<u64, u32>> items(head[2]);
-    for (auto& [name, color] : items) {
-        if (!file.read(reinterpret_cast<char*>(&name), sizeof(name)) ||
-            !file.read(reinterpret_cast<char*>(&color), sizeof(color))) {
-            return;
-        }
-    }
-    for (const auto& [name, color] : items) {
+    for (const auto& [name, color] : ReadColorFile(StandInPath(), STAND_IN_MAGIC)) {
         if (index.contains(name)) {
             colors.emplace(name, color);
         }
     }
+    guest_colors.clear();
+    for (const auto& [name, color] : ReadColorFile(folder / "colours.bin", GUEST_COLOR_MAGIC)) {
+        guest_colors.emplace(name, color);
+    }
+    const std::size_t own = guest_colors.size();
+    if (const fs::path shipped = ShippedColorPath(); !shipped.empty()) {
+        for (const auto& [name, color] : ReadColorFile(shipped, GUEST_COLOR_MAGIC)) {
+            if (guest_colors.size() >= MAX_GUEST_COLORS) {
+                break;
+            }
+            guest_colors.emplace(name, color);
+        }
+    }
+    LOG_INFO(Render_Vulkan,
+             "Texture colours: {} from this install, {} more from the list that comes with "
+             "Fortune's Eden",
+             own, guest_colors.size() - own);
 }
 
-/// With the mutex held: writes the colours of the entries there are.
+/// With the mutex held: writes the colours of the entries there are, and by game texture.
 void SaveStandInsLocked() {
     if (folder.empty()) {
         return;
@@ -211,28 +291,10 @@ void SaveStandInsLocked() {
             items.emplace_back(name, color);
         }
     }
-    const fs::path path = StandInPath();
-    fs::path temp = path;
-    temp += ".tmp";
-    bool written = false;
-    {
-        std::ofstream file{temp, std::ios::binary | std::ios::trunc};
-        const u32 head[3]{STAND_IN_MAGIC, STAND_IN_VERSION, static_cast<u32>(items.size())};
-        file.write(reinterpret_cast<const char*>(head), sizeof(head));
-        for (const auto& [name, color] : items) {
-            file.write(reinterpret_cast<const char*>(&name), sizeof(name));
-            file.write(reinterpret_cast<const char*>(&color), sizeof(color));
-        }
-        written = file.good();
-    }
-    std::error_code ec;
-    if (written) {
-        fs::rename(temp, path, ec);
-        if (!ec) {
-            colors_dirty = false;
-        }
-    } else {
-        fs::remove(temp, ec);
+    const std::vector<std::pair<u64, u32>> by_texture(guest_colors.begin(), guest_colors.end());
+    if (WriteColorFile(StandInPath(), STAND_IN_MAGIC, items) &&
+        WriteColorFile(folder / "colours.bin", GUEST_COLOR_MAGIC, by_texture)) {
+        colors_dirty = false;
     }
 }
 
@@ -328,8 +390,7 @@ void WorkerLoop() {
             }
             total_bytes += size;
             if (color) {
-                colors.insert_or_assign(job.name, *color);
-                colors_dirty = true;
+                RecordColorLocked(job.name, job.key, *color);
             }
             ++stored_count;
             TrimLocked();
@@ -603,8 +664,7 @@ bool LoadInto(const Key& key, std::span<u8> output) {
         it->second.used = true;
         if (!colors.contains(name)) {
             if (const std::optional<u32> color = ComputeColor(key, output)) {
-                colors.emplace(name, *color);
-                colors_dirty = true;
+                RecordColorLocked(name, key, *color);
             }
         }
     }
@@ -639,6 +699,22 @@ Counts TakeCounts() {
     return Counts{loaded_count.exchange(0), stored_count.exchange(0), total_bytes,
                   read_ns.exchange(0), read_max_ns.exchange(0),
                   static_cast<u32>(colors.size())};
+}
+
+std::optional<u32> GuestColor(const Key& key) {
+    if (!StandInsAllowed()) {
+        return std::nullopt;
+    }
+    const u64 name = GuestNameOf(key);
+    std::scoped_lock lock{mutex};
+    if (!enabled) {
+        return std::nullopt;
+    }
+    const auto it = guest_colors.find(name);
+    if (it == guest_colors.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 std::optional<u32> StandInColor(const Key& key) {

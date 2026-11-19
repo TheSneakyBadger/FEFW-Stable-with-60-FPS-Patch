@@ -66,6 +66,11 @@ void Store(const Key& key, std::vector<u8> data);
 /// thread. EDEN_TC_STAND_IN=0: none.
 [[nodiscard]] std::optional<u32> StandInColor(const Key& key);
 
+/// The texture's colour by the game's texture alone (whatever it was encoded to): for the
+/// stand-in while a texture the cache doesn't have yet waits to be converted. From this install
+/// or the list that comes with Fortune's Eden. Any thread.
+[[nodiscard]] std::optional<u32> GuestColor(const Key& key);
+
 /// One compressed block of a single colour (rgba as StandInColor), for this encoding (1: BC1,
 /// 8 bytes; 3: BC3 and 7: BC7, 16 bytes). Returns the block's size.
 u32 SolidBlock(u32 encoding, u32 rgba, std::span<u8, 16> block);

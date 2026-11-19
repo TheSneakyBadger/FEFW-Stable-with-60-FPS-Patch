@@ -4125,8 +4125,29 @@ TextureCacheRuntime::StandIn TextureCacheRuntime::UploadDiskCacheStandIn(
     if (!color) {
         return StandIn::NoColor;
     }
+    return UploadStandInColor(image, load.key.encoding, *color);
+}
+
+TextureCacheRuntime::StandIn TextureCacheRuntime::UploadConversionStandIn(
+    Image& image, u64 guest_hash, std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    const ImageInfo& info = image.info;
+    if (info.type != ImageType::e2D || info.num_samples != 1) {
+        return StandIn::Shape;
+    }
+    const bool bc3 = Settings::EffectiveAstcRecompression() != Settings::AstcRecompression::Bc1;
+    const FefwTextureDiskCache::Key key = DiskCacheKey(info, guest_hash, swizzles, bc3);
+    const std::optional<u32> color = FefwTextureDiskCache::GuestColor(key);
+    if (!color) {
+        return StandIn::NoColor;
+    }
+    return UploadStandInColor(image, key.encoding, *color);
+}
+
+TextureCacheRuntime::StandIn TextureCacheRuntime::UploadStandInColor(Image& image, u32 encoding,
+                                                                     u32 rgba) {
+    const ImageInfo& info = image.info;
     std::array<u8, 16> block{};
-    const u32 block_bytes = FefwTextureDiskCache::SolidBlock(load.key.encoding, *color, block);
+    const u32 block_bytes = FefwTextureDiskCache::SolidBlock(encoding, rgba, block);
     // One tile of 32x32 blocks of the colour (16 KiB at most), copied over every level of every
     // layer a tile at a time: the copies all read the same bytes.
     static constexpr u32 TILE_BLOCKS = 32;

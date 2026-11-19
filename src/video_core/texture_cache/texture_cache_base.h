@@ -95,6 +95,9 @@ struct AsyncDecodeContext {
     /// The image shows its stand-in colour until the read is uploaded: draws don't wait for it
     /// (main thread only).
     bool stand_in{};
+    /// Not a read: an ASTC texture the cache doesn't have yet, showing its colour while it waits
+    /// its turn to be converted on the GPU (a few a frame, TickAsyncDecode). Main thread only.
+    bool deferred_convert{};
     /// Signalled (with the mutex held) when complete is set, for a draw waiting on it.
     std::condition_variable ready;
     /// When a texture cache read was queued (for the log).
@@ -519,7 +522,8 @@ private:
     /// Fortune's Eden: a texture a draw is about to use that is still being read from the texture
     /// cache on disk is waited for (within this frame's budget) and uploaded, instead of drawn
     /// black for the frames until it's ready.
-    void WaitDiskCacheLoad(Image& image, ImageId image_id);
+    /// force: even one showing its stand-in colour (the GPU is about to write to it).
+    void WaitDiskCacheLoad(Image& image, ImageId image_id, bool force = false);
 
     void QueueAsyncUnswizzle(Image& image, ImageId image_id);
     void TickAsyncUnswizzle();
@@ -753,6 +757,10 @@ private:
     u32 disk_cache_stand_ins{};
     /// Reads queued without one: no colour known yet, not a 2D texture, too big, or aliased.
     u32 disk_cache_no_stand_in[4]{};
+    /// New textures shown in their colour while waiting to be converted, and the most waiting at
+    /// once (for the log).
+    u32 deferred_converts{};
+    u32 deferred_converts_most{};
     u32 disk_cache_fallback_frames{};
     /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
     u64 disk_hash_ns{};
