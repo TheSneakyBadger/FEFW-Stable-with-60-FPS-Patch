@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.5.9
+
+- **Less stutter in a new install's first session.** The game code compiled while testing Fortune's Eden now comes with it (`jit-warmup`, about 4 MB: only where the game's code blocks are, no game code and nothing about anyone), so it's compiled when the game starts (about 3 s) instead of in the middle of play. In a first session that was 235,000 blocks (over 2 s of hitches) in the first area alone. It covers the start of the game, Dagsion and the battles tested so far, and grows with each release; what you play beyond it is still remembered for your next session, as in v1.7.5.7.
+- **The compiled-code list is saved every 3 minutes of play**, not only when the game stops cleanly. A 51-minute session that ended with Fortune's Eden closing on Stop saved nothing.
+- The video memory budget from v1.7.5.7 no longer logs small moves of a few MiB as "lowered" and back.
+
+Everything else is as in [v1.7.5.8](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.8).
+
 ## v1.7.5.8
 
 - **No more getting stuck at about 39 FPS with NVIDIA DLSS frame generation** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). After a loading screen, NVIDIA Reflex could keep making every frame wait about 50 ms, for minutes, with the CPU and graphics card nearly idle (19.4 game frames a second, about 39 shown at 2x), until it happened to reset itself. Fortune's Eden now notices when Reflex waits that long on 30 frames in a row and resets it.
