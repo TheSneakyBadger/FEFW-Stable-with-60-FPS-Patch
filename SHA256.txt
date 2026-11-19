@@ -45,3 +45,4 @@ fd74dfad505be35af81de55ea5563b47ec5131cd6866d3487a5404be02bb8609  FEFW-Test-v1.7
 be55c03534ccecbfccce6b38df806ad55687e0554696ff6cda9ebf1da9c547fb  FEFW-Test-v1.7.5.5-test88f.zip
 29d038a1426c43256fa6c734999f1b1aa2eab2cf7d4f144e90c9ec0adfc235e4  FEFW-Test-v1.7.5.6-test90.zip
 284ac56192fb6bd4afc3d3ae5b50e4f5c64cdc9d075a196dc0b07334ea20429d  FEFW-Test-v1.7.5.6-test90b.zip
+7c01d2a24f1c5997624d0d15759b9082adeb1c59f2dfdbe8a3b9182d184b0cfa  FEFW-Test-v1.7.5.6-test91.zip
