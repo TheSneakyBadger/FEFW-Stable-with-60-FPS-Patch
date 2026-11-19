@@ -16,6 +16,7 @@
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #include "core/arm/dynarmic/arm_dynarmic_64.h"
 #include "core/arm/dynarmic/dynarmic_exclusive_monitor.h"
+#include "core/arm/dynarmic/fefw_jit_warm.h"
 #include "core/core_timing.h"
 #include "core/guest_clock.h"
 #include "core/hle/kernel/k_process.h"
@@ -360,7 +361,35 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
     m_jit.emplace(config);
 }
 
+void ArmDynarmic64::FefwWarmUp() {
+    m_warm_checked = true;
+    Kernel::KProcess* const process = m_cb->m_process;
+    if (!FefwJitWarm::Enabled() || !process || !process->IsApplication()) {
+        return;
+    }
+    m_warm_active = true;
+    m_warm_base = GetInteger(process->GetEntryPoint());
+    m_warm_size = process->GetCodeSize();
+    m_warm_build_id = m_system.GetApplicationProcessBuildID();
+    const auto locations =
+        FefwJitWarm::Load(m_warm_build_id, m_core_index, m_warm_base, m_warm_size);
+    if (locations.empty()) {
+        return;
+    }
+    // At most 10 s: a core starts running its first thread late by that much, once a session.
+    const auto start = std::chrono::steady_clock::now();
+    const std::size_t compiled = m_jit->FefwPrecompile(locations, 10'000'000'000ULL);
+    LOG_INFO(Core_ARM, "JIT warm-up: core {} compiled {} of {} blocks from earlier sessions in {} ms",
+             m_core_index, compiled, locations.size(),
+             std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - start)
+                 .count());
+}
+
 HaltReason ArmDynarmic64::RunThread(Kernel::KThread* thread) {
+    if (!m_warm_checked) {
+        FefwWarmUp();
+    }
     m_jit->ClearExclusiveState();
     return TranslateHaltReason(m_jit->Run());
 }
@@ -404,7 +433,12 @@ ArmDynarmic64::ArmDynarmic64(System& system, bool uses_wall_clock, Kernel::KProc
     MakeJit(&page_table_impl, page_table.GetAddressSpaceWidth());
 }
 
-ArmDynarmic64::~ArmDynarmic64() = default;
+ArmDynarmic64::~ArmDynarmic64() {
+    if (m_warm_active && m_jit) {
+        FefwJitWarm::Save(m_warm_build_id, m_core_index, m_warm_base, m_warm_size,
+                          m_jit->FefwTakeCompiledLocations());
+    }
+}
 
 void ArmDynarmic64::SetTpidrroEl0(u64 value) {
     m_cb->m_tpidrro_el0 = value;

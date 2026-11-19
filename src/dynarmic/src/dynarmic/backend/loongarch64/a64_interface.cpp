@@ -169,6 +169,15 @@ void Jit::InvalidateCacheRange(u64 start_address, std::size_t length) {
     impl->InvalidateCacheRange(start_address, length);
 }
 
+// Fortune's Eden: JIT warm-up only on the x64 backend.
+std::vector<std::uint64_t> Jit::FefwTakeCompiledLocations() {
+    return {};
+}
+
+std::size_t Jit::FefwPrecompile(const std::vector<std::uint64_t>&, std::uint64_t) {
+    return 0;
+}
+
 void Jit::Reset() {
     impl->Reset();
 }

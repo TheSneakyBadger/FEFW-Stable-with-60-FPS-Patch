@@ -45,6 +45,19 @@ public:
     void ClearCache();
 
     /**
+     * Fortune's Eden (JIT warm-up): the locations (unique hashes) of the blocks compiled since the
+     * last call, oldest first. Not while running.
+     */
+    std::vector<std::uint64_t> FefwTakeCompiledLocations();
+
+    /**
+     * Fortune's Eden (JIT warm-up): compiles the blocks at these locations now, as running them
+     * would, skipping those already compiled or whose code can't be read. Stops when the code
+     * cache is nearly full or after max_ns. Returns how many were compiled. Not while running.
+     */
+    std::size_t FefwPrecompile(const std::vector<std::uint64_t>& locations, std::uint64_t max_ns);
+
+    /**
      * Invalidate the code cache at a range of addresses.
      * @param start_address The starting address of the range to invalidate.
      * @param length The length (in bytes) of the range to invalidate.

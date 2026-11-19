@@ -113,6 +113,15 @@ private:
 
     std::optional<Dynarmic::A64::Jit> m_jit{};
 
+    /// Fortune's Eden, JIT warm-up (fefw_jit_warm.h): done before this core first runs; the
+    /// game's code start and size then, for saving the list when the core goes.
+    void FefwWarmUp();
+    bool m_warm_checked{};
+    bool m_warm_active{};
+    u64 m_warm_base{};
+    u64 m_warm_size{};
+    std::array<u8, 0x20> m_warm_build_id{};
+
     // SVC callback
     u32 m_svc{};
 

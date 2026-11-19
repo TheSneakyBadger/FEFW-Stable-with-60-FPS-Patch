@@ -223,6 +223,11 @@ public:
         return m_code_address;
     }
 
+    /// Fortune's Eden: the size of the code region from GetEntryPoint (JIT warm-up).
+    size_t GetCodeSize() const {
+        return m_code_size;
+    }
+
     void SetArgPointer(KProcessAddress addr) {
         m_arg_pointer = addr;
     }
