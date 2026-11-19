@@ -117,6 +117,8 @@ void Conductor::VsyncThread(std::stop_token token) {
             return;
         }
 
+        this->VsyncGrace(token);
+
         if (auto* const reflex_sleep =
                 FefwFrameGenHook::vsync_sleep.load(std::memory_order_acquire)) {
             m_reflex_paced.store(reflex_sleep(), std::memory_order_relaxed);
@@ -124,16 +126,17 @@ void Conductor::VsyncThread(std::stop_token token) {
 
         last_vsync = std::chrono::steady_clock::now();
         this->ProcessVsync();
-        this->VsyncGrace(token);
     }
 }
 
-/// Fortune's Eden, 60 FPS mode: a game frame finished just after a vsync is shown as soon as it
-/// is queued (within a few ms) instead of a whole vsync later. Without it, frames taking 17-20 ms
-/// (a busy battle) alternated between 16.7 and 33.3 ms on screen, 40 FPS in all (#63, #78), where
-/// the game could have made about 55. Only when the vsync just showed nothing new from the game,
-/// so it never shows more than one game frame per vsync. Not with swap intervals over 1 (the
-/// game's own 30 FPS), movies or a speed limit other than 100%.
+/// Fortune's Eden, 60 FPS mode: when a vsync comes and the game's next frame isn't queued yet,
+/// the vsync waits for it a few ms (as soon as it is queued) instead of going ahead without it and
+/// showing it a whole vsync later. Frames taking 17-20 ms (a busy battle) otherwise alternated
+/// between 16.7 and 33.3 ms on screen, 40 FPS in all (#63, #78), where the game could have made
+/// about 55. It is the same vsync, only later: NVIDIA Reflex still sleeps and marks the frame's
+/// start once for it (test 91 showed a late frame with a composite of its own, past Reflex, which
+/// left Reflex sleeping 24 ms before every frame for minutes: 41.7 FPS, #63). Not with swap
+/// intervals over 1 (the game's own 30 FPS), movies or a speed limit other than 100%.
 /// EDEN_VSYNC_GRACE_MS=<ms> (0-8, default 4; 0: off).
 void Conductor::VsyncGrace(std::stop_token token) {
     static const s64 grace_ns = [] {
@@ -146,8 +149,17 @@ void Conductor::VsyncGrace(std::stop_token token) {
     const auto& settings = Settings::values;
     if (grace_ns <= 0 || !FefwFrameRate::Enabled() || m_swap_interval != 1 ||
         m_compose_speed_scale != 1.f || !settings.use_speed_limit.GetValue() ||
-        Settings::SpeedLimit() != 100 || m_system.GetNVDECActive() ||
-        m_container.LastComposeShowedGameFrame()) {
+        Settings::SpeedLimit() != 100 || m_system.GetNVDECActive()) {
+        return;
+    }
+    const auto game_frame_queued = [&] {
+        bool queued = false;
+        for (const auto& [display_id, manager] : m_vsync_managers) {
+            queued = queued || m_container.HasQueuedGameFrame(display_id);
+        }
+        return queued;
+    };
+    if (game_frame_queued()) {
         return;
     }
     using Clock = std::chrono::steady_clock;
@@ -156,12 +168,7 @@ void Conductor::VsyncGrace(std::stop_token token) {
     bool shown = false;
     while (!token.stop_requested() && !m_system.IsShuttingDown()) {
         std::this_thread::sleep_for(std::chrono::microseconds{250});
-        bool queued = false;
-        for (const auto& [display_id, manager] : m_vsync_managers) {
-            queued = queued || m_container.HasQueuedGameFrame(display_id);
-        }
-        if (queued) {
-            this->ProcessVsync();
+        if (game_frame_queued()) {
             shown = true;
             break;
         }
@@ -183,8 +190,9 @@ void Conductor::VsyncGrace(std::stop_token token) {
     } else if (now - m_grace_log_time >= std::chrono::seconds{10}) {
         if (m_grace_shown > 0) {
             LOG_INFO(Service_VI,
-                     "Vsync grace since the last report: {} late game frames shown {:.1f} ms after their "
-                     "vsync on average (instead of a whole vsync later); {} vsyncs without one",
+                     "Vsync grace since the last report: {} vsyncs waited {:.1f} ms on average for a "
+                     "late game frame (instead of showing it a whole vsync later); {} went ahead "
+                     "without one",
                      m_grace_shown,
                      static_cast<double>(m_grace_wait_ns) / 1e6 /
                          static_cast<double>(m_grace_shown),
