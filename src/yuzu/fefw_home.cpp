@@ -28,6 +28,8 @@
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScreen>
+#include <QTimer>
 #include <QScrollArea>
 #include <QFrame>
 #include <QSlider>
@@ -35,6 +37,7 @@
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 
+#include "common/fefw_external_caps.h"
 #include "common/fefw_version.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -319,6 +322,46 @@ FefwHome::FefwHome(QWidget* list, QWidget* parent) : QWidget(parent) {
 
     list->installEventFilter(this);
     setVisible(list->isVisibleTo(parent));
+
+    // The frame rate caps set in RTSS and the NVIDIA driver, once the window is up (reading the
+    // driver's settings takes up to about 0.1 s); read again when a game starts.
+    QTimer::singleShot(0, this, [this] {
+        FefwExternalCaps::Detect();
+        UpdateCapNote();
+    });
+}
+
+void FefwHome::UpdateCapNote() {
+    if (!mfg_cap_note) {
+        return;
+    }
+    const QScreen* const display = screen();
+    const Settings::FrameLimit limit =
+        Settings::FrameGenerationLimit(display ? static_cast<f32>(display->refreshRate()) : 0.0f);
+    QString from;
+    switch (limit.source) {
+    case Settings::FrameLimit::Source::Display:
+        from = tr("your display (%1 Hz)").arg(qRound(limit.cap));
+        break;
+    case Settings::FrameLimit::Source::Rtss:
+        from = tr("your RTSS cap (%1)").arg(qRound(limit.cap));
+        break;
+    case Settings::FrameLimit::Source::Nvidia:
+        from = tr("your NVIDIA cap (%1)").arg(qRound(limit.cap));
+        break;
+    case Settings::FrameLimit::Source::YourCap:
+        from = tr("your cap here (%1)").arg(qRound(limit.cap));
+        break;
+    case Settings::FrameLimit::Source::None:
+        break;
+    }
+    mfg_cap_note->setText(from.isEmpty() ? QString{}
+                                         : tr("Paced to %1 FPS: %2").arg(qRound(limit.fps)).arg(from));
+    mfg_cap_note->setToolTip(
+        tr("Frame generation keeps its frames just under the lowest limit on them: your display's "
+           "refresh rate, the caps set in RTSS and the NVIDIA app or Control Panel (read when the "
+           "game starts; Settings → Graphics → \"Stay under RTSS and NVIDIA caps\"), and your "
+           "cap here."));
 }
 
 void FefwHome::BuildGamePage(QWidget* page) {
@@ -570,10 +613,10 @@ void FefwHome::BuildGamePage(QWidget* page) {
     mfg_cap_spin->setSuffix(tr(" FPS"));
     mfg_cap_spin->setMinimumWidth(110);
     mfg_cap_spin->setToolTip(
-        tr("If you cap your frame rate (in the NVIDIA app or Control Panel, NVIDIA Reflex, RTSS or "
-           "the MFG Unlocker's menu), set this to the same number, so frame generation's pacing "
-           "stays just under it. If you don't have a cap, leave it at None: Fortune's Eden caps "
-           "to your display's refresh rate itself. Takes effect right away."));
+        tr("Optional. Fortune's Eden already keeps frame generation just under your display's "
+           "refresh rate and the caps set in RTSS and the NVIDIA app or Control Panel (it reads "
+           "them), using the lowest. Set a cap here for one it can't read (the MFG Unlocker's "
+           "menu) or to go lower. Takes effect right away."));
     mfg_cap_column = new QWidget(right);
     {
         QVBoxLayout* const cap_layout = new QVBoxLayout(mfg_cap_column);
@@ -581,6 +624,9 @@ void FefwHome::BuildGamePage(QWidget* page) {
         cap_layout->setSpacing(4);
         cap_layout->addWidget(caption(tr("Your frame rate cap")));
         cap_layout->addWidget(mfg_cap_spin);
+        // Which limit frame generation paces to: the lowest of them all.
+        mfg_cap_note = caption(QString{});
+        cap_layout->addWidget(mfg_cap_note);
     }
     choices->addWidget(mfg_cap_column);
     // DLDSR in fullscreen: shown once the driver offers its resolutions (UpdateStatusLine).
@@ -739,10 +785,11 @@ void FefwHome::BuildGamePage(QWidget* page) {
             emit SettingChanged();
         }
     });
-    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [](int value) {
+    connect(mfg_cap_spin, &QSpinBox::valueChanged, this, [this](int value) {
         if (Settings::values.mfg_frame_cap_fps.GetValue() != value) {
             Settings::values.mfg_frame_cap_fps.SetValue(value);
         }
+        UpdateCapNote();
     });
     connect(mfg_cap_spin, &QSpinBox::editingFinished, this, &FefwHome::SettingChanged);
     connect(texture_cache_box, &QComboBox::currentIndexChanged, this, [this](int index) {
@@ -1027,6 +1074,7 @@ void FefwHome::UpdateStatusLine() {
                            Settings::FrameGeneration::Off);
     const QSignalBlocker cap_blocker{mfg_cap_spin};
     mfg_cap_spin->setValue(Settings::values.mfg_frame_cap_fps.GetValue());
+    UpdateCapNote();
     mfg_cap_column->setVisible(Settings::values.frame_generation.GetValue() !=
                                    Settings::FrameGeneration::Off &&
                                Settings::values.mfg_frame_cap.GetValue() ==

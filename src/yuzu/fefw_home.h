@@ -36,6 +36,8 @@ public:
     void Refresh(const QStandardItemModel& model);
     /// Re-reads the settings shown (after the settings change).
     void UpdateStatusLine();
+    /// Under the frame rate cap: which limit frame generation paces to.
+    void UpdateCapNote();
     /// The hint towards 1X resolution (and DLDSR) when another resolution is set.
     void UpdateScaleHint(bool show, bool dlss, bool dldsr_offered);
 
@@ -87,6 +89,7 @@ private:
     QWidget* mfg_column{};
     QSpinBox* mfg_cap_spin{};
     QWidget* mfg_cap_column{};
+    QLabel* mfg_cap_note{};
     QComboBox* button_icons_box{};
     QComboBox* texture_cache_box{};
     QComboBox* dldsr_box{};

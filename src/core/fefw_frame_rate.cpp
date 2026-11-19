@@ -173,7 +173,16 @@ void OnPresent(Core::Memory::Memory& memory) {
         std::sort(sorted.begin(), sorted.end());
         sample = sorted[1];
     }
-    measure.average_ms += (sample - measure.average_ms) * 0.25;
+    // Slower frames ease the rate down; faster ones bring it straight back up. Easing back up
+    // too, the rate stayed low for 5-8 frames after a hitch of two or three long frames (a
+    // stall as NVIDIA DLSS frame generation comes back on), and the game ran up to 1.5x fast
+    // while the frames came at 60 again: a sudden lurch forward (#63). Small changes (frame
+    // jitter) still ease both ways, so they don't bias the rate upwards.
+    if (sample < measure.average_ms * 0.85) {
+        measure.average_ms = sample;
+    } else {
+        measure.average_ms += (sample - measure.average_ms) * 0.25;
+    }
     int rate = static_cast<int>(std::lround(1000.0 / measure.average_ms));
     if (rate >= SnapTo60From) {
         rate = MaxRate;
