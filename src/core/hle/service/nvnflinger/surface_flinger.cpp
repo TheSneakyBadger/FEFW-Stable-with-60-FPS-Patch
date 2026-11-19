@@ -49,6 +49,20 @@ bool SurfaceFlinger::ComposeDisplay(s32* out_swap_interval, f32* out_compose_spe
     return true;
 }
 
+bool SurfaceFlinger::HasQueuedGameFrame(u64 display_id) {
+    auto* const display = this->FindDisplay(display_id);
+    if (!display) {
+        return false;
+    }
+    for (const auto& layer : display->stack.layers) {
+        if (layer && !layer->is_overlay && layer->visible && layer->buffer_item_consumer &&
+            layer->buffer_item_consumer->HasQueuedBuffer()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void SurfaceFlinger::CreateLayer(s32 consumer_binder_id) {
     auto binder = std::static_pointer_cast<android::BufferQueueConsumer>(
         m_server.TryGetBinder(consumer_binder_id));

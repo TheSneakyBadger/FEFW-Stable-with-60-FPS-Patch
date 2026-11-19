@@ -45,6 +45,7 @@ public:
 private:
     void ProcessVsync();
     void VsyncThread(std::stop_token token);
+    void VsyncGrace(std::stop_token token);
     s64 GetNextTicks() const;
     s64 GetFramePeriodNs() const;
 
@@ -61,6 +62,12 @@ private:
     f32 m_compose_speed_scale = 1.0f;
     /// NVIDIA Reflex paced the last vsync (FefwFrameGenHook).
     std::atomic<bool> m_reflex_paced{false};
+    /// Vsync grace (60 FPS mode): late game frames shown within the grace instead of a whole
+    /// vsync later, and ticks the game missed even so, for the log every 10 s.
+    u64 m_grace_shown{0};
+    u64 m_grace_missed{0};
+    s64 m_grace_wait_ns{0};
+    std::chrono::steady_clock::time_point m_grace_log_time{};
 };
 
 } // namespace Service::VI

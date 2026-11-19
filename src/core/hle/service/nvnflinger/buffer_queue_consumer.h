@@ -33,6 +33,8 @@ public:
     Status Connect(std::shared_ptr<IConsumerListener> consumer_listener, bool controlled_by_app);
     Status Disconnect();
     Status GetReleasedBuffers(u64* out_slot_mask);
+    /// Whether the producer has queued a buffer not acquired yet (Fortune's Eden: vsync grace).
+    bool HasQueuedBuffer() const;
 
     void Transact(u32 code, std::span<const u8> parcel_data, std::span<u8> parcel_reply,
                   u32 flags) override;

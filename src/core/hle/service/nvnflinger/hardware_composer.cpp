@@ -81,6 +81,7 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
     // Determine the number of vsync periods to wait before composing again.
     std::optional<s32> swap_interval{};
     bool has_acquired_buffer{};
+    m_last_showed_game_frame = false;
 
     // Acquire all necessary framebuffers.
     for (auto& layer : display.stack.layers) {
@@ -114,6 +115,9 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
         // If we acquired a new buffer, we need to present.
         if (result == CacheStatus::BufferAcquired) {
             has_acquired_buffer = true;
+            if (!layer->is_overlay && layer->visible) {
+                m_last_showed_game_frame = true;
+            }
         }
 
         const auto& buffer = m_framebuffers[consumer_id];

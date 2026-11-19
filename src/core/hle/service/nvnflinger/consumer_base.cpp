@@ -30,6 +30,10 @@ void ConsumerBase::Connect(bool controlled_by_app) {
     consumer->Connect(shared_from_this(), controlled_by_app);
 }
 
+bool ConsumerBase::HasQueuedBuffer() const {
+    return consumer && consumer->HasQueuedBuffer();
+}
+
 void ConsumerBase::Abandon() {
     LOG_DEBUG(Service_Nvnflinger, "called");
 

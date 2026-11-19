@@ -28,6 +28,8 @@ class ConsumerBase : public IConsumerListener, public std::enable_shared_from_th
 public:
     void Connect(bool controlled_by_app);
     void Abandon();
+    /// Whether a queued buffer is waiting to be acquired.
+    bool HasQueuedBuffer() const;
 
 protected:
     explicit ConsumerBase(std::shared_ptr<BufferQueueConsumer> consumer_);
