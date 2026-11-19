@@ -4114,46 +4114,51 @@ std::optional<TextureCacheRuntime::DiskCacheLoad> TextureCacheRuntime::PlanDiskC
     return load;
 }
 
-bool TextureCacheRuntime::UploadDiskCacheStandIn(Image& image, const DiskCacheLoad& load) {
+TextureCacheRuntime::StandIn TextureCacheRuntime::UploadDiskCacheStandIn(
+    Image& image, const DiskCacheLoad& load) {
     const ImageInfo& info = image.info;
-    if (info.type != ImageType::e2D || info.resources.layers != 1 || info.num_samples != 1) {
-        return false;
+    // 2D textures, arrays of them and cube maps (each layer filled like a texture of its own).
+    if (info.type != ImageType::e2D || info.num_samples != 1) {
+        return StandIn::Shape;
     }
     const std::optional<u32> color = FefwTextureDiskCache::StandInColor(load.key);
     if (!color) {
-        return false;
+        return StandIn::NoColor;
     }
     std::array<u8, 16> block{};
     const u32 block_bytes = FefwTextureDiskCache::SolidBlock(load.key.encoding, *color, block);
-    // One tile of 32x32 blocks of the colour (16 KiB at most), copied over every level a tile
-    // at a time: the copies all read the same bytes.
+    // One tile of 32x32 blocks of the colour (16 KiB at most), copied over every level of every
+    // layer a tile at a time: the copies all read the same bytes.
     static constexpr u32 TILE_BLOCKS = 32;
     static constexpr u32 TILE_TEXELS = TILE_BLOCKS * 4;
-    static constexpr size_t MAX_COPIES = 1024; // 4096x4096 and under
+    static constexpr size_t MAX_COPIES = 2048; // a 4096x4096 texture, or six 2048x2048 layers
     boost::container::small_vector<VideoCommon::BufferImageCopy, 16> copies;
     const u32 levels = static_cast<u32>(info.resources.levels);
-    for (u32 level = 0; level < levels; ++level) {
-        const u32 level_width = (std::max)(info.size.width >> level, 1U);
-        const u32 level_height = (std::max)(info.size.height >> level, 1U);
-        for (u32 y = 0; y < level_height; y += TILE_TEXELS) {
-            for (u32 x = 0; x < level_width; x += TILE_TEXELS) {
-                if (copies.size() >= MAX_COPIES) {
-                    return false;
+    const u32 layers = static_cast<u32>(info.resources.layers);
+    for (u32 layer = 0; layer < layers; ++layer) {
+        for (u32 level = 0; level < levels; ++level) {
+            const u32 level_width = (std::max)(info.size.width >> level, 1U);
+            const u32 level_height = (std::max)(info.size.height >> level, 1U);
+            for (u32 y = 0; y < level_height; y += TILE_TEXELS) {
+                for (u32 x = 0; x < level_width; x += TILE_TEXELS) {
+                    if (copies.size() >= MAX_COPIES) {
+                        return StandIn::TooBig;
+                    }
+                    copies.push_back({
+                        .buffer_offset = 0,
+                        .buffer_size = u64{TILE_BLOCKS} * TILE_BLOCKS * block_bytes,
+                        .buffer_row_length = TILE_TEXELS,
+                        .buffer_image_height = TILE_TEXELS,
+                        .image_subresource{
+                            .base_level = static_cast<s32>(level),
+                            .base_layer = static_cast<s32>(layer),
+                            .num_layers = 1,
+                        },
+                        .image_offset{static_cast<s32>(x), static_cast<s32>(y), 0},
+                        .image_extent{(std::min)(TILE_TEXELS, level_width - x),
+                                      (std::min)(TILE_TEXELS, level_height - y), 1},
+                    });
                 }
-                copies.push_back({
-                    .buffer_offset = 0,
-                    .buffer_size = u64{TILE_BLOCKS} * TILE_BLOCKS * block_bytes,
-                    .buffer_row_length = TILE_TEXELS,
-                    .buffer_image_height = TILE_TEXELS,
-                    .image_subresource{
-                        .base_level = static_cast<s32>(level),
-                        .base_layer = 0,
-                        .num_layers = 1,
-                    },
-                    .image_offset{static_cast<s32>(x), static_cast<s32>(y), 0},
-                    .image_extent{(std::min)(TILE_TEXELS, level_width - x),
-                                  (std::min)(TILE_TEXELS, level_height - y), 1},
-                });
             }
         }
     }
@@ -4163,7 +4168,7 @@ bool TextureCacheRuntime::UploadDiskCacheStandIn(Image& image, const DiskCacheLo
         std::memcpy(staging.mapped_span.data() + offset, block.data(), block_bytes);
     }
     image.UploadMemory(staging, copies);
-    return true;
+    return StandIn::Shown;
 }
 
 void TextureCacheRuntime::TranscodeAstcToBcn(

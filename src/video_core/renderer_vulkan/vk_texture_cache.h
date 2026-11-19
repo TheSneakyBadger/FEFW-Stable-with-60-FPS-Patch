@@ -83,9 +83,9 @@ public:
         std::span<const VideoCommon::SwizzleParameters> swizzles) const;
 
     /// Fills the image with its stand-in colour (FefwTextureDiskCache::StandInColor) while its
-    /// read is in flight, so draws needn't wait for it. False: it has none (or isn't a plain 2D
-    /// texture), and draws wait as before.
-    bool UploadDiskCacheStandIn(Image& image, const DiskCacheLoad& load);
+    /// read is in flight, so draws needn't wait for it. Otherwise (draws wait as before), why:
+    enum class StandIn { Shown, NoColor, Shape, TooBig };
+    StandIn UploadDiskCacheStandIn(Image& image, const DiskCacheLoad& load);
 
     void Finish();
 
