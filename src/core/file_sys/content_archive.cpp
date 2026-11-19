@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <algorithm>
 #include <cstring>
 #include <optional>
@@ -45,8 +46,20 @@ NCA::NCA(VirtualFile file_, const NCA* base_nca, bool allow_missing_base)
     // Ensure we have the proper key area keys to continue.
     const u8 master_key_id = MasterKeyIdForKeyGeneration(reader->GetKeyGeneration());
     if (!keys.HasKey(Core::Crypto::S128KeyType::KeyArea, master_key_id, reader->GetKeyIndex())) {
-        LOG_ERROR(Loader, "Cannot decrypt {}: keys for gen 0x{:02X}+ required (master_key_{:02x}).",
-                  file->GetName(), reader->GetKeyGeneration(), master_key_id);
+        // Fortune's Eden: firmware files in the NAND are opened at every start whether or not
+        // they're needed, and a .nup or loose files need no keys: without keys that was ~120 errors
+        // a session. The first one is a warning, the rest debug lines.
+        static std::atomic<u32> missing_key_count{0};
+        if (missing_key_count.fetch_add(1, std::memory_order_relaxed) == 0) {
+            LOG_WARNING(Loader,
+                        "Cannot decrypt {}: keys for gen 0x{:02X}+ required (master_key_{:02x}). "
+                        "Not needed for a .nup or loose files; further ones are logged at debug "
+                        "level.",
+                        file->GetName(), reader->GetKeyGeneration(), master_key_id);
+        } else {
+            LOG_DEBUG(Loader, "Cannot decrypt {}: keys for gen 0x{:02X}+ required (master_key_{:02x}).",
+                      file->GetName(), reader->GetKeyGeneration(), master_key_id);
+        }
         status = Loader::ResultStatus::ErrorMissingKeyAreaKey;
         return;
     }
