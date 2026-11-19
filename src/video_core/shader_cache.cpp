@@ -7,6 +7,7 @@
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -16,7 +17,7 @@
 
 #include "common/assert.h"
 #include "common/cityhash.h"
-#include "common/fs/path_util.h"
+#include "common/fs/fs_util.h"
 #include "common/logging.h"
 #include "shader_recompiler/frontend/maxwell/control_flow.h"
 #include "shader_recompiler/exception.h"
@@ -34,9 +35,11 @@
 namespace VideoCommon {
 
 namespace {
-/// Fortune's Eden: each distinct rejected native program (by its first bytes) once: logged with
-/// its reason, and saved with it to user/log/rejected-shaders/ (the program from its start, up to
-/// 64 KiB) so rejections can be fixed as they're found. Repeats are only counted.
+/// Fortune's Eden: each distinct rejected native program (by its first bytes) is logged once with
+/// its reason (which names the instruction and its words), so rejections can be fixed as they're
+/// found in players' logs. Repeats are only counted. EDEN_SHADER_DUMP=<folder> also saves each
+/// one there with its reason (the program from its start, up to 64 KiB): opt-in, as it is the
+/// game's own code.
 std::mutex rejected_seen_mutex;
 std::unordered_set<u64> rejected_seen;
 
@@ -52,6 +55,10 @@ void NoteDistinctRejection(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, 
     }
     LOG_ERROR(HW_GPU, "Native shader {:016x} rejected ({} distinct so far): {}", hash, distinct,
               error);
+    const char* const dump_directory = std::getenv("EDEN_SHADER_DUMP");
+    if (!dump_directory || !*dump_directory) {
+        return;
+    }
     size_t size = 64 * 1024;
     while (size >= 16 && !gpu_memory.IsFullyMappedRange(gpu_addr, size)) {
         size /= 2;
@@ -62,7 +69,7 @@ void NoteDistinctRejection(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, 
     std::vector<u8> program(size);
     gpu_memory.ReadBlockUnsafe(gpu_addr, program.data(), size);
     std::error_code fs_error;
-    const auto folder = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "rejected-shaders";
+    const std::filesystem::path folder{Common::FS::ToU8String(dump_directory)};
     std::filesystem::create_directories(folder, fs_error);
     if (fs_error) {
         return;
