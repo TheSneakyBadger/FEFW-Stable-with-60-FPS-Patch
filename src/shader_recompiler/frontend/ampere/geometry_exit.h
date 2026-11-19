@@ -199,6 +199,16 @@ GeometryExitEnvelope AnalyzeGeometryExit(const Code& code) {
             read_predicate(bits(index, 87, 3));
             write_predicate(bits(index, 81, 3));
             write_predicate(bits(index, 84, 3));
+        } else if ((family == 0x020 || family == 0x021) && form != 0) {
+            // FMUL / FADD: a and b (a register, immediate, constant buffer or uniform), writes
+            // Rd. Fortune's Weave's geometry programs have FMUL with a constant buffer (0xa20)
+            // before the exit setup; without it here their draws were dropped.
+            read_sources(false);
+            write_register(bits(index, 16, 8));
+        } else if (family == 0x023 && form != 0) {
+            // FFMA: a * b + c, writes Rd.
+            read_sources(true);
+            write_register(bits(index, 16, 8));
         } else {
             return fail(index, "native instruction before exit setup state is dead");
         }
