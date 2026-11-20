@@ -2483,12 +2483,15 @@ void MainWindow::OnEmulationStopped() {
 /// is nothing newer.
 void MainWindow::CheckForFefwUpdateNow() {
 #ifndef _WIN32
-    QMessageBox::information(
-        this, tr("Check for Updates"),
-        tr("This is a Linux test build of Fortune's Eden (%1). It doesn't update itself: new "
-           "Linux builds are downloaded by hand.")
-            .arg(QString::fromUtf8(Common::FefwVersion)));
-    return;
+    // Linux: the AppImage updates itself (as at startup); the other builds are downloaded by hand.
+    if (qEnvironmentVariableIsEmpty("APPIMAGE")) {
+        QMessageBox::information(
+            this, tr("Check for Updates"),
+            tr("This Linux build of Fortune's Eden (%1) isn't an AppImage, so it doesn't update "
+               "itself: new builds are downloaded by hand from the releases page.")
+                .arg(QString::fromUtf8(Common::FefwVersion)));
+        return;
+    }
 #endif
     if (fefw_update_watcher.isRunning()) {
         fefw_manual_update_check = true;

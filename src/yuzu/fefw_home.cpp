@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -18,7 +19,9 @@
 #include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QEvent>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
@@ -132,23 +135,31 @@ QString QualityName(Settings::UpscalerQuality quality, bool dlss) {
     return {};
 }
 
-/// Depth-first search of the game list's model (folders hold games) for the program.
-QStandardItem* FindGame(QStandardItem* parent, u64 program_id) {
+/// Every copy of the program in the game list (a modded copy as well as the plain one), each path
+/// once, in the list's order.
+void FindGames(QStandardItem* parent, u64 program_id, std::vector<QStandardItem*>& out) {
     for (int row = 0; row < parent->rowCount(); ++row) {
         QStandardItem* const item = parent->child(row, 0);
         if (!item) {
             continue;
         }
         const QVariant id = item->data(GameListItemPath::ProgramIdRole);
-        if (id.isValid() && id.toULongLong() == program_id &&
-            !item->data(GameListItemPath::FullPathRole).toString().isEmpty()) {
-            return item;
+        const QString path = item->data(GameListItemPath::FullPathRole).toString();
+        if (id.isValid() && id.toULongLong() == program_id && !path.isEmpty() &&
+            std::ranges::none_of(out, [&](QStandardItem* other) {
+                return other->data(GameListItemPath::FullPathRole).toString() == path;
+            })) {
+            out.push_back(item);
         }
-        if (QStandardItem* const found = FindGame(item, program_id)) {
-            return found;
-        }
+        FindGames(item, program_id, out);
     }
-    return nullptr;
+}
+
+/// How a copy is named in the list: its folder and file (an extracted game: its folder).
+QString CopyName(const QString& path) {
+    const QFileInfo info{path};
+    const QString folder = info.dir().dirName();
+    return info.isDir() ? info.fileName() : QStringLiteral("%1 / %2").arg(folder, info.fileName());
 }
 
 } // Anonymous namespace
@@ -721,6 +732,24 @@ void FefwHome::BuildGamePage(QWidget* page) {
     column->addWidget(version_label);
     column->addSpacing(18);
     column->addWidget(play_button, 0, Qt::AlignHCenter);
+    copy_box = new QComboBox(content);
+    copy_box->setFixedWidth(280);
+    copy_box->setToolTip(tr("More than one copy of Fortune's Weave was found: the one Play starts"));
+    copy_box->hide();
+    column->addSpacing(8);
+    column->addWidget(copy_box, 0, Qt::AlignHCenter);
+    connect(copy_box, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index < 0) {
+            return;
+        }
+        game_path = copy_box->itemData(index).toString();
+        // Remembered as the copy last chosen (the next start picks it again).
+        UISettings::values.recent_files.removeAll(game_path);
+        UISettings::values.recent_files.prepend(game_path);
+        if (last_model) {
+            Refresh(*last_model);
+        }
+    });
     column->addSpacing(18);
     QHBoxLayout* const centre = new QHBoxLayout;
     centre->addStretch(1);
@@ -923,7 +952,38 @@ bool FefwHome::eventFilter(QObject* object, QEvent* event) {
 }
 
 void FefwHome::Refresh(const QStandardItemModel& model) {
-    QStandardItem* const item = FindGame(model.invisibleRootItem(), TitleId);
+    last_model = &model;
+    std::vector<QStandardItem*> copies;
+    FindGames(model.invisibleRootItem(), TitleId, copies);
+    QStandardItem* item = copies.empty() ? nullptr : copies.front();
+    if (copies.size() > 1) {
+        // The copy chosen before (or last played) if it's still there, else the first found.
+        const auto path_of = [](QStandardItem* copy) {
+            return copy->data(GameListItemPath::FullPathRole).toString();
+        };
+        const auto found = [&](const QString& path) {
+            return std::ranges::find_if(copies,
+                                        [&](QStandardItem* copy) { return path_of(copy) == path; });
+        };
+        auto chosen = found(game_path);
+        for (const QString& recent : UISettings::values.recent_files) {
+            if (chosen != copies.end()) {
+                break;
+            }
+            chosen = found(recent);
+        }
+        if (chosen != copies.end()) {
+            item = *chosen;
+        }
+        const QSignalBlocker blocker{copy_box};
+        copy_box->clear();
+        for (QStandardItem* copy : copies) {
+            copy_box->addItem(CopyName(path_of(copy)), path_of(copy));
+            copy_box->setItemData(copy_box->count() - 1, path_of(copy), Qt::ToolTipRole);
+        }
+        copy_box->setCurrentIndex(copy_box->findData(path_of(item)));
+    }
+    copy_box->setVisible(copies.size() > 1);
     if (!item) {
         game_path.clear();
         setup_text->setText(
