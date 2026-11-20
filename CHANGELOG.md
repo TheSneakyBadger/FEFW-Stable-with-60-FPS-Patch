@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.7.5.12
+
+Textures no longer stay a flat colour for long, a choice of which copy of the game to play, and more detail in the log for the remaining hitches.
+
+- **New textures don't stay a flat colour** ([#83](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/83)). Since v1.7.5.11, a texture seen for the first time shows its average colour while it waits to be converted, a few a frame. When a scene brought in hundreds at once, big ones (a character's clothes in a dialogue close-up) could stay flat for seconds. Now any texture that has waited a quarter of a second is converted straight away.
+- **Choose which copy of the game Play starts.** With more than one copy of Fortune's Weave in your game folders (a modded copy beside the plain one, say), a list under Play picks which one it starts, and remembers your choice. Before, Play always started the first one found.
+- **Check for Updates works in the Linux AppImage.** The button said Linux builds don't update themselves, although the AppImage updates itself at startup. It now runs the same check.
+- **Long frames in the log.** Each frame that takes 0.2 s or more gets a line saying which of the game's threads used the CPU in that time and how long the game's file reads, saves and file opens took on your PC, to find what's behind the remaining short hitches at battle and scene transitions. `EDEN_LONG_FRAMES=0` turns it off.
+- **A rare crash in the code translator now logs where it happened**, so a log alone is enough to find its cause.
+- The compiled-code list that comes with Fortune's Eden grew to 544,000 blocks on the main core. Thanks to **Sunzong236** again.
+
+Thanks to **KawaseMina**, **Donlot** and **Sunzong236** for the reports behind these.
+
+Everything else is as in [v1.7.5.11](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.11).
+
 ## v1.7.5.11
 
 Much less stutter the first time you enter an area, even in a brand-new install.
