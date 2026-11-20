@@ -71,6 +71,10 @@ void Store(const Key& key, std::vector<u8> data);
 /// or the list that comes with Fortune's Eden. Any thread.
 [[nodiscard]] std::optional<u32> GuestColor(const Key& key);
 
+/// The name colours.bin keeps this texture's colour under: by the game's texture alone (the
+/// key without what it was encoded to), the same on every PC. For FefwTextureScan.
+[[nodiscard]] u64 GuestName(const Key& key);
+
 /// One compressed block of a single colour (rgba as StandInColor), for this encoding (1: BC1,
 /// 8 bytes; 3: BC3 and 7: BC7, 16 bytes). Returns the block's size.
 u32 SolidBlock(u32 encoding, u32 rgba, std::span<u8, 16> block);

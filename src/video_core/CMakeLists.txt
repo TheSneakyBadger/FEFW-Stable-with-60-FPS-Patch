@@ -65,6 +65,8 @@ add_library(video_core STATIC
     fsr.cpp
     fsr.h
     fefw_texture_disk_cache.cpp
+    fefw_texture_scan.cpp
+    fefw_texture_scan.h
     fefw_texture_disk_cache.h
     host1x/codecs/decoder.cpp
     host1x/codecs/decoder.h

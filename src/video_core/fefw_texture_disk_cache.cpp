@@ -798,6 +798,10 @@ Counts TakeCounts() {
                   static_cast<u32>(colors.size())};
 }
 
+u64 GuestName(const Key& key) {
+    return GuestNameOf(key);
+}
+
 std::optional<u32> GuestColor(const Key& key) {
     if (!StandInsAllowed()) {
         return std::nullopt;
