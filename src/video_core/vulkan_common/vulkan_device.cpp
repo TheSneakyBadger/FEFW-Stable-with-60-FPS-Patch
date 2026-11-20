@@ -1731,6 +1731,24 @@ std::pair<u64, u64> Device::GetDeviceMemoryBudget() const {
     return {budget, usage};
 }
 
+Device::MemoryResidency Device::GetMemoryResidency() const {
+    MemoryResidency result{};
+    const VkPhysicalDeviceMemoryProperties* heap_properties{};
+    vmaGetMemoryProperties(allocator, &heap_properties);
+    if (heap_properties == nullptr) {
+        return result;
+    }
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    for (u32 heap = 0; heap < heap_properties->memoryHeapCount; ++heap) {
+        const bool card = (heap_properties->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+        (card ? result.card_allocated : result.system_allocated) +=
+            budgets[heap].statistics.blockBytes;
+        (card ? result.card_in_use : result.system_in_use) += budgets[heap].usage;
+    }
+    return result;
+}
+
 void Device::CollectPhysicalMemoryInfo() {
     // Calculate limits using memory budget
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};

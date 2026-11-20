@@ -223,6 +223,8 @@ add_library(video_core STATIC
     renderer_vulkan/vk_update_descriptor.h
     vulkan_common/vulkan_debug_callback.cpp
     vulkan_common/vulkan_debug_callback.h
+    vulkan_common/fefw_gpu_report.cpp
+    vulkan_common/fefw_gpu_report.h
     vulkan_common/vulkan_device.cpp
     vulkan_common/vulkan_device.h
     vulkan_common/vulkan_instance.cpp

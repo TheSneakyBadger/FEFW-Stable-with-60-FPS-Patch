@@ -989,6 +989,16 @@ FN_MAX_LIMIT_LIST
     /// this program's. 0 and 0 without VK_EXT_memory_budget.
     std::pair<u64, u64> GetDeviceMemoryBudget() const;
 
+    /// Fortune's Eden: what this program has allocated in the card's heaps and in system memory
+    /// heaps, and what the driver counts as in use in each (for the 10 s GPU report). Any thread.
+    struct MemoryResidency {
+        u64 card_allocated;
+        u64 card_in_use;
+        u64 system_allocated;
+        u64 system_in_use;
+    };
+    MemoryResidency GetMemoryResidency() const;
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
