@@ -761,6 +761,7 @@ private:
     /// once (for the log).
     u32 deferred_converts{};
     u32 deferred_converts_most{};
+    u32 deferred_converts_overdue{}; ///< converted at their deadline, past the frame's budget
     u32 disk_cache_fallback_frames{};
     /// For the log: the time spent hashing guest bytes, and draws waiting on reads.
     u64 disk_hash_ns{};
