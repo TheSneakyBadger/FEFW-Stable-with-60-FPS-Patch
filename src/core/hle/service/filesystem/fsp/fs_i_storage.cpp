@@ -18,6 +18,7 @@
 #include "core/file_sys/errors.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
+#include "core/hle/service/filesystem/fefw_fs_stats.h"
 
 namespace Service::FileSystem {
 
@@ -187,7 +188,12 @@ Result IStorage::Read(
     R_UNLESS(offset >= 0, FileSys::ResultInvalidOffset);
 
     // Read the data from the Storage backend
-    backend->Read(out_bytes.data(), length, offset);
+    {
+        const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().reads, FefwFsStats::Get().read_ns};
+        FefwFsStats::Get().read_bytes.fetch_add(static_cast<u64>(length),
+                                                std::memory_order_relaxed);
+        backend->Read(out_bytes.data(), length, offset);
+    }
 
     if (map_ranges != nullptr && !map_ranges->empty() && length > 0) {
         const u64 begin = static_cast<u64>(offset);

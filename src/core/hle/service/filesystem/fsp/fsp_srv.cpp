@@ -36,6 +36,7 @@
 #include "core/hle/service/filesystem/fsp/fs_i_multi_commit_manager.h"
 #include "core/hle/service/filesystem/fsp/fs_i_save_data_info_reader.h"
 #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
+#include "core/hle/service/filesystem/fefw_fs_stats.h"
 #include "core/hle/service/filesystem/fsp/fsp_srv.h"
 #include "core/hle/service/filesystem/fsp/save_data_transfer_prohibiter.h"
 #include "core/hle/service/filesystem/romfs_controller.h"
@@ -271,6 +272,7 @@ Result FSP_SRV::OpenSaveDataFileSystem(OutInterface<IFileSystem> out_interface,
                                        FileSys::SaveDataSpaceId space_id,
                                        FileSys::SaveDataAttribute attribute) {
     LOG_INFO(Service_FS, "called.");
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().opens, FefwFsStats::Get().open_ns};
 
     FileSys::VirtualDir dir{};
     R_TRY(save_data_controller->OpenSaveData(&dir, space_id, attribute));
