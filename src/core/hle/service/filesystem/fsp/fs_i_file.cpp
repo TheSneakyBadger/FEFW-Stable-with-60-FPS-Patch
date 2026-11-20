@@ -7,6 +7,7 @@
 #include "core/file_sys/errors.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/fsp/fs_i_file.h"
+#include "core/hle/service/filesystem/fefw_fs_stats.h"
 
 namespace Service::FileSystem {
 
@@ -33,6 +34,9 @@ Result IFile::Read(
     LOG_DEBUG(Service_FS, "called, option={}, offset={:#x}, length={}", option.value, offset,
               size);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().reads, FefwFsStats::Get().read_ns};
+    FefwFsStats::Get().read_bytes.fetch_add(static_cast<u64>(size > 0 ? size : 0),
+                                            std::memory_order_relaxed);
     // Read the data from the Storage backend
     R_RETURN(
         backend->Read(reinterpret_cast<size_t*>(out_size.Get()), offset, out_buffer.data(), size));
@@ -44,11 +48,15 @@ Result IFile::Write(
     LOG_DEBUG(Service_FS, "called, option={}, offset={:#x}, length={}", option.value, offset,
               size);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().writes, FefwFsStats::Get().write_ns};
+    FefwFsStats::Get().write_bytes.fetch_add(static_cast<u64>(size > 0 ? size : 0),
+                                             std::memory_order_relaxed);
     R_RETURN(backend->Write(offset, buffer.data(), size, option));
 }
 
 Result IFile::Flush() {
     LOG_DEBUG(Service_FS, "called");
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().flushes, FefwFsStats::Get().flush_ns};
 
     R_RETURN(backend->Flush());
 }

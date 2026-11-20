@@ -10,6 +10,7 @@
 #include "core/hle/service/filesystem/fsp/fs_i_directory.h"
 #include "core/hle/service/filesystem/fsp/fs_i_file.h"
 #include "core/hle/service/filesystem/fsp/fs_i_filesystem.h"
+#include "core/hle/service/filesystem/fefw_fs_stats.h"
 
 namespace Service::FileSystem {
 
@@ -43,12 +44,14 @@ Result IFileSystem::CreateFile(const InLargeData<FileSys::Sf::Path, BufferAttr_H
                                s32 option, s64 size) {
     LOG_DEBUG(Service_FS, "called. file={}, option={:#x}, size={:#08x}", path->str, option, size);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().opens, FefwFsStats::Get().open_ns};
     R_RETURN(backend->CreateFile(FileSys::Path(path->str), size));
 }
 
 Result IFileSystem::DeleteFile(const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
     LOG_DEBUG(Service_FS, "called. file={}", path->str);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().opens, FefwFsStats::Get().open_ns};
     R_RETURN(backend->DeleteFile(FileSys::Path(path->str)));
 }
 
@@ -85,6 +88,7 @@ Result IFileSystem::RenameFile(
     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> new_path) {
     LOG_DEBUG(Service_FS, "called. file '{}' to file '{}'", old_path->str, new_path->str);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().opens, FefwFsStats::Get().open_ns};
     R_RETURN(backend->RenameFile(FileSys::Path(old_path->str), FileSys::Path(new_path->str)));
 }
 
@@ -101,6 +105,7 @@ Result IFileSystem::OpenFile(OutInterface<IFile> out_interface,
                              u32 mode) {
     LOG_DEBUG(Service_FS, "called. file={}, mode={}", path->str, mode);
 
+    const FefwFsStats::Timer fefw_timer{FefwFsStats::Get().opens, FefwFsStats::Get().open_ns};
     FileSys::VirtualFile vfs_file{};
     R_TRY(backend->OpenFile(&vfs_file, FileSys::Path(path->str),
                             static_cast<FileSys::OpenMode>(mode)));

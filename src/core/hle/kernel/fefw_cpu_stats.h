@@ -15,4 +15,9 @@ namespace FefwCpuStats {
 /// Call on each presented frame with the game's presenting (rendering) thread.
 void MaybeReport(const Kernel::KThread* render_thread);
 
+/// Also on each presented frame: when 200 ms or more passed since the last one, logs which game
+/// threads used the CPU in that time and what the game's file system calls took on the PC, for
+/// hitches with nothing graphical behind them (#63). EDEN_LONG_FRAMES=0: none.
+void OnFrame(const Kernel::KThread* render_thread);
+
 } // namespace FefwCpuStats

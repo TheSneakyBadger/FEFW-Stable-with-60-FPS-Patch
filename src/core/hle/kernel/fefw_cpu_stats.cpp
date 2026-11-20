@@ -19,6 +19,7 @@
 #include "core/hle/kernel/k_light_lock.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
+#include "core/hle/service/filesystem/fefw_fs_stats.h"
 #include "core/memory.h"
 
 namespace FefwCpuStats {
@@ -78,7 +79,133 @@ std::string ReadName(Kernel::KProcess& process, const Kernel::KThread& thread) {
     return {};
 }
 
+struct FrameState {
+    std::mutex mutex;
+    Clock::time_point last{};
+    u64 process_id = ~0ULL;
+    std::unordered_map<u64, s64> cpu;           // thread id -> ticks at the last frame
+    std::unordered_map<u64, std::string> names; // thread id -> name, read once
+    u64 fs[10]{};                               // the file system counters at the last frame
+    u32 logged = 0;
+    Clock::time_point last_logged{};
+};
+
+FrameState& GetFrameState() {
+    static FrameState state;
+    return state;
+}
+
+void ReadFs(u64 (&out)[10]) {
+    auto& c = FefwFsStats::Get();
+    const std::atomic<u64>* fields[10]{&c.reads,   &c.read_bytes, &c.read_ns,  &c.writes,
+                                       &c.write_bytes, &c.write_ns, &c.flushes, &c.flush_ns,
+                                       &c.opens,   &c.open_ns};
+    for (int i = 0; i < 10; ++i) {
+        out[i] = fields[i]->load(std::memory_order_relaxed);
+    }
+}
+
+bool LongFramesEnabled() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_LONG_FRAMES");
+        return !(value && value[0] == '0');
+    }();
+    return enabled;
+}
+
 } // Anonymous namespace
+
+void OnFrame(const Kernel::KThread* render_thread) {
+    if (!LongFramesEnabled() || render_thread == nullptr) {
+        return;
+    }
+    Kernel::KProcess* const process = render_thread->GetOwnerProcess();
+    if (process == nullptr) {
+        return;
+    }
+    auto& state = GetFrameState();
+    std::unique_lock lock{state.mutex, std::try_to_lock};
+    if (!lock.owns_lock()) {
+        return;
+    }
+    const auto now = Clock::now();
+    const double gap_ms =
+        std::chrono::duration<double, std::milli>(now - state.last).count();
+    const bool fresh = state.process_id != process->GetProcessId() ||
+                       state.last == Clock::time_point{};
+    // Only a long frame (up to 10 s: longer is a pause, a menu or the PC sleeping) is
+    // reported, at most once a second and 300 times a session.
+    const bool report = !fresh && gap_ms >= 200.0 && gap_ms <= 10000.0 && state.logged < 300 &&
+                        now - state.last_logged >= std::chrono::seconds{1};
+    if (state.process_id != process->GetProcessId()) {
+        state.process_id = process->GetProcessId();
+        state.cpu.clear();
+        state.names.clear();
+        state.logged = 0;
+    }
+    struct Row {
+        u64 id;
+        s64 ticks;
+        s32 core;
+    };
+    std::vector<Row> rows;
+    {
+        Kernel::KScopedLightLock list_lock{process->GetListLock()};
+        for (auto& thread : process->GetThreadList()) {
+            if (thread.GetState() == Kernel::ThreadState::Terminated) {
+                continue;
+            }
+            const u64 id = thread.GetThreadId();
+            const s64 cpu = thread.GetCpuTime();
+            if (report) {
+                const auto last = state.cpu.find(id);
+                const s64 delta =
+                    std::max<s64>(0, cpu - (last != state.cpu.end() ? last->second : cpu));
+                rows.push_back({id, delta, thread.GetActiveCore()});
+                if (delta > 0 && !state.names.contains(id)) {
+                    state.names[id] = ReadName(*process, thread);
+                }
+            }
+            state.cpu[id] = cpu;
+        }
+    }
+    u64 fs[10];
+    ReadFs(fs);
+    if (report) {
+        std::ranges::sort(rows, [](const Row& a, const Row& b) { return a.ticks > b.ticks; });
+        const auto ms = [](s64 ticks) {
+            return static_cast<double>(ticks) * 1000.0 / static_cast<double>(Core::Hardware::CNTFREQ);
+        };
+        double total = 0.0;
+        for (const Row& row : rows) {
+            total += ms(row.ticks);
+        }
+        std::string busiest;
+        for (size_t i = 0; i < rows.size() && i < 6; ++i) {
+            if (ms(rows[i].ticks) < 5.0) {
+                break;
+            }
+            const auto& name = state.names[rows[i].id];
+            busiest += fmt::format("{}{} {:.0f} ms (core {})", busiest.empty() ? "" : ", ",
+                                   name.empty() ? fmt::format("thread {}", rows[i].id) : name,
+                                   ms(rows[i].ticks), rows[i].core);
+        }
+        u64 d[10];
+        for (int i = 0; i < 10; ++i) {
+            d[i] = fs[i] - state.fs[i];
+        }
+        LOG_INFO(Kernel,
+                 "Long frame: {:.0f} ms since the last one; game threads ran {:.0f} ms in all, "
+                 "busiest: {}; the game's files on the PC: {} reads ({} KiB, {:.0f} ms), {} writes "
+                 "({} KiB, {:.0f} ms), {} flushes ({:.0f} ms), {} opens or mounts ({:.0f} ms)",
+                 gap_ms, total, busiest.empty() ? "none" : busiest, d[0], d[1] >> 10, d[2] / 1e6,
+                 d[3], d[4] >> 10, d[5] / 1e6, d[6], d[7] / 1e6, d[8], d[9] / 1e6);
+        ++state.logged;
+        state.last_logged = now;
+    }
+    std::copy(std::begin(fs), std::end(fs), std::begin(state.fs));
+    state.last = now;
+}
 
 void MaybeReport(const Kernel::KThread* render_thread) {
     const double interval = IntervalSeconds();

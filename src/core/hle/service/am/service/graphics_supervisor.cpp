@@ -1271,6 +1271,7 @@ private:
         FefwWaitStats::MarkThread(FefwWaitStats::Role::Render, &ctx.GetThread());
         FefwWaitStats::MaybeReport();
         FefwCpuStats::MaybeReport(&ctx.GetThread());
+        FefwCpuStats::OnFrame(&ctx.GetThread());
         const auto* packet = ctx.CommandBuffer();
         const u64 token = u64{packet[2]} | (u64{packet[3]} << 32);
         RefreshReleasedBuffers();
