@@ -4,6 +4,9 @@
 #include <QApplication>
 #include "startup_checks.h"
 
+#include <cstring>
+#include <filesystem>
+
 #if YUZU_ROOM
 #include <cstring>
 #include "dedicated_room/yuzu_room.h"
@@ -24,6 +27,7 @@
 
 #include "main_window.h"
 #include "fefw_restart.h"
+#include "video_core/fefw_texture_scan.h"
 
 #ifdef _WIN32
 #include <cstdlib>
@@ -84,6 +88,12 @@ static Qt::HighDpiScaleFactorRoundingPolicy GetHighDpiRoundingPolicy() {
 }
 
 int main(int argc, char* argv[]) {
+    // Fortune's Eden: --scan-textures ROMFS OUT_FILE works out the texture colours list from the
+    // game's extracted files (FefwTextureScan), then exits; nothing else starts.
+    if (argc == 4 && std::strcmp(argv[1], "--scan-textures") == 0) {
+        return FefwTextureScan::Run(std::filesystem::u8path(argv[2]),
+                                    std::filesystem::u8path(argv[3]));
+    }
     // Started again by the previous Fortune's Eden (a game with NVIDIA DLSS needs a new one):
     // waits for it to have gone, so this one gets the log and the user folder's files to itself.
     FefwRestart::WaitForPrevious();
