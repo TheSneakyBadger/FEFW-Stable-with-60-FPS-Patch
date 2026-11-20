@@ -101,4 +101,8 @@ private:
     QSlider* paper_white{};
     QLabel* paper_white_label{};
     QString game_path;
+    /// More than one copy of the game found (a modded copy beside the plain one): which to play,
+    /// under Play. The copy last played is chosen first (the recent files).
+    QComboBox* copy_box{};
+    const QStandardItemModel* last_model{};
 };
