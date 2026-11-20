@@ -429,7 +429,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.10 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.11 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -501,9 +501,12 @@ Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and t
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
 
-New in v1.7.5.10:
-- Texture colours are saved every minute and the compiled-code list after the first minute,
-  so they're kept even if Fortune's Eden closes abruptly.
+New in v1.7.5.11:
+- New areas no longer hitch while their textures are converted: each shows its average colour
+  for a moment and is converted a few a frame (texture-colours: one colour per texture).
+- A bigger compiled-code list (later-game battles), and your own texture cache's colours added
+  on the first start.
+- Texture colours and the compiled-code list are saved during play, and a GPU line in the log.
 
 New in v1.7.5.9:
 - Less stutter in a new install's first session: the game code compiled while testing comes
