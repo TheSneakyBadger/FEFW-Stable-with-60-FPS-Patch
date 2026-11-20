@@ -2650,18 +2650,21 @@ void TextureCache<P>::TickAsyncDecode() {
                      "with no colour yet, {} not 2D, {} too big, {} aliased); draws waited "
                      "{:.0f} ms for the others; {} converted on the GPU instead (not ready in "
                      "time); {} new ones shown in their colour while waiting to be converted ({} "
-                     "waiting at most); {:.0f} ms hashing {} MiB of the game's textures",
+                     "waiting at most, {} converted at their quarter-second deadline); {:.0f} ms "
+                     "hashing {} MiB of the game's textures",
                      reads, reads ? static_cast<double>(latency_ns) / reads / 1e6 : 0.0,
                      disk_cache_stand_ins, disk_cache_no_stand_in[0], disk_cache_no_stand_in[1],
                      disk_cache_no_stand_in[2], disk_cache_no_stand_in[3],
                      static_cast<double>(disk_wait_ns) / 1e6,
                      disk_cache_fallbacks, deferred_converts, deferred_converts_most,
+                     deferred_converts_overdue,
                      static_cast<double>(disk_hash_ns) / 1e6,
                      disk_hash_bytes >> 20);
         }
         disk_cache_stand_ins = 0;
         deferred_converts = 0;
         deferred_converts_most = 0;
+        deferred_converts_overdue = 0;
         std::ranges::fill(disk_cache_no_stand_in, 0U);
         disk_cache_fallbacks = 0;
         disk_cache_fallback_frames = 0;
@@ -2676,9 +2679,13 @@ void TextureCache<P>::TickAsyncDecode() {
     static constexpr u64 DISK_CACHE_UPLOAD_BUDGET = 32ULL << 20;
     u64 disk_cache_uploaded = 0;
     // New textures waiting to be converted (showing their colour): at most 12 a frame and 16
-    // million texels (the first level of each), oldest first.
+    // million texels (the first level of each), oldest first; one that has waited a quarter of a
+    // second is converted whatever the budget, so none stays a flat colour long enough to be
+    // noticed (a character's clothes in a dialogue close-up, #83).
     static constexpr u32 CONVERT_PER_FRAME = 12;
     static constexpr u64 CONVERT_TEXELS_PER_FRAME = 16ULL << 20;
+    static constexpr auto CONVERT_DEADLINE = std::chrono::milliseconds{250};
+    const auto convert_now = std::chrono::steady_clock::now();
     u32 converted = 0;
     u64 converted_texels = 0;
     u32 waiting_to_convert = 0;
@@ -2695,8 +2702,10 @@ void TextureCache<P>::TickAsyncDecode() {
             Image& image = slot_images[async_decode->image_id];
             const u64 texels = u64{image.info.size.width} * image.info.size.height *
                                static_cast<u64>(image.info.resources.layers);
-            if (converted >= CONVERT_PER_FRAME ||
-                (converted != 0 && converted_texels + texels > CONVERT_TEXELS_PER_FRAME)) {
+            const bool overdue = convert_now - async_decode->queued_at >= CONVERT_DEADLINE;
+            if (!overdue && (converted >= CONVERT_PER_FRAME ||
+                             (converted != 0 &&
+                              converted_texels + texels > CONVERT_TEXELS_PER_FRAME))) {
                 ++waiting_to_convert;
                 lock.unlock();
                 ++i;
@@ -2704,6 +2713,7 @@ void TextureCache<P>::TickAsyncDecode() {
             }
             ++converted;
             converted_texels += texels;
+            deferred_converts_overdue += overdue ? 1 : 0;
             image.flags &= ~ImageFlagBits::IsDecoding;
             lock.unlock();
             i = async_decodes.erase(i);
