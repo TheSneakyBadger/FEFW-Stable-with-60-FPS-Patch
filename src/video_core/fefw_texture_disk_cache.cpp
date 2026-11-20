@@ -83,6 +83,7 @@ std::deque<Job> queue;
 std::unordered_set<u64> queued;
 u64 queued_bytes = 0;
 std::thread worker;
+std::thread color_pass;
 std::atomic<u32> loaded_count{0};
 std::atomic<u64> read_ns{0};
 std::atomic<u64> read_max_ns{0};
@@ -328,6 +329,94 @@ void TrimLocked() {
     }
 }
 
+/// Once per install, on a thread of its own: the colours of the textures already in the cache,
+/// by game texture too. Before v1.7.5.10 they were kept by entry only (and an install whose
+/// sessions ended abruptly kept none), so the whole cache counts towards colours.bin (the list
+/// shared with other players) at once, not only as each texture is loaded again. An entry with a
+/// colour known gives it from its header (its key); one without is read and its colour worked
+/// out. colours-by-texture in the folder marks it done.
+void ColorPassLoop() {
+    const fs::path marker = folder / "colours-by-texture";
+    std::error_code ec;
+    if (fs::exists(marker, ec)) {
+        return;
+    }
+    std::vector<std::pair<u64, std::optional<u32>>> entries;
+    {
+        std::scoped_lock lock{mutex};
+        entries.reserve(index.size());
+        for (const auto& [name, entry] : index) {
+            const auto known = colors.find(name);
+            entries.emplace_back(name, known != colors.end() ? std::optional<u32>{known->second}
+                                                             : std::nullopt);
+        }
+    }
+    const auto start = std::chrono::steady_clock::now();
+    std::size_t added = 0;
+    std::size_t worked_out = 0;
+    std::vector<u8> compressed;
+    std::vector<u8> raw;
+    for (const auto& [name, known] : entries) {
+        {
+            std::scoped_lock lock{mutex};
+            if (stopping) {
+                return;
+            }
+        }
+        std::ifstream file{PathOf(name), std::ios::binary};
+        Header header{};
+        if (!file.read(reinterpret_cast<char*>(&header), sizeof(header)) ||
+            header.magic != MAGIC || header.version != VERSION || NameOf(header.key) != name) {
+            continue;
+        }
+        std::optional<u32> color = known;
+        if (!color) {
+            if (header.compressed_size >= (1ULL << 31) || header.raw_size >= (1ULL << 31)) {
+                continue;
+            }
+            compressed.resize(header.compressed_size);
+            raw.resize(header.raw_size);
+            if (!file.read(reinterpret_cast<char*>(compressed.data()),
+                           static_cast<std::streamsize>(compressed.size())) ||
+                Common::Compression::DecompressDataZSTD(compressed, raw) != raw.size()) {
+                continue;
+            }
+            color = ComputeColor(header.key, raw);
+            if (!color) {
+                continue;
+            }
+            ++worked_out;
+            // A short pause after each read and decode: this runs while the game does.
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        std::scoped_lock lock{mutex};
+        if (!index.contains(name)) {
+            continue;
+        }
+        if (!known) {
+            colors.try_emplace(name, *color);
+        }
+        if (guest_colors.size() < MAX_GUEST_COLORS &&
+            guest_colors.try_emplace(GuestNameOf(header.key), *color).second) {
+            ++added;
+        }
+        colors_dirty = true;
+    }
+    std::scoped_lock lock{mutex};
+    if (stopping) {
+        return;
+    }
+    SaveStandInsLocked();
+    std::ofstream{marker, std::ios::trunc} << "1\n";
+    LOG_INFO(Render_Vulkan,
+             "Texture colours: {} added from the {} textures already in the cache ({} of them "
+             "read to work out their colour) in {} s",
+             added, entries.size(), worked_out,
+             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
+                                                              start)
+                 .count());
+}
+
 void WorkerLoop() {
     std::unique_lock lock{mutex};
     while (true) {
@@ -571,6 +660,7 @@ void Start(u64 video_memory) {
     enabled = true;
     stopping = false;
     worker = std::thread{WorkerLoop};
+    color_pass = std::thread{ColorPassLoop};
     LOG_INFO(Render_Vulkan,
              "Texture cache on disk: {} textures ({} with a stand-in colour), {} MiB of {} MiB",
              index.size(), colors.size(), total_bytes >> 20, limit >> 20);
@@ -586,6 +676,9 @@ void Stop() {
     }
     wake.notify_all();
     worker.join();
+    if (color_pass.joinable()) {
+        color_pass.join();
+    }
     std::scoped_lock lock{mutex};
     enabled = false;
     stopping = false;

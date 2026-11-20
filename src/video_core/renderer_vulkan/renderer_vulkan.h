@@ -26,6 +26,7 @@
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/renderer_vulkan/vk_turbo_mode.h"
+#include "video_core/vulkan_common/fefw_gpu_report.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -121,6 +122,8 @@ private:
     FrameGen frame_gen;
 #endif
     std::optional<TurboMode> turbo_mode;
+    /// The 10 s GPU report (after the device: stopped before it's destroyed).
+    std::optional<FefwGpuReport::Reporter> gpu_report;
     std::optional<std::chrono::steady_clock::time_point> fsr_fg_last_composite;
     f32 fsr_fg_interval_ms{};
     u64 fsr_fg_generated{};
