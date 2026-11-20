@@ -77,9 +77,32 @@ FakeCall AxxEmitX64::FastmemCallback(u64 rip_) {
         }
         return result;
     }
-    fmt::print("dynarmic: Segfault happened within JITted code at rip = {:016x}\n"
-        "Segfault wasn't at a fastmem patch location!\n", rip_);
-    UNREACHABLE(); //("iter != fastmem_patch_info.end()");
+    // Fortune's Eden: what the log needs to find out why (one crash in a 93-second session,
+    // #63): where the fault was in the compiled code, the instruction there, and the nearest
+    // fastmem accesses (their offsets and the guest code they belong to).
+    const bool inside = rip_ >= base && rip_ - base < code.GetTotalCodeSize();
+    std::string near_text;
+    if (inside) {
+        const u32 off = u32(rip_ - base);
+        const auto next = std::lower_bound(fastmem_patch_info.begin(), fastmem_patch_info.end(), off,
+                                           [](const FastmemPatchInfo& entry, u32 value) { return entry.rip < value; });
+        const auto describe = [](const FastmemPatchInfo& entry) {
+            return fmt::format("{:#x} (guest {:#x})", entry.rip, entry.location.Value());
+        };
+        near_text = fmt::format("; nearest fastmem accesses: before {}, after {}",
+                                next != fastmem_patch_info.begin() ? describe(*std::prev(next)) : std::string{"none"},
+                                next != fastmem_patch_info.end() ? describe(*next) : std::string{"none"});
+        std::string bytes;
+        for (u64 i = 0; i < 16 && off + i < code.GetTotalCodeSize(); ++i) {
+            bytes += fmt::format("{:02x}", *reinterpret_cast<const u8*>(rip_ + i));
+        }
+        near_text += fmt::format("; code there: {}", bytes);
+    }
+    UNREACHABLE_MSG("Segfault in JITted code at rip {:#x} ({}), not at a fastmem patch location; "
+                    "{} fastmem accesses known, code {:#x} of {:#x} bytes used{}",
+                    rip_, inside ? fmt::format("offset {:#x}", rip_ - base) : std::string{"outside the code space"},
+                    fastmem_patch_info.size(), std::bit_cast<u64>(code.getCurr()) - base,
+                    code.GetTotalCodeSize(), near_text);
 }
 
 template<std::size_t bitsize, auto callback>
