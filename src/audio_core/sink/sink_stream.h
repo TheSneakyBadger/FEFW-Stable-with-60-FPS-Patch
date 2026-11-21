@@ -80,6 +80,13 @@ public:
     virtual void Stop() {}
 
     /**
+     * Fortune's Eden: called when the output has taken no sound for half a second while the game
+     * waits for room (its device went away, #84). Reopens the output on the current default
+     * device where the backend can.
+     */
+    virtual void ReopenOutput() {}
+
+    /**
      * Check if the stream is paused.
      *
      * @return True if paused, otherwise false.
@@ -249,6 +256,11 @@ private:
     /// thread only), and how many such gaps the log has had.
     u64 gap_frames{};
     u32 gaps_logged{};
+    /// Fortune's Eden: times the output stopped taking sound and the queue was dropped; whether
+    /// it has taken any since (set by the output callback); when it was last reopened.
+    u32 output_stalls{};
+    std::atomic<bool> output_took_sound{true};
+    std::chrono::steady_clock::time_point last_reopen{};
     /// Number of buffers waiting to be played
     std::atomic<u32> queued_buffers{};
     /// The ring size for audio out buffers (usually 4, rarely 2 or 8)

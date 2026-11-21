@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <mutex>
 #include <span>
 #include <vector>
 
@@ -50,7 +52,7 @@ public:
         device_channels = device_channels_;
         system_channels = system_channels_;
 
-        cubeb_stream_params params{};
+        params = {};
         params.rate = TargetSampleRate;
         params.channels = device_channels;
         params.format = CUBEB_SAMPLE_S16LE;
@@ -109,8 +111,10 @@ public:
 
         if (init_error != CUBEB_OK) {
             LOG_CRITICAL(Audio_Sink, "Error initializing cubeb stream, error: {}", init_error);
+            stream_backend = nullptr;
             return;
         }
+        stream_latency = minimum_latency;
     }
 
     /**
@@ -135,7 +139,46 @@ public:
      */
     void Finalize() override {
         Stop();
-        cubeb_stream_destroy(stream_backend);
+        std::scoped_lock lk{backend_mutex};
+        if (stream_backend) {
+            cubeb_stream_destroy(stream_backend);
+            stream_backend = nullptr;
+        }
+    }
+
+    /**
+     * Fortune's Eden: reopens the output on the current default device after it stopped taking
+     * sound (#84: a Bluetooth headset that switched off froze the game with cubeb, which kept
+     * the stream on the device that had gone). Called from the audio renderer's thread.
+     */
+    void ReopenOutput() override {
+        if (!ctx || type == StreamType::In) {
+            return;
+        }
+        std::scoped_lock lk{backend_mutex};
+        if (stream_backend) {
+            cubeb_stream_stop(stream_backend);
+            cubeb_stream_destroy(stream_backend);
+            stream_backend = nullptr;
+        }
+        const int init_error = cubeb_stream_init(
+            ctx, &stream_backend, name.c_str(), nullptr, nullptr, nullptr, &params,
+            stream_latency, &CubebSinkStream::DataCallback, &CubebSinkStream::StateCallback, this);
+        if (init_error != CUBEB_OK) {
+            stream_backend = nullptr;
+            if (reopen_failures++ < 5) {
+                LOG_WARNING(Audio_Sink,
+                            "Could not reopen the sound output {} on the default device "
+                            "(error {}); trying again in 2 s",
+                            name, init_error);
+            }
+            return;
+        }
+        if (!paused && cubeb_stream_start(stream_backend) != CUBEB_OK) {
+            LOG_CRITICAL(Audio_Sink, "Error starting the reopened cubeb stream {}", name);
+            return;
+        }
+        LOG_INFO(Audio_Sink, "Sound output {} reopened on the default device", name);
     }
 
     /**
@@ -150,7 +193,8 @@ public:
         }
 
         paused = false;
-        if (cubeb_stream_start(stream_backend) != CUBEB_OK) {
+        std::scoped_lock lk{backend_mutex};
+        if (!stream_backend || cubeb_stream_start(stream_backend) != CUBEB_OK) {
             LOG_CRITICAL(Audio_Sink, "Error starting cubeb stream");
         }
     }
@@ -164,7 +208,8 @@ public:
         }
 
         SignalPause();
-        if (cubeb_stream_stop(stream_backend) != CUBEB_OK) {
+        std::scoped_lock lk{backend_mutex};
+        if (!stream_backend || cubeb_stream_stop(stream_backend) != CUBEB_OK) {
             LOG_CRITICAL(Audio_Sink, "Error stopping cubeb stream");
         }
     }
@@ -205,18 +250,32 @@ private:
     }
 
     /**
-     * Cubeb callback for if a device state changes. Unused currently.
+     * Cubeb callback for if a device state changes. Fortune's Eden: logs an error (the device
+     * went away, and the stream stops taking sound until it is reopened).
      *
      * @param stream      - Cubeb-specific data about the stream.
      * @param user_data   - Custom data pointer passed along, points to a CubebSinkStream.
      * @param state       - New state of the device.
      */
-    static void StateCallback(cubeb_stream*, void*, cubeb_state) {}
+    static void StateCallback(cubeb_stream*, void* user_data, cubeb_state state) {
+        auto* impl = static_cast<CubebSinkStream*>(user_data);
+        if (impl && state == CUBEB_STATE_ERROR && impl->state_errors++ < 5) {
+            LOG_WARNING(Audio_Sink, "Sound output {} reported an error (its device may have gone "
+                                    "away)",
+                        impl->name);
+        }
+    }
 
     /// Main Cubeb context
     cubeb* ctx{};
     /// Cubeb stream backend
     cubeb_stream* stream_backend{};
+    /// Fortune's Eden: what the stream was opened with, to reopen it; guards stream_backend.
+    cubeb_stream_params params{};
+    u32 stream_latency{};
+    std::mutex backend_mutex;
+    u32 reopen_failures{};
+    std::atomic<u32> state_errors{};
 };
 
 CubebSink::CubebSink(std::string_view target_device_name) {
