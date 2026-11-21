@@ -16,6 +16,7 @@
 
 #include "common/assert.h"
 #include "common/logging.h"
+#include "common/scope_exit.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "core/core.h"
@@ -38,6 +39,7 @@
 #include "video_core/gpu_thread.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
+#include "video_core/fefw_guest_waits.h"
 #include "video_core/memory_manager.h"
 #include "video_core/renderer_base.h"
 #include "video_core/shader_notify.h"
@@ -260,6 +262,13 @@ struct GPU::Impl {
             return raster_area;
         }
         raster_area.preemtive = true;
+        const u64 sync_start = FefwGuestWaits::NowNs();
+        SCOPE_EXIT {
+            auto& waits = FefwGuestWaits::Get();
+            waits.read_syncs.fetch_add(1, std::memory_order_relaxed);
+            waits.read_sync_ns.fetch_add(FefwGuestWaits::NowNs() - sync_start,
+                                         std::memory_order_relaxed);
+        };
         const u64 fence = RequestSyncOperation([this, raster_area]() {
             // Guest writes still held for the caches go in first: the download would otherwise
             // put the GPU's older copy over them (from PokeDinner).

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <atomic>
 #include <memory>
 
@@ -62,6 +63,17 @@ public:
         }
         return false;
     }
+
+    /// Fortune's Eden: how many pages have ever been marked (for the log; reads every word).
+    [[nodiscard]] u64 CountPages() const {
+        u64 count = 0;
+        for (u64 i = 0; i < NumWords; ++i) {
+            count += static_cast<u64>(std::popcount(words[i].load(std::memory_order_relaxed)));
+        }
+        return count;
+    }
+
+    static constexpr u64 PageSize = u64{1} << 12;
 
 private:
     static constexpr u64 PageBits = 12;

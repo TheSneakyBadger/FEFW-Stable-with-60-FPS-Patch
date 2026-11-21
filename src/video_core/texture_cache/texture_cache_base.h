@@ -188,6 +188,11 @@ public:
     /// cached writes elsewhere skip its lock (Lichii).
     VideoCommon::PageFilter page_filter;
 
+    /// Fortune's Eden: the 1 MiB pages of the game's memory images are on now (under the lock).
+    [[nodiscard]] size_t ImagePageCount() const {
+        return page_table.size();
+    }
+
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
     ~TextureCache();
 
