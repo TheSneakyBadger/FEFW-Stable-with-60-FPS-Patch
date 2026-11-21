@@ -503,7 +503,18 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
 #endif
 }
 
+namespace {
+thread_local char fefw_thread_name[32]{};
+} // Anonymous namespace
+
+const char* GetCurrentThreadNameForLog() {
+    return fefw_thread_name;
+}
+
 void SetCurrentThreadName(const char* name) {
+    if (name != nullptr) {
+        std::strncpy(fefw_thread_name, name, sizeof(fefw_thread_name) - 1);
+    }
 #ifdef _MSC_VER
     // Sets the debugger-visible name of the current thread.
     if (auto pf = (decltype(&SetThreadDescription))(void*)GetProcAddress(GetModuleHandle(TEXT("KernelBase.dll")), "SetThreadDescription"); pf)

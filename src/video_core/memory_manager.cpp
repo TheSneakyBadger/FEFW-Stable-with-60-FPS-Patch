@@ -4,11 +4,13 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <algorithm>
 
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/logging.h"
+#include "common/thread.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
@@ -298,7 +300,15 @@ T MemoryManager::Read(GPUVAddr addr) const {
         return value;
     }
 
-    ASSERT(false);
+    // Fortune's Eden: which thread read unmapped GPU memory, and whether the emulator was
+    // shutting down (a crash on Stop followed these, #63). At most 8 a session.
+    static std::atomic<u32> unmapped_reads{0};
+    if (unmapped_reads.fetch_add(1, std::memory_order_relaxed) < 8) {
+        LOG_CRITICAL(HW_GPU,
+                     "Read of {} bytes at unmapped GPU address {:#x} on thread \"{}\"{}", sizeof(T),
+                     addr, Common::GetCurrentThreadNameForLog(),
+                     system.IsShuttingDown() ? " while the emulator shuts down" : "");
+    }
 
     return {};
 }
