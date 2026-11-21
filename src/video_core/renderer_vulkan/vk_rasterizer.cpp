@@ -47,6 +47,7 @@
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/back_thread_stats.h"
+#include "video_core/fefw_guest_waits.h"
 #include "video_core/renderer_vulkan/vk_query_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -814,6 +815,14 @@ bool RasterizerVulkan::MustFlushRegion(DAddr addr, u64 size, VideoCommon::CacheT
 }
 
 VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64 size) {
+    auto& waits = FefwGuestWaits::Get();
+    const u64 area_start = FefwGuestWaits::NowNs();
+    SCOPE_EXIT {
+        waits.read_areas.fetch_add(1, std::memory_order_relaxed);
+        waits.read_area_ns.fetch_add(FefwGuestWaits::NowNs() - area_start,
+                                     std::memory_order_relaxed);
+        MaybeReportGuestWaits();
+    };
     {
         // Guest CPU reads of buffer memory decide which GPU-written buffer data is copied back.
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
@@ -1016,6 +1025,37 @@ void CountCpuWrite(bool fast) {
 }
 } // Anonymous namespace
 
+void RasterizerVulkan::MaybeReportGuestWaits() {
+    if (!FefwGuestWaits::ReportDue()) {
+        return;
+    }
+    struct Snapshot {
+        u64 writes, write_wait, write_work, areas, area, syncs, sync;
+    };
+    static Snapshot last{};
+    auto& c = FefwGuestWaits::Get();
+    const Snapshot now{c.texture_writes.load(), c.texture_write_wait_ns.load(),
+                       c.texture_write_work_ns.load(), c.read_areas.load(), c.read_area_ns.load(),
+                       c.read_syncs.load(), c.read_sync_ns.load()};
+    size_t image_pages;
+    {
+        std::scoped_lock lock{texture_cache.mutex};
+        image_pages = texture_cache.ImagePageCount();
+    }
+    const u64 ever_pages = texture_cache.page_filter.CountPages();
+    const auto ms = [](u64 ns) { return static_cast<double>(ns) / 1e6; };
+    LOG_INFO(Render_Vulkan,
+             "Game threads in the GPU caches, last 10 s: {} writes took the texture cache's lock "
+             "({:.1f} ms waiting for it, {:.1f} ms under it); {} reads asked what to copy back "
+             "({:.1f} ms), {} waited for a copy back ({:.1f} ms); textures now on {} MiB of the "
+             "game's memory, pages any texture was ever on: {} MiB",
+             now.writes - last.writes, ms(now.write_wait - last.write_wait),
+             ms(now.write_work - last.write_work), now.areas - last.areas,
+             ms(now.area - last.area), now.syncs - last.syncs, ms(now.sync - last.sync),
+             image_pages, ever_pages * VideoCommon::PageFilter::PageSize >> 20);
+    last = now;
+}
+
 void RasterizerVulkan::OnHeldWrite(DAddr addr, u64 size) {
     buffer_cache.OnHeldWrite(addr, size);
 }
@@ -1030,10 +1070,21 @@ bool RasterizerVulkan::OnCPUWrite(DAddr addr, u64 size) {
         if (!texture_cache.page_filter.Any(addr, size)) {
             return;
         }
+        auto& waits = FefwGuestWaits::Get();
+        const u64 wait_start = FefwGuestWaits::NowNs();
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.cpu_write};
         std::scoped_lock lock{texture_cache.mutex};
         lock_timer.Acquired();
+        const u64 locked = FefwGuestWaits::NowNs();
         texture_cache.WriteMemory(addr, size);
+        waits.texture_writes.fetch_add(1, std::memory_order_relaxed);
+        waits.texture_write_wait_ns.fetch_add(locked - wait_start, std::memory_order_relaxed);
+        waits.texture_write_work_ns.fetch_add(FefwGuestWaits::NowNs() - locked,
+                                              std::memory_order_relaxed);
+    };
+    const auto report = [&] { MaybeReportGuestWaits(); };
+    SCOPE_EXIT {
+        report();
     };
     if (fast_mode == 1 && CpuWriteHoldAll() && buffer_cache.IsRegisteredWithoutLock(addr, size)) {
         write_textures();
