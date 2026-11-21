@@ -813,8 +813,9 @@ bool VsyncSleep() {
     // it, so it never holds a frame back; with Reflex pacing, exactly the rate.
     const bool timer_paces = FefwFrameGenHook::timer_paces.load(std::memory_order_relaxed);
     const s64 shown = static_cast<s64>(Settings::values.mfg_multiplier.GetValue()) + 2;
-    ApplyFrameLimit(fg, static_cast<u32>(Settings::FrameGenerationPeriodNs() / 1000 / shown *
-                                         (timer_paces ? 98 : 100) / 100));
+    const s64 period_ns = Settings::FrameGenerationPeriodNs();
+    ApplyFrameLimit(fg,
+                    static_cast<u32>(period_ns / 1000 / shown * (timer_paces ? 98 : 100) / 100));
     // Reflex stuck holding the game back: after a loading screen (game frames 51 ms apart),
     // Reflex kept sleeping the whole 51.5 ms of every vsync for 100 s, the game at 19.4 FPS with
     // the card and CPU nearly idle, until a 100 ms gap made Streamline reset its frame timer
@@ -828,9 +829,11 @@ bool VsyncSleep() {
     // half busy, and the 40 ms rule never saw it (#63, an RTX 4080 Laptop, v1.7.5.13). With the
     // vsync timer pacing, Reflex's limit is well above the game's rate and it should hardly sleep
     // (under 0.5 ms on average in 170 healthy 10 s spans of that log, a rare single sleep longer);
-    // sleeps over 10 ms mean it is the one pacing the game. Those count too, and a short sleep
-    // takes one off the count instead of clearing it, so a stuck run with a few short sleeps in
-    // it is still caught while a lone long sleep never adds up.
+    // sleeps over 10 ms more than the frame rate cap asks for (a display that caps the game below
+    // 60, say 60 Hz with 2x, has Reflex sleep the difference every frame) mean it is the one
+    // pacing the game. Those count too, and a short sleep takes one off the count instead of
+    // clearing it, so a stuck run with a few short sleeps in it is still caught while a lone long
+    // sleep never adds up.
     static u32 long_sleeps = 0;
     static u32 unstuck_count = 0;
     if (skip_left > 0) {
@@ -843,7 +846,10 @@ bool VsyncSleep() {
         }
         static constexpr s64 STUCK_SLEEP_NS = 40'000'000;
         static constexpr s64 TIMER_PACED_STUCK_SLEEP_NS = 10'000'000;
-        const s64 stuck_ns = timer_paces ? TIMER_PACED_STUCK_SLEEP_NS : STUCK_SLEEP_NS;
+        static constexpr s64 VSYNC_NS = 16'666'667;
+        const s64 capped_sleep_ns = (std::max<s64>)(period_ns - VSYNC_NS, 0);
+        const s64 stuck_ns =
+            timer_paces ? capped_sleep_ns + TIMER_PACED_STUCK_SLEEP_NS : STUCK_SLEEP_NS;
         if (NowNs() - sleep_start > stuck_ns) {
             ++long_sleeps;
         } else if (long_sleeps > 0) {
