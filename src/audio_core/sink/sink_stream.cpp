@@ -15,6 +15,7 @@
 #include "audio_core/sink/sink_stream.h"
 #include "common/common_types.h"
 #include "common/fixed_point.h"
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -186,6 +187,7 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
     // playing_buffer is also reset by ClearQueue on the renderer thread, so keep its bookkeeping
     // under release_mutex. The hold is short: queue pops and sample copies only.
     bool released_buffer = false;
+    size_t underrun_frames = 0;
     {
         std::scoped_lock lk{release_mutex};
         while (frames_written < num_frames) {
@@ -193,6 +195,7 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
                 if (!queue.TryPop(playing_buffer)) {
                     for (size_t i = frames_written; i < num_frames; i++)
                         std::memcpy(&output_buffer[i * frame_size], last_frame.data(), frame_size_bytes);
+                    underrun_frames = num_frames - frames_written;
                     frames_written = num_frames;
                     continue;
                 }
@@ -219,6 +222,24 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
     }
     if (released_buffer)
         release_cv.notify_one();
+
+    // Fortune's Eden: a stretch of silence because the game's sound stopped arriving (#63: all
+    // sound gone for about 5 s on picking up an item, then back), so the log says when and how
+    // long. Gaps of half a second or more, the first 30 of a session.
+    if (type != StreamType::In) {
+        if (underrun_frames == num_frames) {
+            gap_frames += num_frames;
+        } else {
+            const u64 gap = gap_frames;
+            if (gap >= TargetSampleRate / 2 && gaps_logged < 30) {
+                ++gaps_logged;
+                LOG_WARNING(Audio_Sink,
+                            "Sound from the game stopped arriving for {} ms ({}), then came back",
+                            gap * 1000 / TargetSampleRate, name);
+            }
+            gap_frames = underrun_frames;
+        }
+    }
 
     std::memcpy(last_frame.data(), &output_buffer[(frames_written - 1) * frame_size], frame_size_bytes);
 

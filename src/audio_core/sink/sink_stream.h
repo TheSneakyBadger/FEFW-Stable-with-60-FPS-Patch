@@ -245,6 +245,10 @@ private:
     SinkBuffer playing_buffer{};
     /// The last played (or received) frame of audio, used when the callback underruns
     std::array<s16, MaxChannels> last_frame{};
+    /// Fortune's Eden: frames in a row the output callback had nothing from the game for (output
+    /// thread only), and how many such gaps the log has had.
+    u64 gap_frames{};
+    u32 gaps_logged{};
     /// Number of buffers waiting to be played
     std::atomic<u32> queued_buffers{};
     /// The ring size for audio out buffers (usually 4, rarely 2 or 8)
