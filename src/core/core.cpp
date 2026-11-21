@@ -409,6 +409,7 @@ struct System::Impl {
     }
 
     void ShutdownMainProcess() {
+        LOG_INFO(Core, "Shutdown: started");
         SetShuttingDown(true);
         Common::ADPF::Shutdown();
 
@@ -421,6 +422,7 @@ struct System::Impl {
         exit_requested = false;
         if (gpu_core)
             gpu_core->NotifyShutdown();
+        LOG_INFO(Core, "Shutdown: GPU thread stopped");
 
         stop_event.request_stop();
         core_timing.SyncPause(false);
@@ -428,6 +430,7 @@ struct System::Impl {
         kernel.SuspendEmulation(true);
         kernel.CloseServices();
         kernel.ShutdownCores();
+        LOG_INFO(Core, "Shutdown: emulated cores stopped, closing services");
         services.reset();
         service_manager.reset();
         fs_controller.Reset();
@@ -435,7 +438,9 @@ struct System::Impl {
         core_timing.ClearPendingEvents();
         app_loader.reset();
         audio_core.reset();
+        LOG_INFO(Core, "Shutdown: services closed, destroying the GPU");
         gpu_core.reset();
+        LOG_INFO(Core, "Shutdown: GPU destroyed");
         host1x_core.reset();
         perf_stats.reset();
         cpu_manager.Shutdown();
