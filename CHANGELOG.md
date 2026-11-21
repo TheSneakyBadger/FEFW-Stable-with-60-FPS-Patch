@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.7.5.13
+
+A bigger compiled-code list, for less stutter the first time you reach later maps.
+
+- **The compiled-code list that comes with Fortune's Eden grew to 602,000 blocks** on the main core (from 544,000), with code from later maps and battles (the list comes with the Windows build; on Linux it builds up as you play). Thanks to **InfinitePicaro** for sharing theirs.
+- **The steps of closing a game are written to the log**, with the thread behind any read of GPU memory that is no longer there, to find the cause of a crash some players get when pressing Stop.
+
+Everything else is as in [v1.7.5.12](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.12).
+
 ## v1.7.5.12
 
 Textures no longer stay a flat colour for long, a choice of which copy of the game to play, and more detail in the log for the remaining hitches.
