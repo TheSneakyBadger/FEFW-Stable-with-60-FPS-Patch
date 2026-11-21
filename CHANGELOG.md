@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.7.5.14
+
+A fix for NVIDIA DLSS frame generation slowing the game down on long battle maps.
+
+- **NVIDIA DLSS frame generation no longer holds the game at 44–58 FPS** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). On a long battle map, NVIDIA Reflex could slowly start pacing the game itself: over a few minutes its waits grew from almost nothing to the whole frame, and the game settled at exactly 44.2 FPS with the graphics card half idle, until a menu turned frame generation off. The safeguard from v1.7.5.8 only stepped in at much longer waits (the 19 FPS case after a loading screen). Now Reflex is reset as soon as it waits more than 10 ms a frame beyond what your display's frame rate cap asks for, which catches it minutes earlier, while it is still building up. Thanks to **jh238800** for the log that showed it.
+- **Gaps in the game's sound are written to the log.** When the game's sound stops arriving for half a second or more, the log says when and for how long, to find the cause of a rare few seconds of silence.
+
+Everything else is as in [v1.7.5.13](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.13).
+
 ## v1.7.5.13
 
 A bigger compiled-code list, for less stutter the first time you reach later maps.
