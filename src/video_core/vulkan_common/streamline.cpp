@@ -829,6 +829,15 @@ bool VsyncSleep() {
     // paced to. After 30 sleeps in a row of over 40 ms (2.4 vsyncs; the game is never that slow
     // at a steady 60 Hz), its options are set again and 8 vsyncs go without a sleep, so it measures
     // the game's real frames again.
+    // It also got stuck at a gentler rate: on a long battle map Reflex's sleeps grew over a few
+    // minutes from under 0.5 ms on average to 7, then 17 ms (the game at 54-58 FPS), then to
+    // 20-23 ms at every vsync (9.99 s of every 10), the game at exactly 44.2 FPS with the card
+    // half busy, and the 40 ms rule never saw it (#63, an RTX 4080 Laptop, v1.7.5.13). With the
+    // vsync timer pacing, Reflex's limit is well above the game's rate and it should hardly sleep
+    // (under 0.5 ms on average in 170 healthy 10 s spans of that log, a rare single sleep longer);
+    // sleeps over 10 ms mean it is the one pacing the game. Those count too, and a short sleep
+    // takes one off the count instead of clearing it, so a stuck run with a few short sleeps in
+    // it is still caught while a lone long sleep never adds up.
     static u32 long_sleeps = 0;
     static u32 unstuck_count = 0;
     if (skip_left > 0) {
@@ -840,7 +849,13 @@ bool VsyncSleep() {
             fg.reflex_sleep(*token);
         }
         static constexpr s64 STUCK_SLEEP_NS = 40'000'000;
-        long_sleeps = NowNs() - sleep_start > STUCK_SLEEP_NS ? long_sleeps + 1 : 0;
+        static constexpr s64 TIMER_PACED_STUCK_SLEEP_NS = 10'000'000;
+        const s64 stuck_ns = timer_paces ? TIMER_PACED_STUCK_SLEEP_NS : STUCK_SLEEP_NS;
+        if (NowNs() - sleep_start > stuck_ns) {
+            ++long_sleeps;
+        } else if (long_sleeps > 0) {
+            --long_sleeps;
+        }
         if (long_sleeps >= 30) {
             long_sleeps = 0;
             skip_left = 8;
@@ -854,10 +869,10 @@ bool VsyncSleep() {
             }
             if (unstuck_count <= 5 || unstuck_count % 50 == 0) {
                 LOG_WARNING(Render_Vulkan,
-                            "NVIDIA Reflex slept over 40 ms on 30 vsyncs in a row (holding the "
-                            "game back): its options set again and 8 vsyncs without a sleep ({} "
-                            "so far)",
-                            unstuck_count);
+                            "NVIDIA Reflex slept over {:.1f} ms at 30 more vsyncs than not "
+                            "(holding the game back): its options set again and 8 vsyncs "
+                            "without a sleep ({} so far)",
+                            static_cast<double>(stuck_ns) / 1e6, unstuck_count);
             }
         }
     }
