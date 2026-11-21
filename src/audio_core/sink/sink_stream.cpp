@@ -202,6 +202,7 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
 
                 --queued_buffers;
                 released_buffer = true;
+                output_took_sound.store(true, std::memory_order_relaxed);
             }
 
             const size_t frames_available = std::min<u64>(playing_buffer.frames - playing_buffer.frames_played, num_frames - frames_written);
@@ -270,9 +271,56 @@ void SinkStream::WaitFreeSpace(std::stop_token stop_token) {
 
     release_cv.wait_for(lk, std::chrono::milliseconds(7), can_continue);
 
-    if (queued_buffers > max_queue_size + 3) {
-        release_cv.wait(lk, stop_token, can_continue);
+    if (queued_buffers <= max_queue_size + 3) {
+        return;
     }
+
+    // Fortune's Eden: this used to wait for the output with no limit, so when the output stopped
+    // taking sound (a Bluetooth headset switched off or out of battery, with cubeb), the game's
+    // audio waited here for good and the whole game froze, and Stop hung on it too (#84). Wait
+    // up to half a second; the output takes sound every few ms while it works. If it took none,
+    // drop what is queued so the game carries on, and have the output reopened on the current
+    // default device.
+    // While the output still takes nothing after that, sound is dropped at once (no waiting, so
+    // the game runs at full speed without it) and the output reopened every 2 s at most.
+    constexpr auto STALL_LIMIT = std::chrono::milliseconds(500);
+    constexpr auto REOPEN_INTERVAL = std::chrono::seconds(2);
+    if (!output_took_sound) {
+        lk.unlock();
+        ClearQueue();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_reopen >= REOPEN_INTERVAL) {
+            last_reopen = now;
+            ReopenOutput();
+        }
+        return;
+    }
+    const auto wait_start = std::chrono::steady_clock::now();
+    while (!can_continue()) {
+        if (stop_token.stop_requested()) {
+            return;
+        }
+        if (std::chrono::steady_clock::now() - wait_start >= STALL_LIMIT) {
+            break;
+        }
+        release_cv.wait_for(lk, std::chrono::milliseconds(20), can_continue);
+    }
+    if (can_continue()) {
+        return;
+    }
+
+    ++output_stalls;
+    output_took_sound = false;
+    lk.unlock();
+    if (output_stalls <= 20) {
+        LOG_WARNING(Audio_Sink,
+                    "The sound output ({}) took nothing for {} ms (its device may have gone "
+                    "away): sound queued for it dropped and the output reopened ({} so far)",
+                    name, STALL_LIMIT.count(), output_stalls);
+    }
+    ClearQueue();
+    last_reopen = std::chrono::steady_clock::now();
+    ReopenOutput();
 }
 
 void SinkStream::SignalPause() {
