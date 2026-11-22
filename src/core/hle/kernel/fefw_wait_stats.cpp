@@ -68,8 +68,9 @@ std::string Summary(std::unordered_map<std::string, Entry>& map, size_t limit) {
 
 bool Enabled() {
     static const bool enabled = [] {
+        // Test 93u: on unless EDEN_BACK_THREAD_STATS=0.
         const char* const value = std::getenv("EDEN_BACK_THREAD_STATS");
-        return value != nullptr && value[0] != '\0' && value[0] != '0';
+        return value == nullptr || value[0] != '0';
     }();
     return enabled;
 }

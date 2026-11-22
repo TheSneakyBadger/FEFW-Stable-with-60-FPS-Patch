@@ -24,7 +24,7 @@
 
 // Where the thread that prepares draws (the GPU back thread with the split, the GPU thread
 // without it) spends its time, and what it waits for (docs/back-thread-split-plan.md, phase 0).
-// EDEN_BACK_THREAD_STATS=1 logs it every 4 s; =2 also serializes the stamps (lfence before rdtsc),
+// EDEN_BACK_THREAD_STATS=1 logs it every 10 s; =2 also serializes the stamps (lfence before rdtsc),
 // to check the buckets a decision rests on. Off, every probe is one load and a branch.
 //
 // Ownership: DrawThread is touched only by the thread that prepares draws (one at a time: the
