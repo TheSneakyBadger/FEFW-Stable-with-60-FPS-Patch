@@ -199,7 +199,6 @@ struct Shared {
     // The semaphore word read from guest memory before the drain (statistics only).
     std::atomic<u64> acquire_ready_before{}; ///< Already satisfied before draining
     std::atomic<u64> acquire_changed{};      ///< The drain changed the word
-    std::atomic<u64> acquire_no_drain{};     ///< Test 94j: already satisfied, not drained
     std::array<std::atomic<u64>, 3> acquire_ops{}; ///< Equal, greater or equal, mask
     /// Acquires whose word the drain changed, by the source of the last release the back executed
     /// at that address (ReleaseSource).

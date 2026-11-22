@@ -190,32 +190,6 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload, properties, payload, 0);
         });
     } else {
-        // Test 94j: a native "greater or equal" acquire whose word guest memory already holds
-        // at or past the value needs no drain. Such a word only goes up, so whatever the back
-        // still has to write can't make it unready. In a Dagsion crowd (#63) 697 of the 1908
-        // drains a second were for acquires already satisfied; each left the back thread idle
-        // while the front waited for it and then parsed on (the back idle 12.7% of the time in
-        // 5046 short gaps, the game at 46-53 FPS waiting for its two screen buffers). The
-        // game's held CPU writes are still applied before anything after the acquire: on the
-        // back thread, in order, as at the start of a command list (gpu_thread.cpp).
-        // EDEN_ACQUIRE_DRAIN=1: always drain, as before.
-        static const bool skip_ready_drains = [] {
-            const char* const value = std::getenv("EDEN_ACQUIRE_DRAIN");
-            const bool skip = !(value && value[0] == '1');
-            LOG_INFO(HW_GPU, "Semaphore acquires already satisfied: {}",
-                     skip ? "no drain (test 94j)" : "drain first (EDEN_ACQUIRE_DRAIN=1)");
-            return skip;
-        }();
-        if (skip_ready_drains && dma_pusher.channel_state.native_abi &&
-            op == GpuSemaphoreOperation::AcquireGequal &&
-            dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress()) >=
-                regs.semaphore_sequence) {
-            if (VideoCommon::BackStats::Enabled()) {
-                VideoCommon::BackStats::Add(VideoCommon::BackStats::shared.acquire_no_drain, 1);
-            }
-            OnBack([rasterizer = dma_pusher.rasterizer] { rasterizer->InvalidateGPUCache(); });
-            return;
-        }
         // Acquires read what the back may still have to write: let it finish first. From here
         // on the back is idle, and the front may use the rasterizer until it sends more.
         // Statistics only: the word as guest memory holds it before the drain (a plain read; the
