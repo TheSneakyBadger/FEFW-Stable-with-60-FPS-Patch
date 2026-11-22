@@ -118,8 +118,6 @@ struct DrawThread {
     // GpuSplit::BackLoop by ring entry: method, macro write, multi-word method, call, other.
     std::array<u64, 5> ring_ticks{};
     std::array<u64, 5> ring_count{};
-    /// Test 94n: macro writes by method (statistics only; methods up to 0x1000).
-    std::array<u32, 0x1000> macro_methods{};
     u64 sink_ticks{};           ///< Engine::ConsumeSink (inside the method entries)
     u64 last_compute_serial{};  ///< draw_serial at the last compute dispatch
     // Handle tables a compute shader wrote (buffer-backed texture arrays, downloaded per frame).
