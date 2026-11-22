@@ -384,27 +384,15 @@ static const bool register_batches = [] {
     return !(value && value[0] == '0');
 }();
 
-bool GpuSplit::BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument,
-                          bool macro) {
-    if (!register_batches || !macro_writes_to_sink || !engine->macro_writes_may_sink) {
-        return false;
-    }
-    Kind kind;
-    if (macro && method - engine->macro_cb_data_method < 16) {
-        kind = Kind::CBData;
-    } else if (method < engine->execution_mask.size() && !engine->execution_mask[method]) {
-        kind = Kind::Regs;
-    } else {
+bool GpuSplit::BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+    if (!register_batches || !macro_writes_to_sink || !engine->macro_writes_may_sink ||
+        method >= engine->execution_mask.size() || engine->execution_mask[method]) {
         return false;
     }
     SelectEngine(engine);
-    if (batch_open && batch_kind != kind) {
-        CloseBatch();
-    }
     if (!batch_open) {
         batch_entry = Reserve(1 + MaxBatch);
         batch_count = 0;
-        batch_kind = kind;
         batch_open = true;
     }
     batch_entry[1 + batch_count] = (u64{method & 0xffff} << 32) | argument;
@@ -469,13 +457,6 @@ size_t GpuSplit::Execute(const u64* entry) {
             const u64 write = entry[i];
             sink.emplace_back(static_cast<u32>(write >> 32), static_cast<u32>(write));
         }
-        return 1 + count;
-    }
-    case Kind::CBData: {
-        const u32 count = static_cast<u32>((head >> 8) & 0xffffff);
-        auto* const engine = back_engine;
-        ConsumeSinkTimed(engine, *system);
-        engine->CallCBDataBatch(*system, entry + 1, count);
         return 1 + count;
     }
     }

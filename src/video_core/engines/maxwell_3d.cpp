@@ -71,7 +71,6 @@ Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
     for (size_t i = 0; i < execution_mask.size(); i++)
         execution_mask[i] = IsMethodExecutable(u32(i));
     macro_writes_may_sink = true;
-    macro_cb_data_method = MAXWELL3D_REG_INDEX(const_buffer.buffer);
 }
 
 Maxwell3D::~Maxwell3D() = default;
@@ -719,26 +718,6 @@ void Maxwell3D::ProcessCBMultiData(const u32* start_base, u32 amount) {
 
 void Maxwell3D::ProcessCBData(u32 value) {
     ProcessCBMultiData(&value, 1);
-}
-
-// Test 94m: a macro's run of constant buffer data writes (uniforms it sets before a draw), one
-// block write instead of a guest memory write (address lookup, cache tracking) per word. As
-// CallMethod for each: shadow RAM and dirty registers word by word (the first one issues a
-// deferred draw, before any of the data), then the words at the buffer's offset in order.
-void Maxwell3D::CallCBDataBatch(Core::System& system, const u64* writes, u32 count) {
-    std::array<u32, 64> data;
-    if (count > data.size() || executing_macro != 0 ||
-        shadow_state.shadow_ram_control == Regs::ShadowRamControl::Replay) {
-        EngineInterface::CallCBDataBatch(system, writes, count);
-        return;
-    }
-    for (u32 i = 0; i < count; ++i) {
-        const u32 method = static_cast<u32>(writes[i] >> 32);
-        const u32 argument = ProcessShadowRam(method, static_cast<u32>(writes[i]));
-        ProcessDirtyRegisters(method, argument);
-        data[i] = argument;
-    }
-    ProcessCBMultiData(data.data(), count);
 }
 
 void Maxwell3D::ProcessInlineIndexMultiData(u32 method, const u32* start_base, u32 amount) {
