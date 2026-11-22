@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <bit>
+#include <cstdio>
 #include <vector>
 #include <utility>
 #include <string>
@@ -31,6 +32,7 @@
 #include "shader_recompiler/exception.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
+#include "common/fs/path_util.h"
 #include "common/settings.h"
 #include "video_core/textures/decoders.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -216,6 +218,68 @@ void FefwUltrawideRoutes(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryMana
     }
 }
 
+
+// Test 94f: on request (log/dump-draws), one line per draw for 40 frames to log/draw-dump.txt:
+// render target size, viewport, vertex and instance counts, and the shader programs, to see which
+// passes the crowd's draws go to.
+namespace FefwDrawDump {
+int state = 0;
+std::FILE* out = nullptr;
+u32 draws = 0;
+u32 frames = 0;
+std::chrono::steady_clock::time_point next_check{};
+
+std::filesystem::path TriggerPath() {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "dump-draws";
+}
+
+void OnFrame() {
+    if (state == 2) {
+        if (out) {
+            std::fprintf(out, "FRAME %u %u\n", frames, draws);
+        }
+        if (++frames < 40) {
+            return;
+        }
+        if (out) {
+            std::fclose(out);
+            out = nullptr;
+        }
+        std::error_code ec;
+        std::filesystem::remove(TriggerPath(), ec);
+        LOG_INFO(Render_Vulkan, "Draw dump written: {} draws in log/draw-dump.txt", draws);
+        state = 0;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_check) {
+        return;
+    }
+    next_check = now + std::chrono::seconds(1);
+    std::error_code ec;
+    if (std::filesystem::exists(TriggerPath(), ec)) {
+        const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "draw-dump.txt";
+        out = std::fopen(path.string().c_str(), "w");
+        draws = 0;
+        frames = 0;
+        state = out ? 2 : 0;
+    }
+}
+
+void OnDraw(const Tegra::Engines::Maxwell3D& maxwell3d, const DrawParams& params, u32 topology) {
+    if (state != 2 || out == nullptr) {
+        return;
+    }
+    ++draws;
+    const auto& regs = maxwell3d.regs;
+    const auto& vp = regs.viewport_transform[0];
+    std::fprintf(out, "D %u %u %u %u %.0f %.0f %u %u %u %x %x\n", regs.rt[0].width,
+                 regs.rt[0].height, regs.zeta_size.width, regs.zeta_size.height, vp.scale_x * 2.0f,
+                 vp.scale_y * 2.0f, topology, params.num_vertices, params.num_instances,
+                 regs.pipelines[1].offset, regs.pipelines[5].offset);
+}
+} // namespace FefwDrawDump
+
 DrawParams MakeDrawParams(const Tegra::Engines::Maxwell3D::DrawManager::State& draw_state, u32 num_instances, bool is_indexed) {
     DrawParams params{
         .base_instance = draw_state.base_instance,
@@ -382,6 +446,7 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
         const auto& draw_state = maxwell3d->draw_manager.draw_state;
         const u32 num_instances{instance_count};
         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
+        FefwDrawDump::OnDraw(*maxwell3d, draw_params, static_cast<u32>(draw_state.topology));
 
         scheduler.Record([this, draw_params](vk::CommandBuffer cmdbuf) {
             if (scheduler.GraphicsPipelineMissing()) {
@@ -1374,6 +1439,7 @@ void RasterizerVulkan::FlushCommandsBatched() {
 }
 
 void RasterizerVulkan::TickFrame() {
+    FefwDrawDump::OnFrame();
     VideoCommon::BackStats::Add(VideoCommon::BackStats::shared.frame, 1);
     draw_counter = 0;
     guest_descriptor_queue.TickFrame();
