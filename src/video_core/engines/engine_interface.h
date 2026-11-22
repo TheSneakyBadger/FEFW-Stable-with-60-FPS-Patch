@@ -45,6 +45,9 @@ public:
     }
 
     std::bitset<(std::numeric_limits<u16>::max)()> execution_mask{};
+    /// Test 94k: a macro's write outside execution_mask may go into method_sink (CallMethod
+    /// does nothing more for it). Maxwell3D only: KeplerCompute's native methods act on more.
+    bool macro_writes_may_sink{};
     std::vector<std::pair<u32, u32>> method_sink{};
     GPUVAddr current_dma_segment;
     bool current_dirty{};

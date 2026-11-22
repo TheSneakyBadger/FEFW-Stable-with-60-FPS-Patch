@@ -193,6 +193,8 @@ void GpuSplit::Stop(bool session_end) {
     // reading at 0: with the old positions kept it would skip through the new, empty ring a
     // wrap at a time and never reach the old write position (Eglantine 092c16d6).
     ring.reset();
+    batch_open = false;
+    batch_count = 0;
     write_position = 0;
     published_local = 0;
     consumed_cache = 0;
@@ -274,6 +276,7 @@ void GpuSplit::StoreConsumed(u64 position) {
 }
 
 void GpuSplit::Publish() {
+    CloseBatch();
     if (published_local == write_position) {
         return;
     }
@@ -299,6 +302,7 @@ void GpuSplit::Drain(u32 site) {
     if (!active) {
         return;
     }
+    CloseBatch();
     consumed_cache = consumed.load(std::memory_order_acquire);
     if (consumed_cache == write_position) {
         return;
@@ -364,6 +368,40 @@ void GpuSplit::DeferFunction(std::function<void()>&& func) {
     });
 }
 
+// Test 94k: a macro's write to a register that doesn't execute anything goes into the method
+// sink, as the same write outside a macro does, instead of the whole CallMethod (shadow RAM,
+// dirty flags, then ProcessMethodCall's switch, which for these methods does nothing). Macros
+// write about 9 million registers a second in a Dagsion crowd (#63), where the back thread
+// needs about 17 ms a frame. The sink is applied, in order, before the next method that
+// executes, as for every other write. EDEN_MACRO_WRITE_SINK=0: CallMethod for each, as before.
+static const bool macro_writes_to_sink = [] {
+    const char* const value = std::getenv("EDEN_MACRO_WRITE_SINK");
+    return !(value && value[0] == '0');
+}();
+
+static const bool register_batches = [] {
+    const char* const value = std::getenv("EDEN_REGISTER_BATCH");
+    return !(value && value[0] == '0');
+}();
+
+bool GpuSplit::BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+    if (!register_batches || !macro_writes_to_sink || !engine->macro_writes_may_sink ||
+        method >= engine->execution_mask.size() || engine->execution_mask[method]) {
+        return false;
+    }
+    SelectEngine(engine);
+    if (!batch_open) {
+        batch_entry = Reserve(1 + MaxBatch);
+        batch_count = 0;
+        batch_open = true;
+    }
+    batch_entry[1 + batch_count] = (u64{method & 0xffff} << 32) | argument;
+    if (++batch_count == MaxBatch) {
+        CloseBatch();
+    }
+    return true;
+}
+
 size_t GpuSplit::Execute(const u64* entry) {
     const u64 head = entry[0];
     switch (static_cast<Kind>(head & 0xf)) {
@@ -376,7 +414,8 @@ size_t GpuSplit::Execute(const u64* entry) {
         const u32 method = static_cast<u32>((head >> 8) & 0xffff);
         const u32 argument = static_cast<u32>(head >> 32);
         auto* const engine = back_engine;
-        if ((head & Direct) != 0) {
+        if ((head & Direct) != 0 && (!macro_writes_to_sink || !engine->macro_writes_may_sink ||
+                                     engine->execution_mask[method])) {
             // A macro's write: a failure counts until the macro ends (the front sends that).
             ConsumeSinkTimed(engine, *system);
             engine->CallMethod(*system, method, argument, true);
@@ -410,6 +449,15 @@ size_t GpuSplit::Execute(const u64* entry) {
         const size_t payload = static_cast<size_t>((head >> 8) & 0xffffff);
         reinterpret_cast<void (*)(const u64*)>(entry[1])(entry + 2);
         return 2 + payload;
+    }
+    case Kind::Regs: {
+        const u32 count = static_cast<u32>((head >> 8) & 0xffffff);
+        auto& sink = back_engine->method_sink;
+        for (u32 i = 1; i <= count; ++i) {
+            const u64 write = entry[i];
+            sink.emplace_back(static_cast<u32>(write >> 32), static_cast<u32>(write));
+        }
+        return 1 + count;
     }
     }
     return 1;

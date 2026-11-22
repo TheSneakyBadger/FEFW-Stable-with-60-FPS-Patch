@@ -72,6 +72,9 @@ public:
     /// `segment`: the engine's current_dma_segment for the call, when the engine reads it.
     void Method(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument, bool is_last,
                 const GPUVAddr* segment) {
+        if (BatchWrite(engine, method, argument)) {
+            return;
+        }
         SelectEngine(engine);
         const size_t words = segment != nullptr ? 2 : 1;
         u64* const entry = Reserve(words);
@@ -87,6 +90,9 @@ public:
                      u32 amount, u32 methods_pending, const GPUVAddr* segment);
     /// A write made by a macro: CallMethod without the method sink, as the engines' macros do.
     void MacroWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+        if (BatchWrite(engine, method, argument)) {
+            return;
+        }
         SelectEngine(engine);
         u64* const entry = Reserve(1);
         entry[0] = static_cast<u64>(Kind::Method) | IsLast | Direct | (u64{method & 0xffff} << 8) |
@@ -125,6 +131,7 @@ private:
         Method, ///< Bits 8-23 method, 32-63 argument; flags IsLast, HasSegment (word 1), Direct
         Multi,  ///< Bits 8-23 method, 32-63 amount; word 1 methods pending, [segment], words
         Call,   ///< Bits 8-31 payload size in words; word 1 thunk, then the payload
+        Regs,   ///< Bits 8-31 count; then a word per write: bits 32-47 method, 0-31 value
     };
     static constexpr u64 IsLast = 1 << 4;
     static constexpr u64 HasSegment = 1 << 5;
@@ -143,8 +150,28 @@ private:
         (*reinterpret_cast<const Func*>(payload))();
     }
 
+    // Test 94l batches: plain register writes (Maxwell3D, outside its execution_mask; macro
+    // writes and pushbuffer ones alike) are gathered on the front into one Regs entry, which the
+    // back adds to the method sink in one go, instead of one ring entry (and one trip through
+    // the back's loop and Execute) per write: about 10 million a second in a Dagsion crowd
+    // (#63). The open batch's words are reserved but not committed, so the back never sees it
+    // until it is closed: by any other entry (Reserve), Publish, Drain, or when full.
+    // EDEN_REGISTER_BATCH=0: one entry per write, as before.
+    static constexpr u32 MaxBatch = 64;
+    /// Front: adds the write to the open batch (opening one) when it may go there.
+    bool BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument);
+    void CloseBatch() {
+        if (!batch_open) {
+            return;
+        }
+        batch_open = false;
+        batch_entry[0] = static_cast<u64>(Kind::Regs) | (u64{batch_count} << 8);
+        Commit(1 + batch_count);
+    }
+
     /// Room for an entry of `words` at the write position (never across the ring's end).
     u64* Reserve(size_t words) {
+        CloseBatch();
         const size_t index = write_position & RingMask;
         if (index + words <= RingWords && write_position + words - consumed_cache <= RingWords)
             [[likely]] {
@@ -189,6 +216,9 @@ private:
     /// Words between publishes: small right after a drain, while the back has nothing to do.
     size_t publish_every{PublishEvery};
     Tegra::Engines::EngineInterface* front_engine{};
+    bool batch_open{};
+    u32 batch_count{};
+    u64* batch_entry{};
 
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};

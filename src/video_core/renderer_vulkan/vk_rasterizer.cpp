@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <bit>
 #include <vector>
 #include <utility>
 #include <string>
@@ -168,6 +169,53 @@ VkRect2D GetScissorState(const Maxwell& regs, size_t index, u32 up_scale = 1, u3
     return scissor;
 }
 
+// #87: with the ultrawide patch, the world map routes are drawn with their own camera, a
+// 1920x1080 pixel-space one (view: identity moved back 100; projection: 2/1920, -1 / -2/1080, 1)
+// that the patch's UI fix never sees, so they stretched over the full width while the map sits in
+// the centred 16:9 area. When the vertex stage's camera buffer holds exactly that camera, its x
+// row is scaled by 2560/3440 so the routes land in the same centred area. The camera is matched
+// bit for bit, so no other draw is changed.
+void FefwUltrawideRoutes(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_memory) {
+    if (!Settings::values.fefw_ultrawide_active) {
+        return;
+    }
+    const auto& cb = maxwell3d.state.shader_stages[0].const_buffers[3];
+    if (!cb.enabled || cb.address == 0 || cb.size < 128) {
+        return;
+    }
+    u32 view_z = 0;
+    gpu_memory.ReadBlockUnsafe(cb.address + 11 * 4, &view_z, sizeof(view_z));
+    if (view_z != 0xc2c80000u) { // -100.0
+        return;
+    }
+    std::array<u32, 32> raw{};
+    gpu_memory.ReadBlockUnsafe(cb.address, raw.data(), sizeof(raw));
+    constexpr u32 x_scale = 0x3a888889u;   // 2/1920
+    constexpr u32 x_offset = 0xbf800000u;  // -1
+    constexpr u32 y_scale = 0xbaf2b9d6u;   // -2/1080
+    if (raw[12] != x_scale || raw[13] != 0 || raw[14] != 0 || raw[15] != x_offset ||
+        raw[17] != y_scale) {
+        return;
+    }
+    constexpr float squeeze = 2560.0f / 3440.0f;
+    const auto scaled = [&](u32 bits) {
+        return std::bit_cast<u32>(std::bit_cast<float>(bits) * squeeze);
+    };
+    raw[12] = scaled(raw[12]);
+    raw[15] = scaled(raw[15]);
+    // The combined view-projection that follows has the same x row.
+    if (raw[28] == x_scale && raw[29] == 0 && raw[30] == 0 && raw[31] == x_offset) {
+        raw[28] = scaled(raw[28]);
+        raw[31] = scaled(raw[31]);
+    }
+    gpu_memory.WriteBlock(cb.address, raw.data(), sizeof(raw));
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        LOG_INFO(Render_Vulkan, "Ultrawide: fitted the world map routes into the centred 16:9 area");
+    }
+}
+
 DrawParams MakeDrawParams(const Tegra::Engines::Maxwell3D::DrawManager::State& draw_state, u32 num_instances, bool is_indexed) {
     DrawParams params{
         .base_instance = draw_state.base_instance,
@@ -288,6 +336,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
             }
         }
     };
+    FefwUltrawideRoutes(*maxwell3d, *gpu_memory);
     FlushWork();
     BackStats::Mark(BackStats::FlushWork);
     gpu_memory->FlushCaching();

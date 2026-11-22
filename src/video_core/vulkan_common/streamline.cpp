@@ -11,6 +11,7 @@
 #include <chrono>
 #include <mutex>
 #include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -843,13 +844,88 @@ bool VsyncSleep() {
     // sleep never adds up.
     static u32 long_sleeps = 0;
     static u32 unstuck_count = 0;
+    // #63, a crowded spot in Dagsion: full screen at 4K, Reflex slept 7.8 s of every 10 (up to
+    // 34 ms at a time, never 10 ms over the cap, so the rule below never saw it) and held the game
+    // at 54-55 FPS with the card 80% busy and the main thread with time to spare; with no Reflex
+    // sleep the same spot ran a locked 59. Every 2 s: when the game's frames came over 3% slower
+    // than its rate and Reflex slept over a quarter of that time, Reflex is the one holding it
+    // back, so it doesn't sleep for 30 s (doubling each time it happens again, up to 5 minutes;
+    // back to 30 s after a minute at full rate with it sleeping). Each time it came back it held
+    // the game back again within 2 s (test 94h, Dagsion: caught at 34, 66 and 134 s, a dip each
+    // time), so from the second time on it stays off for the rest of the session.
+    // EDEN_DLSSG_REFLEX_HOLD_GUARD=0: off.
+    static const bool hold_guard = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_REFLEX_HOLD_GUARD");
+        return !(value && value[0] == '0');
+    }();
+    static s64 hold_window_start = 0;
+    static u32 hold_window_vsyncs = 0;
+    static s64 hold_window_sleep = 0;
+    static s64 hold_until = 0;
+    static s64 hold_backoff_ns = 30'000'000'000;
+    static s64 hold_good_since = 0;
+    static u32 hold_count = 0;
+    const bool held_off = hold_guard && now < hold_until;
+    if (held_off) {
+        hold_window_start = 0;
+    }
     if (skip_left > 0) {
         --skip_left;
-    } else {
+    } else if (!held_off) {
         const s64 sleep_start = NowNs();
         {
             FefwPresentTiming::Scope timing{FefwPresentTiming::ReflexSleep};
             fg.reflex_sleep(*token);
+        }
+        if (hold_guard) {
+            const s64 slept = NowNs() - sleep_start;
+            if (hold_window_start == 0) {
+                hold_window_start = sleep_start;
+                hold_window_vsyncs = 0;
+                hold_window_sleep = 0;
+            }
+            ++hold_window_vsyncs;
+            hold_window_sleep += slept;
+            const s64 span = NowNs() - hold_window_start;
+            if (span >= 2'000'000'000 && hold_window_vsyncs > 0) {
+                static constexpr s64 GAME_VSYNC_NS = 16'666'667;
+                const s64 expected = (std::max)(GAME_VSYNC_NS, period_ns);
+                const s64 interval = span / hold_window_vsyncs;
+                if (interval > expected * 103 / 100 && hold_window_sleep > span / 4) {
+                    ++hold_count;
+                    const bool for_good = hold_count >= 2;
+                    hold_until = for_good ? (std::numeric_limits<s64>::max)()
+                                          : NowNs() + hold_backoff_ns;
+                    if (for_good) {
+                        LOG_WARNING(Render_Vulkan,
+                                    "NVIDIA Reflex held the game back again (frames {:.1f} ms "
+                                    "apart, asleep {:.0f}% of the time): no Reflex sleep for the "
+                                    "rest of the session",
+                                    static_cast<double>(interval) / 1e6,
+                                    static_cast<double>(hold_window_sleep) * 100.0 /
+                                        static_cast<double>(span));
+                    } else {
+                        LOG_WARNING(Render_Vulkan,
+                                    "NVIDIA Reflex held the game back (frames {:.1f} ms apart, "
+                                    "asleep {:.0f}% of the time): no Reflex sleep for {} s",
+                                    static_cast<double>(interval) / 1e6,
+                                    static_cast<double>(hold_window_sleep) * 100.0 /
+                                        static_cast<double>(span),
+                                    hold_backoff_ns / 1'000'000'000);
+                    }
+                    hold_backoff_ns = (std::min<s64>)(hold_backoff_ns * 2, 300'000'000'000);
+                    hold_good_since = 0;
+                } else if (interval <= expected * 101 / 100) {
+                    if (hold_good_since == 0) {
+                        hold_good_since = NowNs();
+                    } else if (NowNs() - hold_good_since > 60'000'000'000) {
+                        hold_backoff_ns = 30'000'000'000;
+                    }
+                } else {
+                    hold_good_since = 0;
+                }
+                hold_window_start = 0;
+            }
         }
         static constexpr s64 STUCK_SLEEP_NS = 40'000'000;
         static constexpr s64 TIMER_PACED_STUCK_SLEEP_NS = 10'000'000;
