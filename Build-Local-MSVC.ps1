@@ -429,7 +429,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.14 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.15 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -500,6 +500,17 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.5.15:
+- Hair and capes hang and sway in 60 FPS mode as they do at 30 FPS.
+- The game no longer freezes when the sound output goes away (a Bluetooth headset switching
+  off): the sound is moved to the current default output.
+- The updater starts Windows PowerShell by its full path, and if it can't, says where the
+  download is and how to install it by hand.
+- A buffer or image refused by the video memory budget is tried again instead of ending the
+  session.
+- Fixes from the Lichii and Orchid forks (texture cache bounds, thread cleanup, a shader edge
+  case, a compiled-code race), and more in the log for long sessions.
 
 New in v1.7.5.14:
 - NVIDIA DLSS frame generation no longer gets held at 44-58 FPS on long battle maps: NVIDIA

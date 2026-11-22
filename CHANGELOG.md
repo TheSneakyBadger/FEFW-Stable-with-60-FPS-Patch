@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.7.5.15
+
+Hair and capes as at 30 FPS, no more freezes when a Bluetooth headset switches off, and fixes for the updater and for a rare crash.
+
+- **Hair and capes hang and sway in 60 FPS mode as they do at 30 FPS.** The game moves its cloth a set step every frame, so running it twice as often made hair and capes hang and sway differently. Their gravity and wind are now scaled per frame so each point settles where it would at 30 FPS.
+- **No more freeze when the sound output goes away** ([#84](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/84)). When a Bluetooth headset switched off with the Auto (cubeb) output engine, the game could wait forever for the sound to be taken. Now after half a second the queued sound is dropped and the output is reopened on the current default device.
+- **The updater starts even where Windows PowerShell isn't found by name** ([#85](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/85)). It now starts it by its full path, then by name, then PowerShell 7, and if none starts it says where the checked download is and how to install it by hand.
+- **A rare crash when video memory ran short is gone** ([#86](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/86)). When the graphics driver's budget refused a buffer or image, Fortune's Eden ended the session. It now tries again over the budget, then in system memory.
+- **Fixes from the Lichii and Orchid forks**: texture cache bounds and sparse segments, thread cleanup outside the scheduler lock, a shader bitfield edge case, and a race when game code is recompiled.
+- **More in the log for long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): every 10 s, the time the game's threads spend in the emulator's GPU caches, to find why some sessions slow down after an hour. It costs well under 0.1% of a CPU core.
+- The compiled-code list that comes with Fortune's Eden has the newest blocks from testing.
+
+Everything else is as in [v1.7.5.14](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.14).
+
 ## v1.7.5.14
 
 A fix for NVIDIA DLSS frame generation slowing the game down on long battle maps.

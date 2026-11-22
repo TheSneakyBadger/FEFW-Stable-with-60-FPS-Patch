@@ -23,7 +23,7 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.14)
+## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.15)
 
 - **Much less stutter in places you've been before** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): textures, once converted for your graphics card, are kept on disk (**Texture cache on disk** on the home screen: 2 GB by default, or Off, 4 GB or 8 GB), so they load instead of being converted again. On a hard drive it stays off (v1.7.5.1), as it would slow the game's own reads, and on cards with 4 GB of video memory or less too (v1.7.5.5).
 - **Steadier over long sessions** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): video memory from earlier scenes and dungeons is cleaned up, cards with 10 GB or more keep more loaded before cleaning up, and bursts of new textures no longer stall the frame.
@@ -32,6 +32,7 @@ It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-
 - **New areas no longer hitch the first time** (v1.7.5.11, v1.7.5.12, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): a new texture shows its average colour for a moment and is converted a few at a time, with the colours of practically every texture in the game coming with Fortune's Eden, so it works from your first session.
 - **Less stutter from the very first session** (v1.7.5.9, v1.7.5.11, v1.7.5.13): the game code compiled while testing (now including later-game battles) comes with Fortune's Eden and is compiled when the game starts.
 - **NVIDIA DLSS frame generation no longer gets stuck at about 39 FPS** after a loading screen, or at 44–58 FPS on long battle maps (v1.7.5.8, v1.7.5.14, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): NVIDIA Reflex is reset when it holds the game back.
+- **Hair and capes as at 30 FPS** in 60 FPS mode (v1.7.5.15), and **no freeze when a Bluetooth headset switches off** (v1.7.5.15, [#84](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/84)).
 - **Frame generation stays under your other caps** (v1.7.5.7): it reads RTSS's limit and the NVIDIA driver's Max Frame Rate and paces under the lowest, and the texture cleanup follows the video memory Windows allows right now, so other programs taking some no longer make the game choppy.
 - **NVIDIA DLSS frame generation paced like a native PC game** (v1.7.5.6, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): NVIDIA Reflex waits at the start of the game's frame and is told when it really starts, and the game's frames are spaced as evenly as with AMD FSR 3.1 frame generation.
 - **Smoother NVIDIA DLSS frame generation and far fewer texture reloads** (v1.7.5.5, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)), and no more black shading on AMD cards on Linux (v1.7.5.5, [#44](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/44)).
