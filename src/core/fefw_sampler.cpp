@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cstdio>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -22,7 +21,6 @@
 #include "dynarmic/interface/fefw_jit_stats.h"
 
 #include "common/common_types.h"
-#include "common/fs/path_util.h"
 #include "common/logging.h"
 
 #ifdef _WIN32
@@ -80,93 +78,14 @@ void OnBlock(const void* begin_ptr, const void* end_ptr, std::uint64_t location)
     blocks.emplace(begin, std::make_pair(end, pc));
 }
 
-struct BlockHit {
-    u64 begin = 0;
-    u64 end = 0;
-    u64 pc = 0;
-};
-
-BlockHit BlockOf(u64 ip) {
+u64 GuestPcOf(u64 ip) {
     std::scoped_lock lock{blocks_mutex};
     auto it = blocks.upper_bound(ip);
     if (it == blocks.begin()) {
-        return {};
+        return 0;
     }
     --it;
-    if (ip >= it->second.first) {
-        return {};
-    }
-    return {it->first, it->second.first, it->second.second};
-}
-
-// Test 94c: per block, where in its PC code the samples land; and samples outside any block (the
-// recompiler's slow paths and helpers). Written to log/jit-hot-blocks.txt every 30 s.
-struct BlockSamples {
-    u64 end = 0;
-    u64 pc = 0;
-    u64 samples = 0;
-    std::unordered_map<u32, u32> offsets;
-};
-
-bool Readable(const void* ptr, std::size_t size) {
-    MEMORY_BASIC_INFORMATION info{};
-    if (VirtualQuery(ptr, &info, sizeof(info)) == 0 || info.State != MEM_COMMIT ||
-        (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
-        return false;
-    }
-    const auto end = reinterpret_cast<const u8*>(info.BaseAddress) + info.RegionSize;
-    return reinterpret_cast<const u8*>(ptr) + size <= end;
-}
-
-void WriteHotBlocks(const std::unordered_map<u64, BlockSamples>& hot,
-                    const std::unordered_map<u64, u64>& outside, u64 total) {
-    const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "jit-hot-blocks.txt";
-    std::FILE* const out = std::fopen(path.string().c_str(), "w");
-    if (out == nullptr) {
-        return;
-    }
-    std::fprintf(out, "Main thread samples: %llu\n", static_cast<unsigned long long>(total));
-    std::vector<std::pair<u64, const BlockSamples*>> order;
-    for (const auto& [begin, stats] : hot) {
-        order.emplace_back(begin, &stats);
-    }
-    std::ranges::sort(order, [](const auto& a, const auto& b) { return a.second->samples > b.second->samples; });
-    for (std::size_t i = 0; i < order.size() && i < 40; ++i) {
-        const u64 begin = order[i].first;
-        const BlockSamples& stats = *order[i].second;
-        const u64 size = std::min<u64>(stats.end - begin, 16384);
-        std::fprintf(out, "BLOCK guest %llx host %llx size %llu samples %llu\n",
-                     static_cast<unsigned long long>(stats.pc), static_cast<unsigned long long>(begin),
-                     static_cast<unsigned long long>(stats.end - begin),
-                     static_cast<unsigned long long>(stats.samples));
-        std::vector<std::pair<u32, u32>> offs(stats.offsets.begin(), stats.offsets.end());
-        std::ranges::sort(offs, [](const auto& a, const auto& b) { return a.first < b.first; });
-        std::fprintf(out, "OFFSETS");
-        for (const auto& [off, n] : offs) {
-            std::fprintf(out, " %x:%u", off, n);
-        }
-        std::fprintf(out, "\nCODE ");
-        const auto* const code = reinterpret_cast<const u8*>(begin);
-        const bool readable = Readable(code, size);
-        for (u64 k = 0; readable && k < size; ++k) {
-            std::fprintf(out, "%02x", code[k]);
-        }
-        std::fprintf(out, "\n");
-    }
-    std::vector<std::pair<u64, u64>> regions(outside.begin(), outside.end());
-    std::ranges::sort(regions, [](const auto& a, const auto& b) { return a.second > b.second; });
-    for (std::size_t i = 0; i < regions.size() && i < 30; ++i) {
-        const u64 base = regions[i].first << 8;
-        std::fprintf(out, "OUTSIDE host %llx samples %llu\nCODE ", static_cast<unsigned long long>(base),
-                     static_cast<unsigned long long>(regions[i].second));
-        const auto* const code = reinterpret_cast<const u8*>(base);
-        const bool readable = Readable(code, 512);
-        for (u64 k = 0; readable && k < 512; ++k) {
-            std::fprintf(out, "%02x", code[k]);
-        }
-        std::fprintf(out, "\n");
-    }
-    std::fclose(out);
+    return ip < it->second.first ? it->second.second : 0;
 }
 
 void Run() {
@@ -175,8 +94,6 @@ void Run() {
     std::unordered_map<u64, u64> exe_buckets; // RVA / 64 -> samples
     std::unordered_map<std::string, u64> modules;
     std::unordered_map<u64, u64> guest_buckets; // guest PC / 64 -> samples
-    std::unordered_map<u64, BlockSamples> hot_blocks; // host block start -> samples
-    std::unordered_map<u64, u64> outside_blocks;      // host address / 256 -> samples
     u64 jit_resolved = 0;
     u64 jit = 0;
     u64 in_exe = 0;
@@ -240,16 +157,9 @@ void Run() {
                                         reinterpret_cast<LPCWSTR>(ip), &module) ||
                     module == nullptr) {
                     ++jit;
-                    if (const BlockHit hit = BlockOf(ip); hit.begin != 0) {
+                    if (const u64 pc = GuestPcOf(ip); pc != 0) {
                         ++jit_resolved;
-                        ++guest_buckets[hit.pc >> 6];
-                        BlockSamples& stats = hot_blocks[hit.begin];
-                        stats.end = hit.end;
-                        stats.pc = hit.pc;
-                        ++stats.samples;
-                        ++stats.offsets[static_cast<u32>(ip - hit.begin)];
-                    } else {
-                        ++outside_blocks[ip >> 8];
+                        ++guest_buckets[pc >> 6];
                     }
                 } else if (module == exe) {
                     ++in_exe;
@@ -298,13 +208,6 @@ void Run() {
                      "by guest address (64-byte blocks, %): {}",
                      pct(jit_resolved), guest_text);
         }
-        if (total != 0) {
-            // Blocks freed since they were sampled may have been reused; good enough for a test.
-            std::scoped_lock lock{blocks_mutex};
-            WriteHotBlocks(hot_blocks, outside_blocks, total);
-        }
-        hot_blocks.clear();
-        outside_blocks.clear();
         guest_buckets.clear();
         jit_resolved = 0;
         exe_buckets.clear();
