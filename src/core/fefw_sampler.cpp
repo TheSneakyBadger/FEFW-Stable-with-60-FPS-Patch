@@ -118,14 +118,75 @@ bool Readable(const void* ptr, std::size_t size) {
     return reinterpret_cast<const u8*>(ptr) + size <= end;
 }
 
+void WalkGuestStack(u64 state, u64 memory_base, std::unordered_map<u64, u64>& callers, u64& stacks) {
+    if (state == 0 || memory_base == 0) {
+        return;
+    }
+    const HANDLE self = GetCurrentProcess();
+    const auto read = [&](u64 address, u64& value) {
+        SIZE_T done = 0;
+        return ReadProcessMemory(self, reinterpret_cast<const void*>(address), &value, sizeof(value),
+                                 &done) != 0 &&
+               done == sizeof(value);
+    };
+    u64 fp = 0;
+    u64 lr = 0;
+    if (!read(state + 0xe8, fp) || !read(state + 0xf0, lr)) {
+        return;
+    }
+    ++stacks;
+    std::array<u64, 24> seen{};
+    std::size_t count = 0;
+    const auto add = [&](u64 address) {
+        address &= (u64{1} << 48) - 1;
+        if (address == 0) {
+            return;
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            if (seen[i] == address) {
+                return;
+            }
+        }
+        if (count < seen.size()) {
+            seen[count++] = address;
+            ++callers[address];
+        }
+    };
+    add(lr);
+    for (int depth = 0; depth < 20 && fp != 0 && (fp & 0xf) == 0; ++depth) {
+        u64 next = 0;
+        u64 ret = 0;
+        if (!read(memory_base + fp, next) || !read(memory_base + fp + 8, ret)) {
+            break;
+        }
+        add(ret);
+        if (next <= fp) {
+            break;
+        }
+        fp = next;
+    }
+}
+
 void WriteHotBlocks(const std::unordered_map<u64, BlockSamples>& hot,
-                    const std::unordered_map<u64, u64>& outside, u64 total) {
+                    const std::unordered_map<u64, u64>& outside, u64 total,
+                    const std::unordered_map<u64, u64>& callers, u64 stacks) {
     const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "jit-hot-blocks.txt";
     std::FILE* const out = std::fopen(path.string().c_str(), "w");
     if (out == nullptr) {
         return;
     }
-    std::fprintf(out, "Main thread samples: %llu\n", static_cast<unsigned long long>(total));
+    std::fprintf(out, "Main thread samples: %llu, with a game call stack: %llu\n",
+                 static_cast<unsigned long long>(total), static_cast<unsigned long long>(stacks));
+    {
+        std::vector<std::pair<u64, u64>> list(callers.begin(), callers.end());
+        std::ranges::sort(list, [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::fprintf(out, "CALLERS");
+        for (std::size_t i = 0; i < list.size() && i < 3000; ++i) {
+            std::fprintf(out, " %llx:%llu", static_cast<unsigned long long>(list[i].first),
+                         static_cast<unsigned long long>(list[i].second));
+        }
+        std::fprintf(out, "\n");
+    }
     std::vector<std::pair<u64, const BlockSamples*>> order;
     for (const auto& [begin, stats] : hot) {
         order.emplace_back(begin, &stats);
@@ -177,6 +238,8 @@ void Run() {
     std::unordered_map<u64, u64> guest_buckets; // guest PC / 64 -> samples
     std::unordered_map<u64, BlockSamples> hot_blocks; // host block start -> samples
     std::unordered_map<u64, u64> outside_blocks;      // host address / 256 -> samples
+    std::unordered_map<u64, u64> callers;             // guest return address -> samples (inclusive)
+    u64 stacks = 0;
     u64 jit_resolved = 0;
     u64 jit = 0;
     u64 in_exe = 0;
@@ -219,7 +282,7 @@ void Run() {
                     continue;
                 }
                 CONTEXT context{};
-                context.ContextFlags = CONTEXT_CONTROL;
+                context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
                 const BOOL ok = GetThreadContext(handle, &context);
                 ResumeThread(handle);
                 if (!ok) {
@@ -248,6 +311,12 @@ void Run() {
                         stats.pc = hit.pc;
                         ++stats.samples;
                         ++stats.offsets[static_cast<u32>(ip - hit.begin)];
+#if defined(_M_X64)
+                        // Test 94d: the game's call stack. In recompiled code R15 holds the
+                        // emulated CPU state (X29 at +0xe8, X30 at +0xf0) and R13 the base of
+                        // the game's memory; follow the frame records (fp, lr) from X29.
+                        WalkGuestStack(context.R15, context.R13, callers, stacks);
+#endif
                     } else {
                         ++outside_blocks[ip >> 8];
                     }
@@ -301,10 +370,12 @@ void Run() {
         if (total != 0) {
             // Blocks freed since they were sampled may have been reused; good enough for a test.
             std::scoped_lock lock{blocks_mutex};
-            WriteHotBlocks(hot_blocks, outside_blocks, total);
+            WriteHotBlocks(hot_blocks, outside_blocks, total, callers, stacks);
         }
         hot_blocks.clear();
         outside_blocks.clear();
+        callers.clear();
+        stacks = 0;
         guest_buckets.clear();
         jit_resolved = 0;
         exe_buckets.clear();
