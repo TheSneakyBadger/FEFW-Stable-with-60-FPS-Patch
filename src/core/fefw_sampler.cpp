@@ -118,7 +118,8 @@ bool Readable(const void* ptr, std::size_t size) {
     return reinterpret_cast<const u8*>(ptr) + size <= end;
 }
 
-void WalkGuestStack(u64 state, u64 memory_base, std::unordered_map<u64, u64>& callers, u64& stacks) {
+void WalkGuestStack(u64 state, u64 memory_base, std::unordered_map<u64, u64>& callers, u64& stacks,
+                    std::map<std::vector<u64>, u64>& paths) {
     if (state == 0 || memory_base == 0) {
         return;
     }
@@ -152,6 +153,8 @@ void WalkGuestStack(u64 state, u64 memory_base, std::unordered_map<u64, u64>& ca
             ++callers[address];
         }
     };
+    std::vector<u64> path;
+    path.push_back(lr & ((u64{1} << 48) - 1));
     add(lr);
     for (int depth = 0; depth < 20 && fp != 0 && (fp & 0xf) == 0; ++depth) {
         u64 next = 0;
@@ -160,17 +163,21 @@ void WalkGuestStack(u64 state, u64 memory_base, std::unordered_map<u64, u64>& ca
             break;
         }
         add(ret);
+        path.push_back(ret & ((u64{1} << 48) - 1));
         if (next <= fp) {
             break;
         }
         fp = next;
     }
+    ++paths[path];
 }
 
 void WriteHotBlocks(const std::unordered_map<u64, BlockSamples>& hot,
                     const std::unordered_map<u64, u64>& outside, u64 total,
-                    const std::unordered_map<u64, u64>& callers, u64 stacks) {
-    const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "jit-hot-blocks.txt";
+                    const std::unordered_map<u64, u64>& callers, u64 stacks,
+                    const std::map<std::vector<u64>, u64>& paths, int window) {
+    const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
+                      fmt::format("jit-hot-blocks-{}.txt", window);
     std::FILE* const out = std::fopen(path.string().c_str(), "w");
     if (out == nullptr) {
         return;
@@ -186,6 +193,20 @@ void WriteHotBlocks(const std::unordered_map<u64, BlockSamples>& hot,
                          static_cast<unsigned long long>(list[i].second));
         }
         std::fprintf(out, "\n");
+    }
+    {
+        std::vector<std::pair<const std::vector<u64>*, u64>> list;
+        for (const auto& [stack, n] : paths) {
+            list.emplace_back(&stack, n);
+        }
+        std::ranges::sort(list, [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (std::size_t i = 0; i < list.size() && i < 4000; ++i) {
+            std::fprintf(out, "STACK %llu", static_cast<unsigned long long>(list[i].second));
+            for (const u64 frame : *list[i].first) {
+                std::fprintf(out, " %llx", static_cast<unsigned long long>(frame));
+            }
+            std::fprintf(out, "\n");
+        }
     }
     std::vector<std::pair<u64, const BlockSamples*>> order;
     for (const auto& [begin, stats] : hot) {
@@ -239,6 +260,8 @@ void Run() {
     std::unordered_map<u64, BlockSamples> hot_blocks; // host block start -> samples
     std::unordered_map<u64, u64> outside_blocks;      // host address / 256 -> samples
     std::unordered_map<u64, u64> callers;             // guest return address -> samples (inclusive)
+    std::map<std::vector<u64>, u64> paths;            // whole call stacks -> samples
+    int window = 0;
     u64 stacks = 0;
     u64 jit_resolved = 0;
     u64 jit = 0;
@@ -315,7 +338,7 @@ void Run() {
                         // Test 94d: the game's call stack. In recompiled code R15 holds the
                         // emulated CPU state (X29 at +0xe8, X30 at +0xf0) and R13 the base of
                         // the game's memory; follow the frame records (fp, lr) from X29.
-                        WalkGuestStack(context.R15, context.R13, callers, stacks);
+                        WalkGuestStack(context.R15, context.R13, callers, stacks, paths);
 #endif
                     } else {
                         ++outside_blocks[ip >> 8];
@@ -329,7 +352,7 @@ void Run() {
             }
         }
         const auto now = std::chrono::steady_clock::now();
-        if (now - window_start < std::chrono::seconds{30}) {
+        if (now - window_start < std::chrono::seconds{20}) {
             continue;
         }
         const double seconds = std::chrono::duration<double>(now - window_start).count();
@@ -370,11 +393,12 @@ void Run() {
         if (total != 0) {
             // Blocks freed since they were sampled may have been reused; good enough for a test.
             std::scoped_lock lock{blocks_mutex};
-            WriteHotBlocks(hot_blocks, outside_blocks, total, callers, stacks);
+            WriteHotBlocks(hot_blocks, outside_blocks, total, callers, stacks, paths, window++ % 20);
         }
         hot_blocks.clear();
         outside_blocks.clear();
         callers.clear();
+        paths.clear();
         stacks = 0;
         guest_buckets.clear();
         jit_resolved = 0;
