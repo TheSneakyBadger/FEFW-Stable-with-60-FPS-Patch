@@ -34,6 +34,7 @@
 #include "common/scope_exit.h"
 #include "common/fs/path_util.h"
 #include "common/settings.h"
+#include "core/fefw_sampler.h"
 #include "video_core/textures/decoders.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/gpu_logging/gpu_logging.h"
@@ -400,6 +401,11 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
             }
         }
     };
+    static thread_local bool fefw_sampler_registered = false;
+    if (!fefw_sampler_registered) {
+        fefw_sampler_registered = true;
+        FefwSampler::RegisterDrawThread();
+    }
     FefwUltrawideRoutes(*maxwell3d, *gpu_memory);
     FlushWork();
     BackStats::Mark(BackStats::FlushWork);

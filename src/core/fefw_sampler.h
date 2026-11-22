@@ -22,4 +22,8 @@ void NoteCurrentThread(const void* thread);
 /// The game's presenting thread (from the wait statistics).
 void SetRenderThread(const void* thread);
 
+/// Test 94g: the GPU emulation's draw thread, from its first draw. It is sampled too, and where
+/// in Fortune's Eden.exe its time goes is written to log/draw-thread-N.txt every 20 s.
+void RegisterDrawThread();
+
 } // namespace FefwSampler

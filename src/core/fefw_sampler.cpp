@@ -43,6 +43,7 @@ struct Slot {
 
 std::array<Slot, MAX_CORES> slots;
 std::atomic<const void*> render_thread{nullptr};
+std::atomic<HANDLE> draw_thread{nullptr};
 thread_local Slot* my_slot = nullptr;
 std::once_flag start_once;
 
@@ -260,6 +261,9 @@ void Run() {
     std::unordered_map<u64, BlockSamples> hot_blocks; // host block start -> samples
     std::unordered_map<u64, u64> outside_blocks;      // host address / 256 -> samples
     std::unordered_map<u64, u64> callers;             // guest return address -> samples (inclusive)
+    std::unordered_map<u64, u64> draw_buckets;        // draw thread: exe RVA / 16 -> samples
+    std::unordered_map<std::string, u64> draw_modules;
+    u64 draw_total = 0;
     std::map<std::vector<u64>, u64> paths;            // whole call stacks -> samples
     int window = 0;
     u64 stacks = 0;
@@ -351,6 +355,33 @@ void Run() {
                 }
             }
         }
+        if (const HANDLE handle = draw_thread.load(std::memory_order_acquire); handle != nullptr) {
+            if (SuspendThread(handle) != static_cast<DWORD>(-1)) {
+                CONTEXT context{};
+                context.ContextFlags = CONTEXT_CONTROL;
+                const BOOL ok = GetThreadContext(handle, &context);
+                ResumeThread(handle);
+#if defined(_M_X64)
+                const u64 ip = ok ? context.Rip : 0;
+#else
+                const u64 ip = 0;
+#endif
+                if (ip != 0) {
+                    ++draw_total;
+                    HMODULE module = nullptr;
+                    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                            reinterpret_cast<LPCWSTR>(ip), &module) ||
+                        module == nullptr) {
+                        ++draw_modules["(no module)"];
+                    } else if (module == exe) {
+                        ++draw_buckets[(ip - reinterpret_cast<u64>(exe)) >> 4];
+                    } else {
+                        ++draw_modules[module_name(module)];
+                    }
+                }
+            }
+        }
         const auto now = std::chrono::steady_clock::now();
         if (now - window_start < std::chrono::seconds{20}) {
             continue;
@@ -395,6 +426,26 @@ void Run() {
             std::scoped_lock lock{blocks_mutex};
             WriteHotBlocks(hot_blocks, outside_blocks, total, callers, stacks, paths, window++ % 20);
         }
+        if (draw_total != 0) {
+            const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
+                              fmt::format("draw-thread-{}.txt", (window + 19) % 20);
+            if (std::FILE* const out = std::fopen(path.string().c_str(), "w")) {
+                std::fprintf(out, "Draw thread samples: %llu\n", static_cast<unsigned long long>(draw_total));
+                for (const auto& [name, n] : draw_modules) {
+                    std::fprintf(out, "MODULE %s %llu\n", name.c_str(), static_cast<unsigned long long>(n));
+                }
+                std::vector<std::pair<u64, u64>> list(draw_buckets.begin(), draw_buckets.end());
+                std::ranges::sort(list, [](const auto& a, const auto& b) { return a.second > b.second; });
+                for (std::size_t i = 0; i < list.size() && i < 6000; ++i) {
+                    std::fprintf(out, "RVA %llx %llu\n", static_cast<unsigned long long>(list[i].first << 4),
+                                 static_cast<unsigned long long>(list[i].second));
+                }
+                std::fclose(out);
+            }
+        }
+        draw_buckets.clear();
+        draw_modules.clear();
+        draw_total = 0;
         hot_blocks.clear();
         outside_blocks.clear();
         callers.clear();
@@ -440,11 +491,24 @@ void SetRenderThread(const void* thread) {
     render_thread.store(thread, std::memory_order_relaxed);
 }
 
+void RegisterDrawThread() {
+    if (!Enabled() || draw_thread.load(std::memory_order_relaxed) != nullptr) {
+        return;
+    }
+    HANDLE handle = nullptr;
+    if (DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle,
+                        THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                        FALSE, 0)) {
+        draw_thread.store(handle, std::memory_order_release);
+    }
+}
+
 #else
 
 void RegisterCoreThread(std::size_t) {}
 void NoteCurrentThread(const void*) {}
 void SetRenderThread(const void*) {}
+void RegisterDrawThread() {}
 
 #endif
 
