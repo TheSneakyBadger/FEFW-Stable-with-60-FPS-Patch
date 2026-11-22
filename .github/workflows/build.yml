@@ -6,7 +6,7 @@ name: Linux build
 
 on:
   push:
-    branches: [linux-build]
+    branches: [linux-build, linux-test-fsr4]
   workflow_dispatch:
 
 concurrency:
@@ -91,6 +91,27 @@ jobs:
           cmake --build build --target yuzu
           ccache -s
 
+      # AMD FSR 4 for Linux: AMD ships its FSR 4 Vulkan library for Windows only, so the Linux
+      # package gets fsr4-vk (GPL-3.0-only, an independent Vulkan implementation using the models
+      # and shaders from AMD's FidelityFX SDK 2.3.0 DX12 library, MIT). Built here because the
+      # generated assets can't be kept in the repository. If it fails, the package goes out
+      # without it and FSR 4 falls back to FSR 3.1, as before.
+      - name: AMD FSR 4 provider (fsr4-vk)
+        continue-on-error: true
+        run: |
+          for _ in 1 2 3; do pacman -S --noconfirm --needed python python-zstandard llvm && break; done
+          git clone -q https://github.com/Astyyyyy/fsr4-vk fsr4-vk-build
+          cd fsr4-vk-build
+          git checkout -q b0125ea
+          git submodule update --init --recursive
+          curl -fL --retry 10 -o amd_fidelityfx_upscaler_dx12.dll \
+            https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.3.0/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll
+          sha256sum amd_fidelityfx_upscaler_dx12.dll
+          python3 tools/setup.py --dll amd_fidelityfx_upscaler_dx12.dll
+          FSR4_BUILD_JOBS=$(nproc) bash tools/build/linux.sh
+          ls -la build/linux/amd_fidelityfx_upscaler_vk.so
+          cp build/linux/amd_fidelityfx_upscaler_vk.so ../amd_fidelityfx_upscaler_vk.so
+
       - name: Package
         run: |
           export ICON="$PWD/dist/dev.eden_emu.eden.svg"
@@ -119,6 +140,16 @@ jobs:
           if [ -f externals/FidelityFX-SDK/LICENSE.txt ]; then
             mkdir -p "artifacts/$name/licenses/amd-fidelityfx-sdk"
             cp externals/FidelityFX-SDK/LICENSE.txt "artifacts/$name/licenses/amd-fidelityfx-sdk/"
+          fi
+          if [ -f amd_fidelityfx_upscaler_vk.so ]; then
+            cp amd_fidelityfx_upscaler_vk.so "artifacts/$name/"
+            mkdir -p "artifacts/$name/licenses/fsr4-vk"
+            cp fsr4-vk-build/LICENSE "artifacts/$name/licenses/fsr4-vk/LICENSE"
+            cp fsr4-vk-build/THIRD_PARTY_NOTICES.md "artifacts/$name/licenses/fsr4-vk/"
+            cp -r fsr4-vk-build/LICENSES "artifacts/$name/licenses/fsr4-vk/"
+            echo "AMD FSR 4 provider: included"
+          else
+            echo "AMD FSR 4 provider: not built, the package goes out without it"
           fi
           # tar keeps the executable bits (the artifact zip would drop them).
           tar -C artifacts -czf "$name.tar.gz" "$name"
