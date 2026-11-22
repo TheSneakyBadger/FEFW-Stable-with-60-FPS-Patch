@@ -136,6 +136,21 @@ void Report() {
              pct(list_start), pct(list_end),
              d.ring_ticks[3] > list_start + list_end ? pct(d.ring_ticks[3] - list_start - list_end)
                                                      : 0.0);
+    {
+        // Test 94n: which methods the macro writes the back executes one by one are.
+        std::array<std::pair<u32, u32>, 0x1000> top{};
+        for (u32 m = 0; m < top.size(); ++m) {
+            top[m] = {d.macro_methods[m], m};
+        }
+        std::partial_sort(top.begin(), top.begin() + 16, top.end(),
+                          [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::string text;
+        for (u32 i = 0; i < 16 && top[i].first != 0; ++i) {
+            text += fmt::format("{}{:#x} {:.0f}/s", i ? ", " : "", top[i].second,
+                                per_s(top[i].first));
+        }
+        LOG_INFO(Render_Vulkan, "Macro writes by method: {}", text.empty() ? "none" : text);
+    }
     const u64 readbacks = Take(shared.semaphore_readbacks);
     LOG_INFO(Render_Vulkan,
              "Fences: coalesced signals run at once {:.0f}/s, at a fence {:.0f}/s; fences {:.0f}/s; "

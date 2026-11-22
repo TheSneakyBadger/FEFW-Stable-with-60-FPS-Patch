@@ -544,6 +544,12 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
                 const u64 now = BackStats::Stamp();
                 BackStats::draw_thread.ring_ticks[kind] += now - entry_start;
                 ++BackStats::draw_thread.ring_count[kind];
+                if (kind == 1) {
+                    const u32 method = static_cast<u32>((head >> 8) & 0xffff);
+                    if (method < BackStats::draw_thread.macro_methods.size()) {
+                        ++BackStats::draw_thread.macro_methods[method];
+                    }
+                }
                 entry_start = now;
             }
             read_position += size != 0 ? size : RingWords - index;
