@@ -129,6 +129,25 @@ namespace {
     }
 } // namespace
 
+namespace {
+// Fortune's Eden: what VMA counts against each heap's budget, for the log when an allocation is
+// refused (#86: a 64 MiB buffer refused as out of device memory on a 16 GB card with 6 GB free).
+void LogHeapBudgets(VmaAllocator allocator) {
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    for (u32 heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if (budgets[heap].budget == 0) {
+            continue;
+        }
+        LOG_WARNING(Render_Vulkan,
+                    "Memory heap {}: {} MiB in use of a {} MiB budget ({} MiB in {} blocks)",
+                    heap, budgets[heap].usage >> 20, budgets[heap].budget >> 20,
+                    budgets[heap].statistics.blockBytes >> 20,
+                    budgets[heap].statistics.blockCount);
+    }
+}
+} // namespace
+
 //MemoryCommit is now VMA-backed
 MemoryCommit::MemoryCommit(VmaAllocator alloc, VmaAllocation a,
                             const VmaAllocationInfo &info) noexcept
@@ -302,7 +321,25 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci) const
     VkImage handle{};
     VmaAllocation allocation{};
     VmaAllocationInfo alloc_info{};
-    vk::Check(vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info));
+    VkResult result = vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info);
+    if (result != VK_SUCCESS) {
+        // Fortune's Eden: as Commit does, over the budget rather than fail (VMA refuses an
+        // allocation that would pass its budget as out of device memory; the driver may still
+        // have room), then outside video memory (#86).
+        LOG_WARNING(Render_Vulkan, "Image allocation refused ({}x{}, result {}): trying again "
+                                   "over the budget",
+                    ci.extent.width, ci.extent.height, static_cast<s32>(result));
+        LogHeapBudgets(allocator);
+        auto relaxed = alloc_ci;
+        relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateImage(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+        if (result != VK_SUCCESS) {
+            relaxed.preferredFlags &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+            relaxed.flags &= ~VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+            result = vmaCreateImage(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+        }
+    }
+    vk::Check(result);
     CheckPlacement(allocator, allocation, alloc_info.size, "image");
 
     // Log GPU memory allocation for images
@@ -342,10 +379,32 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
     VmaAllocation allocation{};
     VkMemoryPropertyFlags property_flags{};
 
-    const VkResult result = vmaCreateBuffer(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info);
+    VkResult result = vmaCreateBuffer(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info);
     if (result != VK_SUCCESS) {
-        LOG_CRITICAL(Render_Vulkan, "Buffer allocation failed: bytes={}, usage={}, buffer_flags={:#x}, result={}",
-                     ci.size, static_cast<u32>(usage), ci.usage, static_cast<s32>(result));
+        // Fortune's Eden: as Commit does, over the budget rather than fail, then outside video
+        // memory: a 64 MiB buffer refused here ended the session on a 16 GB card that had 6 GB
+        // free (#86).
+        LOG_WARNING(Render_Vulkan,
+                    "Buffer allocation refused: bytes={}, usage={}, buffer_flags={:#x}, result={}: "
+                    "trying again over the budget",
+                    ci.size, static_cast<u32>(usage), ci.usage, static_cast<s32>(result));
+        LogHeapBudgets(allocator);
+        auto relaxed = alloc_ci;
+        relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateBuffer(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+        if (result != VK_SUCCESS &&
+            (relaxed.preferredFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+            relaxed.preferredFlags &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+            result = vmaCreateBuffer(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+        }
+        if (result != VK_SUCCESS) {
+            LOG_CRITICAL(Render_Vulkan,
+                         "Buffer allocation failed: bytes={}, usage={}, buffer_flags={:#x}, "
+                         "result={}",
+                         ci.size, static_cast<u32>(usage), ci.usage, static_cast<s32>(result));
+        } else {
+            LOG_WARNING(Render_Vulkan, "Buffer allocation succeeded on the second try");
+        }
     }
     vk::Check(result);
     vmaGetAllocationMemoryProperties(allocator, allocation, &property_flags);
