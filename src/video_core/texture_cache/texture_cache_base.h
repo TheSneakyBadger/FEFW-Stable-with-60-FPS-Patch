@@ -193,31 +193,6 @@ public:
         return page_table.size();
     }
 
-    /// Fortune's Eden: entries in the per-page image lists (under the lock): all, and the
-    /// longest list, by game memory (CPU) and by GPU address (every address space).
-    struct PageListStats {
-        u64 cpu_entries = 0;
-        u64 cpu_longest = 0;
-        u64 gpu_pages = 0;
-        u64 gpu_entries = 0;
-        u64 gpu_longest = 0;
-    };
-    [[nodiscard]] PageListStats GetPageListStats() const {
-        PageListStats stats;
-        for (const auto& [page, list] : page_table) {
-            stats.cpu_entries += list.size();
-            stats.cpu_longest = (std::max<u64>)(stats.cpu_longest, list.size());
-        }
-        for (size_t i = 0; i < gpu_page_table_storage.size(); i += 2) {
-            for (const auto& [page, list] : gpu_page_table_storage[i]) {
-                ++stats.gpu_pages;
-                stats.gpu_entries += list.size();
-                stats.gpu_longest = (std::max<u64>)(stats.gpu_longest, list.size());
-            }
-        }
-        return stats;
-    }
-
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
     ~TextureCache();
 

@@ -1080,23 +1080,16 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
     }
     struct Snapshot {
         u64 writes, write_wait, write_work, areas, area, syncs, sync;
-        u64 lookups, entries, lookup_ns, gpu_lookups, gpu_entries, gpu_lookup_ns;
     };
     static Snapshot last{};
     auto& c = FefwGuestWaits::Get();
-    const Snapshot now{c.texture_writes.load(),      c.texture_write_wait_ns.load(),
-                       c.texture_write_work_ns.load(), c.read_areas.load(),
-                       c.read_area_ns.load(),        c.read_syncs.load(),
-                       c.read_sync_ns.load(),        c.region_lookups.load(),
-                       c.region_entries.load(),      c.region_ns.load(),
-                       c.gpu_region_lookups.load(),  c.gpu_region_entries.load(),
-                       c.gpu_region_ns.load()};
+    const Snapshot now{c.texture_writes.load(), c.texture_write_wait_ns.load(),
+                       c.texture_write_work_ns.load(), c.read_areas.load(), c.read_area_ns.load(),
+                       c.read_syncs.load(), c.read_sync_ns.load()};
     size_t image_pages;
-    TextureCache::PageListStats lists;
     {
         std::scoped_lock lock{texture_cache.mutex};
         image_pages = texture_cache.ImagePageCount();
-        lists = texture_cache.GetPageListStats();
     }
     const u64 ever_pages = texture_cache.page_filter.CountPages();
     const auto ms = [](u64 ns) { return static_cast<double>(ns) / 1e6; };
@@ -1109,19 +1102,6 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
              ms(now.write_work - last.write_work), now.areas - last.areas,
              ms(now.area - last.area), now.syncs - last.syncs, ms(now.sync - last.sync),
              image_pages, ever_pages * VideoCommon::PageFilter::PageSize >> 20);
-    const auto per = [](u64 a, u64 b) { return b ? static_cast<double>(a) / b : 0.0; };
-    const u64 lookups = now.lookups - last.lookups;
-    const u64 gpu_lookups = now.gpu_lookups - last.gpu_lookups;
-    LOG_INFO(Render_Vulkan,
-             "Texture cache lookups, last 10 s: {} by game memory ({:.1f} ms, {:.1f} image entries "
-             "walked each), {} by GPU address ({:.1f} ms, {:.1f} each); image lists: {} entries on "
-             "{} MiB of game memory ({:.1f} a MiB, longest {}), {} entries on {} MiB of GPU "
-             "addresses ({:.1f} a MiB, longest {})",
-             lookups, ms(now.lookup_ns - last.lookup_ns), per(now.entries - last.entries, lookups),
-             gpu_lookups, ms(now.gpu_lookup_ns - last.gpu_lookup_ns),
-             per(now.gpu_entries - last.gpu_entries, gpu_lookups), lists.cpu_entries, image_pages,
-             per(lists.cpu_entries, image_pages), lists.cpu_longest, lists.gpu_entries,
-             lists.gpu_pages, per(lists.gpu_entries, lists.gpu_pages), lists.gpu_longest);
     last = now;
 }
 
