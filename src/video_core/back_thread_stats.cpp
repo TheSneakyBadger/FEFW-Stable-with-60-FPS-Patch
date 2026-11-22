@@ -254,17 +254,20 @@ void Report() {
     const u64 acquire_fence_ticks = Take(shared.acquire_fence_ticks);
     const u64 acquire_ready_before = Take(shared.acquire_ready_before);
     const u64 acquire_changed = Take(shared.acquire_changed);
+    const u64 acquire_no_drain = Take(shared.acquire_no_drain);
     const u64 op_equal = Take(shared.acquire_ops[0]);
     const u64 op_gequal = Take(shared.acquire_ops[1]);
     const u64 op_mask = Take(shared.acquire_ops[2]);
     LOG_INFO(Render_Vulkan,
-             "Split drains by caller (count/s, front waiting): {}. Native acquires: ready {:.0f}/s, "
+             "Split drains by caller (count/s, front waiting): {}. Acquires already satisfied, not "
+             "drained: {:.0f}/s. Native acquires: ready {:.0f}/s, "
              "ready after releasing fences {:.0f}/s, suspended {:.0f}/s; releasing fences {:.0f} us/s; "
              "before the drain: ready {:.0f}/s, word changed by the drain {:.0f}/s; ops equal "
              "{:.0f}/s, gequal {:.0f}/s, mask {:.0f}/s. Acquires the drain satisfied, by the last "
              "release there: puller {:.0f}/s, DMA {:.0f}/s, compute QMD {:.0f}/s, compute QMD add "
              "{:.0f}/s, 3D report {:.0f}/s, unknown {:.0f}/s",
-             drain_sites.empty() ? std::string{"none"} : drain_sites, per_s(acquire_ready),
+             drain_sites.empty() ? std::string{"none"} : drain_sites, per_s(acquire_no_drain),
+             per_s(acquire_ready),
              per_s(acquire_after_fences), per_s(acquire_suspended), us_per_s(acquire_fence_ticks),
              per_s(acquire_ready_before), per_s(acquire_changed), per_s(op_equal), per_s(op_gequal),
              per_s(op_mask),
