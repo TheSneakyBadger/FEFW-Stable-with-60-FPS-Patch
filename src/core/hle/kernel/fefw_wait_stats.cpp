@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "core/hle/kernel/fefw_wait_stats.h"
-#include "core/fefw_sampler.h"
 
 #include <algorithm>
 #include <array>
@@ -79,7 +78,6 @@ bool Enabled() {
 void MarkThread(Role role, const Kernel::KThread* thread) {
     if (!Enabled() || !thread) return;
     Get().threads[static_cast<size_t>(role)].store(thread, std::memory_order_relaxed);
-    if (role == Role::Render) FefwSampler::SetRenderThread(thread);
 }
 
 void NameObject(const Kernel::KSynchronizationObject* object, std::string name) {
