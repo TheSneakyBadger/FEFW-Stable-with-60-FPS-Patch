@@ -4,14 +4,6 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <atomic>
-#include <chrono>
-#include <cstdlib>
-#include <thread>
-#if defined(_M_X64) || defined(__x86_64__)
-#include <immintrin.h>
-#endif
-
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -229,72 +221,9 @@ void PhysicalCore::LogBacktrace(KernelCore& kernel) {
     }
 }
 
-namespace {
-
-// Fortune's Eden: an emulated core with no game thread to run used to go straight to sleep on a
-// condition variable, so a game thread woken by another (a mutex released, an address signalled,
-// tens of thousands of times a second in a busy battle) waited for Windows to wake the core's host
-// thread first. Before sleeping, spin briefly checking for the interrupt, so a wake-up that comes
-// soon is picked up at once. EDEN_IDLE_SPIN_US sets the spin (0 turns it off; default 50).
-s64 IdleSpinNs() {
-    static const s64 ns = [] {
-        if (const char* value = std::getenv("EDEN_IDLE_SPIN_US")) {
-            return static_cast<s64>(std::atoi(value)) * 1000;
-        }
-        return s64{50'000};
-    }();
-    return ns;
-}
-
-std::atomic<u64> idle_entries{0};
-std::atomic<u64> idle_spin_wakes{0};
-std::atomic<u64> idle_spin_ns{0};
-
-inline void CpuPause() {
-#if defined(_M_X64) || defined(__x86_64__)
-    _mm_pause();
-#else
-    std::this_thread::yield();
-#endif
-}
-
-} // Anonymous namespace
-
-FefwIdleStats FefwTakeIdleStats() {
-    return {idle_entries.exchange(0, std::memory_order_relaxed),
-            idle_spin_wakes.exchange(0, std::memory_order_relaxed),
-            idle_spin_ns.exchange(0, std::memory_order_relaxed), IdleSpinNs()};
-}
-
 void PhysicalCore::Idle() {
-    idle_entries.fetch_add(1, std::memory_order_relaxed);
-    if (const s64 spin_ns = IdleSpinNs(); spin_ns > 0) {
-        const auto start = std::chrono::steady_clock::now();
-        const auto deadline = start + std::chrono::nanoseconds{spin_ns};
-        bool woken = false;
-        auto now = start;
-        while (true) {
-            if (m_is_interrupted.load(std::memory_order_acquire)) {
-                woken = true;
-                break;
-            }
-            for (int i = 0; i < 32; ++i) {
-                CpuPause();
-            }
-            now = std::chrono::steady_clock::now();
-            if (now >= deadline) {
-                break;
-            }
-        }
-        idle_spin_ns.fetch_add(
-            static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count()),
-            std::memory_order_relaxed);
-        if (woken) {
-            idle_spin_wakes.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
     std::unique_lock lk{m_guard};
-    m_on_interrupt.wait(lk, [this] { return m_is_interrupted.load(); });
+    m_on_interrupt.wait(lk, [this] { return m_is_interrupted; });
 }
 
 bool PhysicalCore::GetLiveContextForDebugging(Svc::ThreadContext& ctx) const {

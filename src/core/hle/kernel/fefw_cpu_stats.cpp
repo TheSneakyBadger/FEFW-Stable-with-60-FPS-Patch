@@ -19,7 +19,6 @@
 #include "core/hle/kernel/k_light_lock.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
-#include "core/hle/kernel/physical_core.h"
 #include "core/hle/service/filesystem/fefw_fs_stats.h"
 #include "core/memory.h"
 
@@ -337,13 +336,6 @@ void MaybeReport(const Kernel::KThread* render_thread) {
              "busiest: {}",
              seconds, total * 100.0, rows.size(), cores, busiest.empty() ? "none" : busiest);
     ReportProcessMemory(seconds);
-    const Kernel::FefwIdleStats idle = Kernel::FefwTakeIdleStats();
-    LOG_INFO(Kernel,
-             "Emulated cores going idle, last {:.0f} s: {:.0f}/s (all cores); {:.0f}% woken within the "
-             "{} us spin; spinning took {:.1f}% of a core",
-             seconds, static_cast<double>(idle.entries) / seconds,
-             idle.entries ? static_cast<double>(idle.spin_wakes) * 100.0 / idle.entries : 0.0,
-             idle.spin_limit_ns / 1000, static_cast<double>(idle.spin_ns) / (seconds * 1e7));
 }
 
 } // namespace FefwCpuStats
