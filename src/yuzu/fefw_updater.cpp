@@ -522,15 +522,49 @@ bool OfferUpdate(QWidget* parent, const Release& release) {
         script.write(kInstallScript);
     }
     const QString dest = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
-    const bool started = QProcess::startDetached(
-        QStringLiteral("powershell.exe"),
-        {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
-         QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"), QStringLiteral("-File"),
-         QDir::toNativeSeparators(script_path), QStringLiteral("-ProcessId"),
-         QString::number(QCoreApplication::applicationPid()), QStringLiteral("-Zip"),
-         QDir::toNativeSeparators(zip_path), QStringLiteral("-Dest"), dest});
+    const QStringList arguments{
+        QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
+        QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"), QStringLiteral("-File"),
+        QDir::toNativeSeparators(script_path), QStringLiteral("-ProcessId"),
+        QString::number(QCoreApplication::applicationPid()), QStringLiteral("-Zip"),
+        QDir::toNativeSeparators(zip_path), QStringLiteral("-Dest"), dest};
+    // Windows PowerShell by its full path first: started by name alone, it failed on a PC whose
+    // PATH no longer listed its folder ("Couldn't start the updater.", #85). Then by name, then
+    // PowerShell 7.
+    QStringList programs;
+    const QString system_root = qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows"));
+    programs << QDir(system_root).filePath(
+                    QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"))
+             << QStringLiteral("powershell.exe") << QStringLiteral("pwsh.exe");
+    bool started = false;
+    for (const QString& program : programs) {
+        if (program.contains(QLatin1Char('/')) && !QFileInfo::exists(program)) {
+            LOG_WARNING(Frontend, "Update: {} is not there", program.toStdString());
+            continue;
+        }
+        QProcess process;
+        process.setProgram(QDir::toNativeSeparators(program));
+        process.setArguments(arguments);
+        if (process.startDetached()) {
+            LOG_INFO(Frontend, "Update: started the installer with {}", program.toStdString());
+            started = true;
+            break;
+        }
+        LOG_WARNING(Frontend, "Update: couldn't start {}: {}", program.toStdString(),
+                    process.errorString().toStdString());
+    }
     if (!started) {
-        QMessageBox::warning(parent, Tr("Update"), Tr("Couldn't start the updater."));
+        // The download is good (its checksum matched): say where it is, so it can be installed
+        // by hand, and show it.
+        QMessageBox::warning(
+            parent, Tr("Update"),
+            Tr("Couldn't start the updater: Windows PowerShell couldn't be started on this PC "
+               "(it may be blocked by antivirus or missing).\n\n"
+               "The update is downloaded and checked: %1\n\n"
+               "To install it by hand, close Fortune's Eden, open the zip and copy everything "
+               "in it except its user folder into %2. Your saves and settings are kept.")
+                .arg(QDir::toNativeSeparators(zip_path), dest));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(work));
         return false;
     }
     LOG_INFO(Frontend, "Update: installing {} after the emulator closes", release.tag);
