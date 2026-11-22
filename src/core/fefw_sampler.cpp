@@ -10,12 +10,15 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <map>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
+
+#include "dynarmic/interface/fefw_jit_stats.h"
 
 #include "common/common_types.h"
 #include "common/logging.h"
@@ -49,11 +52,49 @@ bool Enabled() {
     return enabled;
 }
 
+// Test 94b: host code range -> guest PC for every compiled block, so JIT samples can be
+// attributed to game code. Ranges reused after a cache clear replace the old entries.
+std::mutex blocks_mutex;
+std::map<u64, std::pair<u64, u64>> blocks; // host begin -> (host end, guest PC)
+
+void OnBlock(const void* begin_ptr, const void* end_ptr, std::uint64_t location) {
+    const u64 begin = reinterpret_cast<u64>(begin_ptr);
+    const u64 end = reinterpret_cast<u64>(end_ptr);
+    if (end <= begin) {
+        return;
+    }
+    const u64 pc = location & ((u64{1} << 56) - 1);
+    std::scoped_lock lock{blocks_mutex};
+    auto it = blocks.lower_bound(begin);
+    if (it != blocks.begin()) {
+        auto prev = std::prev(it);
+        if (prev->second.first > begin) {
+            it = prev;
+        }
+    }
+    while (it != blocks.end() && it->first < end) {
+        it = blocks.erase(it);
+    }
+    blocks.emplace(begin, std::make_pair(end, pc));
+}
+
+u64 GuestPcOf(u64 ip) {
+    std::scoped_lock lock{blocks_mutex};
+    auto it = blocks.upper_bound(ip);
+    if (it == blocks.begin()) {
+        return 0;
+    }
+    --it;
+    return ip < it->second.first ? it->second.second : 0;
+}
+
 void Run() {
     HMODULE exe = GetModuleHandleW(nullptr);
     std::unordered_map<HMODULE, std::string> module_names;
     std::unordered_map<u64, u64> exe_buckets; // RVA / 64 -> samples
     std::unordered_map<std::string, u64> modules;
+    std::unordered_map<u64, u64> guest_buckets; // guest PC / 64 -> samples
+    u64 jit_resolved = 0;
     u64 jit = 0;
     u64 in_exe = 0;
     u64 total = 0;
@@ -116,6 +157,10 @@ void Run() {
                                         reinterpret_cast<LPCWSTR>(ip), &module) ||
                     module == nullptr) {
                     ++jit;
+                    if (const u64 pc = GuestPcOf(ip); pc != 0) {
+                        ++jit_resolved;
+                        ++guest_buckets[pc >> 6];
+                    }
                 } else if (module == exe) {
                     ++in_exe;
                     ++exe_buckets[(ip - reinterpret_cast<u64>(exe)) >> 6];
@@ -151,7 +196,20 @@ void Run() {
                      seconds, total, failed, pct(jit), pct(in_exe), mod_text.empty() ? "none" : mod_text);
             LOG_INFO(Kernel, "Main thread samples in Fortune's Eden.exe, top by address (RVA %): {}",
                      bucket_text);
+            std::vector<std::pair<u64, u64>> guest(guest_buckets.begin(), guest_buckets.end());
+            std::ranges::sort(guest, [](const auto& a, const auto& b) { return a.second > b.second; });
+            std::string guest_text;
+            for (std::size_t i = 0; i < guest.size() && i < 80; ++i) {
+                guest_text += fmt::format("{}{:x} {:.2f}", i ? " " : "", guest[i].first << 6,
+                                          pct(guest[i].second));
+            }
+            LOG_INFO(Kernel,
+                     "Main thread samples in game code ({:.1f}% of samples matched to a block), top "
+                     "by guest address (64-byte blocks, %): {}",
+                     pct(jit_resolved), guest_text);
         }
+        guest_buckets.clear();
+        jit_resolved = 0;
         exe_buckets.clear();
         modules.clear();
         jit = in_exe = total = failed = 0;
@@ -174,7 +232,10 @@ void RegisterCoreThread(std::size_t core) {
     slots[core].current.store(nullptr, std::memory_order_relaxed);
     slots[core].handle.store(handle, std::memory_order_release);
     my_slot = &slots[core];
-    std::call_once(start_once, [] { std::thread{Run}.detach(); });
+    std::call_once(start_once, [] {
+        Dynarmic::FefwJitStats::BlockRegistered().store(&OnBlock, std::memory_order_relaxed);
+        std::thread{Run}.detach();
+    });
 }
 
 void NoteCurrentThread(const void* thread) {

@@ -19,6 +19,7 @@
 #include "common/container/unordered_set.h"
 
 #include "dynarmic/backend/x64/block_of_code.h"
+#include "dynarmic/interface/fefw_jit_stats.h"
 #include "dynarmic/backend/x64/nzcv_util.h"
 #include "dynarmic/backend/x64/perf_map.h"
 #include "dynarmic/backend/x64/stack_layout.h"
@@ -357,6 +358,9 @@ Xbyak::Label EmitX64::EmitCond(IR::Cond cond) {
 
 EmitX64::BlockDescriptor EmitX64::RegisterBlock(const IR::LocationDescriptor& descriptor, CodePtr entrypoint, size_t size) {
     PerfMapRegister(entrypoint, code.getCurr(), LocationDescriptorToFriendlyName(descriptor));
+    if (const auto hook = FefwJitStats::BlockRegistered().load(std::memory_order_relaxed)) {
+        hook(entrypoint, code.getCurr(), descriptor.Value());
+    }
     Patch(descriptor, entrypoint);
 
     BlockDescriptor block_desc{entrypoint, size};
