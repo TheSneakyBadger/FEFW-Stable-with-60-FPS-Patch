@@ -1,0 +1,44 @@
+# One-off: once the v1.7.6 Linux build (linux-build 3a149e1) is on the test-builds branch, put
+# it on the v1.7.6 release as Fortunes-Eden-linux-x86_64.tar.gz and Fortunes-Eden-x86_64.AppImage.
+name: Upload v1.7.6 Linux assets
+on:
+  push:
+    branches: [release-assets-v1.7.6-linux]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Wait for the v1.7.6 Linux build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 280); do
+            rm -rf tb
+            git clone -q --depth=30 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
+            # Not only the newest commit: test builds can land after it.
+            commit=$(git -C tb log -30 --format='%H %s' | grep "Fortunes-Eden-v1.7.6-linux-x86_64-3a149e1" | head -1 | cut -d' ' -f1)
+            if [ -n "$commit" ]; then git -C tb checkout -q "$commit"; break; fi
+            rm -rf tb
+            sleep 60
+          done
+          test -d tb || { echo "The v1.7.6 Linux build never arrived"; exit 1; }
+          cd tb
+          mkdir x && tar -xzf Fortunes-Eden-linux-x86_64.tar.gz -C x
+          cp x/Fortunes-Eden-v1.7.6-linux-x86_64-3a149e1/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
+          cp Fortunes-Eden-linux-x86_64.tar.gz ..
+          cd ..
+          sha256sum Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage
+      - name: Wait for the v1.7.6 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 120); do gh release view v1.7.6 -R "${{ github.repository }}" >/dev/null 2>&1 && exit 0; sleep 60; done; exit 1
+      - name: Upload to the v1.7.6 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.7.6 Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage --clobber -R "${{ github.repository }}"
+          gh release view v1.7.6 -R "${{ github.repository }}" --json assets --jq '.assets[] | "\(.name) \(.size)"'
