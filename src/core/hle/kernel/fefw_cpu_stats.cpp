@@ -22,42 +22,8 @@
 #include "core/hle/service/filesystem/fefw_fs_stats.h"
 #include "core/memory.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <psapi.h>
-#endif
-
 namespace FefwCpuStats {
 namespace {
-
-// Fortune's Eden: the emulator's own memory over a long session (#63, #82): committed, in RAM,
-// and hard page faults (paged back in from disk) since the last report.
-void ReportProcessMemory(double seconds) {
-#ifdef _WIN32
-    PROCESS_MEMORY_COUNTERS_EX counters{};
-    counters.cb = sizeof(counters);
-    if (!K32GetProcessMemoryInfo(GetCurrentProcess(),
-                                 reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
-                                 sizeof(counters))) {
-        return;
-    }
-    static u64 last_faults = 0;
-    const u64 faults = counters.PageFaultCount;
-    const u64 delta = last_faults != 0 && faults >= last_faults ? faults - last_faults : 0;
-    last_faults = faults;
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    GlobalMemoryStatusEx(&status);
-    LOG_INFO(Kernel,
-             "Emulator memory: {} MiB committed, {} MiB in RAM (peak {} MiB); page faults "
-             "{:.0f}/s (soft and hard); PC: {} of {} MiB RAM free, {} MiB of page file free",
-             counters.PrivateUsage >> 20, counters.WorkingSetSize >> 20,
-             counters.PeakWorkingSetSize >> 20, static_cast<double>(delta) / seconds,
-             status.ullAvailPhys >> 20, status.ullTotalPhys >> 20, status.ullAvailPageFile >> 20);
-#else
-    (void)seconds;
-#endif
-}
 
 using Clock = std::chrono::steady_clock;
 
@@ -335,7 +301,6 @@ void MaybeReport(const Kernel::KThread* render_thread) {
              "Game CPU, last {:.0f} s: {:.0f}% of a core in all ({} threads); emulated cores {}; "
              "busiest: {}",
              seconds, total * 100.0, rows.size(), cores, busiest.empty() ? "none" : busiest);
-    ReportProcessMemory(seconds);
 }
 
 } // namespace FefwCpuStats

@@ -14,12 +14,8 @@ namespace VideoCommon::BackStats {
 namespace {
 
 int ReadMode() {
-    // Fortune's Eden test 93u: on unless EDEN_BACK_THREAD_STATS=0, for long-session logs (#63, #82).
     const char* const value = std::getenv("EDEN_BACK_THREAD_STATS");
-    if (value == nullptr || value[0] == '\0') {
-        return 1;
-    }
-    if (value[0] == '0') {
+    if (value == nullptr || value[0] == '\0' || value[0] == '0') {
         return 0;
     }
     return value[0] == '2' ? 2 : 1;
@@ -61,7 +57,7 @@ void Report() {
         draw_thread = DrawThread{};
         return;
     }
-    if (now_time - window_time < std::chrono::seconds{10}) {
+    if (now_time - window_time < std::chrono::seconds{4}) {
         return;
     }
     const double seconds = std::chrono::duration<double>(now_time - window_time).count();
