@@ -32,6 +32,7 @@
 #include "video_core/texture_cache/compact_texture_table.h"
 #include "video_core/texture_cache/lookup_memo.h"
 #include "video_core/texture_cache/samples_helper.h"
+#include "video_core/fefw_guest_waits.h"
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/texture_cache/util.h"
 #include "video_core/textures/decoders.h"
@@ -3362,7 +3363,9 @@ void TextureCache<P>::ForEachImageInRegion(DAddr cpu_addr, size_t size, Func&& f
     constexpr bool BOOL_BREAK = std::is_same_v<FuncReturn, bool>;
     boost::container::small_vector<ImageId, 32> images;
     boost::container::small_vector<ImageMapId, 32> maps;
-    ForEachCPUPage(cpu_addr, size, [this, &images, &maps, cpu_addr, size, func](u64 page) {
+    const u64 fefw_start = FefwGuestWaits::NowNs();
+    u64 fefw_entries = 0;
+    ForEachCPUPage(cpu_addr, size, [this, &images, &maps, &fefw_entries, cpu_addr, size, func](u64 page) {
         const auto it = page_table.find(page);
         if (it == page_table.end()) {
             if constexpr (BOOL_BREAK) {
@@ -3371,6 +3374,7 @@ void TextureCache<P>::ForEachImageInRegion(DAddr cpu_addr, size_t size, Func&& f
                 return;
             }
         }
+        fefw_entries += it->second.size();
         for (const ImageMapId map_id : it->second) {
             ImageMapView& map = slot_map_views[map_id];
             if (map.picked) {
@@ -3405,6 +3409,10 @@ void TextureCache<P>::ForEachImageInRegion(DAddr cpu_addr, size_t size, Func&& f
     for (const ImageMapId map_id : maps) {
         slot_map_views[map_id].picked = false;
     }
+    auto& fefw_waits = FefwGuestWaits::Get();
+    fefw_waits.region_lookups.fetch_add(1, std::memory_order_relaxed);
+    fefw_waits.region_entries.fetch_add(fefw_entries, std::memory_order_relaxed);
+    fefw_waits.region_ns.fetch_add(FefwGuestWaits::NowNs() - fefw_start, std::memory_order_relaxed);
 }
 
 template <class P>
@@ -3419,8 +3427,10 @@ void TextureCache<P>::ForEachImageInRegionGPU(size_t as_id, GPUVAddr gpu_addr, s
         return;
     }
     auto& gpu_page_table = gpu_page_table_storage[*storage_id * 2];
+    const u64 fefw_start = FefwGuestWaits::NowNs();
+    u64 fefw_entries = 0;
     ForEachGPUPage(gpu_addr, size,
-                   [this, &gpu_page_table, &images, gpu_addr, size, func](u64 page) {
+                   [this, &gpu_page_table, &images, &fefw_entries, gpu_addr, size, func](u64 page) {
                        const auto it = gpu_page_table.find(page);
                        if (it == gpu_page_table.end()) {
                            if constexpr (BOOL_BREAK) {
@@ -3429,6 +3439,7 @@ void TextureCache<P>::ForEachImageInRegionGPU(size_t as_id, GPUVAddr gpu_addr, s
                                return;
                            }
                        }
+                       fefw_entries += it->second.size();
                        for (const ImageId image_id : it->second) {
                            Image& image = slot_images[image_id];
                            if (True(image.flags & ImageFlagBits::Picked)) {
@@ -3454,6 +3465,11 @@ void TextureCache<P>::ForEachImageInRegionGPU(size_t as_id, GPUVAddr gpu_addr, s
     for (const ImageId image_id : images) {
         slot_images[image_id].flags &= ~ImageFlagBits::Picked;
     }
+    auto& fefw_waits = FefwGuestWaits::Get();
+    fefw_waits.gpu_region_lookups.fetch_add(1, std::memory_order_relaxed);
+    fefw_waits.gpu_region_entries.fetch_add(fefw_entries, std::memory_order_relaxed);
+    fefw_waits.gpu_region_ns.fetch_add(FefwGuestWaits::NowNs() - fefw_start,
+                                       std::memory_order_relaxed);
 }
 
 template <class P>

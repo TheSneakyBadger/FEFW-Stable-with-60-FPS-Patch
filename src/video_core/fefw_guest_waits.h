@@ -26,6 +26,14 @@ struct Counters {
     std::atomic<u64> read_area_ns{0};
     std::atomic<u64> read_syncs{0};        ///< reads that waited for the GPU thread to copy back
     std::atomic<u64> read_sync_ns{0};
+    // Texture cache region lookups (any thread): each walks the lists of images on the game
+    // memory's 1 MiB pages it covers, so their cost grows with images kept on the same pages.
+    std::atomic<u64> region_lookups{0};
+    std::atomic<u64> region_entries{0};   ///< list entries walked
+    std::atomic<u64> region_ns{0};
+    std::atomic<u64> gpu_region_lookups{0}; ///< the same, by GPU address (current channel)
+    std::atomic<u64> gpu_region_entries{0};
+    std::atomic<u64> gpu_region_ns{0};
     std::atomic<s64> last_report_ms{0};
 };
 
