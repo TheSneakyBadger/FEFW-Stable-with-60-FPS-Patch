@@ -32,6 +32,7 @@
 #include "core/hle/kernel/k_scheduler.h"
 #include "core/hle/kernel/k_scoped_scheduler_lock_and_sleep.h"
 #include "core/hle/kernel/k_system_control.h"
+#include "core/fefw_sampler.h"
 #include "core/hle/kernel/k_thread.h"
 #include "core/hle/kernel/k_thread_queue.h"
 #include "core/hle/kernel/k_worker_task_manager.h"
@@ -1401,6 +1402,7 @@ namespace Kernel {
 
     void SetCurrentThread(KernelCore& kernel, KThread* thread) {
         kernel.SetCurrentEmuThread(thread);
+        FefwSampler::NoteCurrentThread(thread);
     }
 
     KThread* GetCurrentThreadPointer(KernelCore& kernel) {

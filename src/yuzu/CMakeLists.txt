@@ -418,6 +418,8 @@ elseif(WIN32)
     if(MSVC)
         target_link_libraries(yuzu PRIVATE version.lib)
         set_target_properties(yuzu PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS")
+        # Fortune's Eden test 93w: a map file, to name the addresses the main-thread sampler logs.
+        target_link_options(yuzu PRIVATE /MAP)
     elseif(MINGW)
         set_target_properties(yuzu PROPERTIES LINK_FLAGS_RELEASE "-Wl,--subsystem,windows")
         target_link_libraries(yuzu PRIVATE dwmapi)
