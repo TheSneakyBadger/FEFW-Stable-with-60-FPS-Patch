@@ -23,6 +23,12 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
+## What's new in v1.7.6
+
+- **NVIDIA DLSS frame generation no longer held at 50–55 FPS in busy places** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): when NVIDIA Reflex is the one keeping the game below its frame rate (the Dagsion crowds, full screen), its waits are turned off.
+- **Ultrawide: the world map routes are fitted into the centred 16:9 map** ([#87](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/87)).
+- **Less work for the GPU emulation in crowded scenes**: the game's plain register writes reach the draw thread in batches.
+
 ## What's new in v1.7.5 (and v1.7.5.1 to v1.7.5.15)
 
 - **Much less stutter in places you've been before** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)): textures, once converted for your graphics card, are kept on disk (**Texture cache on disk** on the home screen: 2 GB by default, or Off, 4 GB or 8 GB), so they load instead of being converted again. On a hard drive it stays off (v1.7.5.1), as it would slow the game's own reads, and on cards with 4 GB of video memory or less too (v1.7.5.5).

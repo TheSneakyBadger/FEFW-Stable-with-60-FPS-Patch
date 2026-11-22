@@ -429,7 +429,7 @@ fullscreen. It widens the 3D camera and keeps the HUD, menus and movies centred 
 version 1.1.0 (build ID DB93B0125F485060).
 "@
         @"
-Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.5.15 - portable Windows x64 build
+Fortune's Eden (FEFW Stable with 60 FPS Patch) v1.7.6 - portable Windows x64 build
 (Eden FE: Fortune's Weave fork, built on Duck912's eden-ns2-fe and xDarkWindx's eden-fefw $Version)
 
 Runs on any 64-bit Windows 10/11 PC with a Vulkan-capable GPU. No CPU-specific code
@@ -500,6 +500,15 @@ RenHDrum (renhdrum.dll, MIT/Apache-2.0, licenses\renhdrum): HD Rumble on a Switc
 Controller or Joy-Con, haptics on a DualSense, rumble on Xbox controllers, and the grips of the
 Steam Controller (2026, experimental). Off: the standard rumble, as before.
 $fpsText$optionalText
+
+New in v1.7.6:
+- NVIDIA DLSS frame generation: NVIDIA Reflex no longer holds the game at 50-55 FPS in busy
+  places (the Dagsion crowds, full screen at 4K). When Reflex is the one keeping the game
+  below its frame rate, its waits are turned off (for good after the second time).
+- Ultrawide: the world map routes are fitted into the centred 16:9 map, where they belong.
+- Less work on the GPU emulation's draw thread in crowded scenes: plain register writes from
+  the game's graphics commands are passed on in batches.
+- The compiled-code list and texture colours that come with Fortune's Eden are updated.
 
 New in v1.7.5.15:
 - Hair and capes hang and sway in 60 FPS mode as they do at 30 FPS.

@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.6
+
+Smoother busy towns with NVIDIA frame generation, and world map routes in the right place on ultrawide screens.
+
+- **NVIDIA Reflex no longer holds the game back in busy places** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). With DLSS frame generation in full screen, Reflex could keep the game at 50–55 FPS in the Dagsion crowds while the graphics card and CPU had time to spare: it was asleep most of every frame. Now, when the game runs more than 3% below its frame rate and Reflex is asleep over a quarter of the time, its waits are turned off for 30 s, and for the rest of the session if it happens again. In testing, the same spots run at or close to 60 FPS.
+- **Ultrawide: the world map routes are where they belong** ([#87](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/87)). With the ultrawide option on, the paths between places on the world map were drawn across the full width while the map itself sits in the centred 16:9 area. They're now fitted into the same area. Thanks to **Chaoscontrol** for the report.
+- **Less work for the GPU emulation in crowded scenes.** The game's graphics commands write millions of plain registers a second; they now reach the emulator's draw thread in batches instead of one at a time, about 5% less work there in the Dagsion crowds.
+- Built with a fresh speed profile (profile-guided optimisation) recorded in Dagsion, a battle and the Saramis hub, and the compiled-code list and texture colours that come with Fortune's Eden have the newest entries from testing.
+
+Everything else is as in [v1.7.5.15](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.5.15).
+
 ## v1.7.5.15
 
 Hair and capes as at 30 FPS, no more freezes when a Bluetooth headset switches off, and fixes for the updater and for a rare crash.
