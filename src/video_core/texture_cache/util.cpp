@@ -854,13 +854,13 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(Tegra::Memory
     const Extent3D size = info.size;
 
     if (info.type == ImageType::Linear) {
-        ASSERT(output.size_bytes() >= guest_size_bytes);
-        gpu_memory.ReadBlockUnsafe(gpu_addr, output.data(), guest_size_bytes);
+        const size_t copy_size = (std::min)(output.size_bytes(), guest_size_bytes);
+        gpu_memory.ReadBlockUnsafe(gpu_addr, output.data(), copy_size);
 
         ASSERT((info.pitch >> bpp_log2) << bpp_log2 == info.pitch);
         return {{
             .buffer_offset = 0,
-            .buffer_size = guest_size_bytes,
+            .buffer_size = copy_size,
             .buffer_row_length = info.pitch * tile_size.width >> bpp_log2,
             .buffer_image_height = size.height,
             .image_subresource =

@@ -62,6 +62,11 @@ public:
 
     Dynarmic::CodePage cached_code_page;
     u64 last_code_addr = u64(-1);
+    /// Bumped by ClearInstructionCache / InvalidateCacheRange from other threads: a decode that
+    /// had already passed the address check could otherwise refill the cache with the old page
+    /// after the reset (from Orchid c721dba, zortos293's Eglantine d4acca92).
+    u32 cached_code_generation = 0;
+    std::atomic<u32> code_generation{0};
     ArmDynarmic64& m_parent;
     Core::Memory::Memory& m_memory;
     u64 m_tpidrro_el0{};
