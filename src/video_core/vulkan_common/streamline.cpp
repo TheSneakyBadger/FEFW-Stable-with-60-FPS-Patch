@@ -11,6 +11,7 @@
 #include <chrono>
 #include <mutex>
 #include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -842,8 +843,10 @@ bool VsyncSleep() {
     // sleep the same spot ran a locked 59. Every 2 s: when the game's frames came over 3% slower
     // than its rate and Reflex slept over a quarter of that time, Reflex is the one holding it
     // back, so it doesn't sleep for 30 s (doubling each time it happens again, up to 5 minutes;
-    // back to 30 s after a minute at full rate with it sleeping). EDEN_DLSSG_REFLEX_HOLD_GUARD=0:
-    // off.
+    // back to 30 s after a minute at full rate with it sleeping). Each time it came back it held
+    // the game back again within 2 s (test 94h, Dagsion: caught at 34, 66 and 134 s, a dip each
+    // time), so from the second time on it stays off for the rest of the session.
+    // EDEN_DLSSG_REFLEX_HOLD_GUARD=0: off.
     static const bool hold_guard = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_HOLD_GUARD");
         return !(value && value[0] == '0');
@@ -882,17 +885,26 @@ bool VsyncSleep() {
                 const s64 expected = (std::max)(GAME_VSYNC_NS, period_ns);
                 const s64 interval = span / hold_window_vsyncs;
                 if (interval > expected * 103 / 100 && hold_window_sleep > span / 4) {
-                    hold_until = NowNs() + hold_backoff_ns;
                     ++hold_count;
-                    if (hold_count <= 5 || hold_count % 20 == 0) {
+                    const bool for_good = hold_count >= 2;
+                    hold_until = for_good ? (std::numeric_limits<s64>::max)()
+                                          : NowNs() + hold_backoff_ns;
+                    if (for_good) {
+                        LOG_WARNING(Render_Vulkan,
+                                    "NVIDIA Reflex held the game back again (frames {:.1f} ms "
+                                    "apart, asleep {:.0f}% of the time): no Reflex sleep for the "
+                                    "rest of the session",
+                                    static_cast<double>(interval) / 1e6,
+                                    static_cast<double>(hold_window_sleep) * 100.0 /
+                                        static_cast<double>(span));
+                    } else {
                         LOG_WARNING(Render_Vulkan,
                                     "NVIDIA Reflex held the game back (frames {:.1f} ms apart, "
-                                    "asleep {:.0f}% of the time): no Reflex sleep for {} s ({} "
-                                    "so far)",
+                                    "asleep {:.0f}% of the time): no Reflex sleep for {} s",
                                     static_cast<double>(interval) / 1e6,
                                     static_cast<double>(hold_window_sleep) * 100.0 /
                                         static_cast<double>(span),
-                                    hold_backoff_ns / 1'000'000'000, hold_count);
+                                    hold_backoff_ns / 1'000'000'000);
                     }
                     hold_backoff_ns = (std::min<s64>)(hold_backoff_ns * 2, 300'000'000'000);
                     hold_good_since = 0;
