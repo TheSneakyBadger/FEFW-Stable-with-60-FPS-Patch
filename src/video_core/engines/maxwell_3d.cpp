@@ -70,6 +70,7 @@ Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
     execution_mask.reset();
     for (size_t i = 0; i < execution_mask.size(); i++)
         execution_mask[i] = IsMethodExecutable(u32(i));
+    macro_writes_may_sink = true;
 }
 
 Maxwell3D::~Maxwell3D() = default;

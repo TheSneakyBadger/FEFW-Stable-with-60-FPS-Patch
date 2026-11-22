@@ -364,6 +364,17 @@ void GpuSplit::DeferFunction(std::function<void()>&& func) {
     });
 }
 
+// Test 94k: a macro's write to a register that doesn't execute anything goes into the method
+// sink, as the same write outside a macro does, instead of the whole CallMethod (shadow RAM,
+// dirty flags, then ProcessMethodCall's switch, which for these methods does nothing). Macros
+// write about 9 million registers a second in a Dagsion crowd (#63), where the back thread
+// needs about 17 ms a frame. The sink is applied, in order, before the next method that
+// executes, as for every other write. EDEN_MACRO_WRITE_SINK=0: CallMethod for each, as before.
+static const bool macro_writes_to_sink = [] {
+    const char* const value = std::getenv("EDEN_MACRO_WRITE_SINK");
+    return !(value && value[0] == '0');
+}();
+
 size_t GpuSplit::Execute(const u64* entry) {
     const u64 head = entry[0];
     switch (static_cast<Kind>(head & 0xf)) {
@@ -376,7 +387,8 @@ size_t GpuSplit::Execute(const u64* entry) {
         const u32 method = static_cast<u32>((head >> 8) & 0xffff);
         const u32 argument = static_cast<u32>(head >> 32);
         auto* const engine = back_engine;
-        if ((head & Direct) != 0) {
+        if ((head & Direct) != 0 && (!macro_writes_to_sink || !engine->macro_writes_may_sink ||
+                                     engine->execution_mask[method])) {
             // A macro's write: a failure counts until the macro ends (the front sends that).
             ConsumeSinkTimed(engine, *system);
             engine->CallMethod(*system, method, argument, true);
