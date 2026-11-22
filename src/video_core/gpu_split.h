@@ -72,7 +72,7 @@ public:
     /// `segment`: the engine's current_dma_segment for the call, when the engine reads it.
     void Method(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument, bool is_last,
                 const GPUVAddr* segment) {
-        if (BatchWrite(engine, method, argument)) {
+        if (BatchWrite(engine, method, argument, false)) {
             return;
         }
         SelectEngine(engine);
@@ -90,7 +90,7 @@ public:
                      u32 amount, u32 methods_pending, const GPUVAddr* segment);
     /// A write made by a macro: CallMethod without the method sink, as the engines' macros do.
     void MacroWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
-        if (BatchWrite(engine, method, argument)) {
+        if (BatchWrite(engine, method, argument, true)) {
             return;
         }
         SelectEngine(engine);
@@ -132,6 +132,7 @@ private:
         Multi,  ///< Bits 8-23 method, 32-63 amount; word 1 methods pending, [segment], words
         Call,   ///< Bits 8-31 payload size in words; word 1 thunk, then the payload
         Regs,   ///< Bits 8-31 count; then a word per write: bits 32-47 method, 0-31 value
+        CBData, ///< As Regs: a macro's constant buffer data writes (CallCBDataBatch)
     };
     static constexpr u64 IsLast = 1 << 4;
     static constexpr u64 HasSegment = 1 << 5;
@@ -159,13 +160,15 @@ private:
     // EDEN_REGISTER_BATCH=0: one entry per write, as before.
     static constexpr u32 MaxBatch = 64;
     /// Front: adds the write to the open batch (opening one) when it may go there.
-    bool BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument);
+    // Test 94m: a macro's constant buffer data writes go in their own kind of batch (CBData).
+    bool BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument,
+                    bool macro);
     void CloseBatch() {
         if (!batch_open) {
             return;
         }
         batch_open = false;
-        batch_entry[0] = static_cast<u64>(Kind::Regs) | (u64{batch_count} << 8);
+        batch_entry[0] = static_cast<u64>(batch_kind) | (u64{batch_count} << 8);
         Commit(1 + batch_count);
     }
 
@@ -217,6 +220,7 @@ private:
     size_t publish_every{PublishEvery};
     Tegra::Engines::EngineInterface* front_engine{};
     bool batch_open{};
+    Kind batch_kind{Kind::Regs};
     u32 batch_count{};
     u64* batch_entry{};
 
