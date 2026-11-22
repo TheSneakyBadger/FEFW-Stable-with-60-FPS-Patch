@@ -56,7 +56,6 @@ MOVK = [
     ('BG4', 0x16A8F40, 'w8',  0xCCCD, 0x3DCC, 'P01'),
     ('UA1', 0x17CF378, 'w10', 0x999A, 0xBF19, 'UMA'),   # avatar turntable acceleration
     ('UA2', 0x17CF474, 'w10', 0x999A, 0xBF19, 'UMA'),
-    ('CG',  0xA687E4,  'w8',  0x8889, 0xBC88, 'CG'),    # cloth gravity per step (x s^2)
 ]
 
 def movk_routine(name, site, reg, lo, hi, slot):
@@ -123,10 +122,69 @@ POWQ = f'''
 SPECIAL = f'''
 // Cloth (wld::ClothModule, capes and hair): the Verlet step 0xA68640 runs once per frame and
 // was made for 1/30 s steps. It runs every frame here, with its per-step amounts made per time:
-// gravity and wind are accelerations (x s^2), the velocity kept per step, the pull towards the
-// parent bone's direction and towards the animation are per-step factors (q -> q^s), and the
-// wind phase advances x s. Positional constraints and collisions need nothing. a68640 uses no
-// x16/x17 and no v16-v31, so these routines use them freely; none touches the flags.
+// the velocity kept per step, the pull towards the parent bone's direction and towards the
+// animation are per-step factors (q -> q^s), and the wind phase advances x s. Positional
+// constraints and collisions need nothing. a68640 uses no x16/x17 and no v16-v31, so these
+// routines use them freely; the flags are dead at every cloth site (nothing reads them before
+// the next compare).
+//
+// Gravity and wind (CG, CW): scaled as accelerations (x s^2) they left hair and capes hanging
+// only s times as far from their rest pose as at 30 FPS (half at 60): the turn back towards the
+// parent bone's direction (k a step, 1 - (1 - k)^s per frame here) acts on the position, so a
+// point settles about gravity x (1 - k) / k from its rest pose, and a high ponytail stood up.
+// They are scaled instead by F = Q (1 - Q^s) / (k Q^s), Q = 1 - k, which keeps where each point
+// settles exactly as at 30 FPS (F is about s for a firm turn, s^2 only where nothing holds the
+// point), kept within [s^2, 1]; k under 1e-4 keeps s^2 (technique after Obelisk Chamber's
+// [fefw] cloth_gravity = match, xinthefreefallxai, GPL-3.0, its #160).
+
+// s16 = q^s (see POWQ); returns to x17.
+r_POW:
+{POWQ}
+    br x17
+
+// s21 = F for the turn back k in s20; returns to x17 (kept in d22 over the r_POW call). At 30
+// FPS, or before the emulator has written the table, F = 1.
+r_CF:
+    fmov d22, x17
+    adrp x16, TABLE
+    ldr w16, [x16, {L('S2')}]
+    fmov s21, #1.0
+    cbz w16, 9f
+    fmov s21, w16
+    fmov s16, #1.0
+    fsub s16, s16, s20
+    fcmp s16, #0.0
+    b.le 9f
+    mov w16, #0xf972
+    movk w16, #0x3f7f, lsl #16
+    fmov s17, w16
+    fcmp s16, s17
+    b.ge 9f
+    fmov s23, s16
+    adr x17, 1f
+    b r_POW
+1:  fmov s17, #1.0
+    fsub s17, s17, s16
+    fmul s17, s17, s23
+    fmul s18, s20, s16
+    fdiv s17, s17, s18
+    fmaxnm s17, s17, s21
+    fmov s18, #1.0
+    fminnm s21, s17, s18
+9:  fmov x17, d22
+    br x17
+
+// CG: the gravity constant (w8) x F, for the point's turn back in s5.
+r_CG:
+    fmov s20, s5
+    adr x17, 1f
+    b r_CF
+1:  mov w8, #0x8889
+    movk w8, #0xbc88, lsl #16
+    fmov s16, w8
+    fmul s16, s16, s21
+    fmov w8, s16
+    b 0xa687e8
 r_CP:
     fdiv s0, s0, s1
     adrp x16, TABLE
@@ -138,7 +196,9 @@ r_CP:
 
 r_CB:
     fsub s16, s14, s1
-{POWQ}
+    adr x17, 1f
+    b r_POW
+1:
     fsub s17, s14, s16
     str s17, [sp, #0x50]
     fmov s1, s16
@@ -146,22 +206,27 @@ r_CB:
 
 r_CD:
     fsub s16, s14, s2
-{POWQ}
+    adr x17, 1f
+    b r_POW
+1:
     fmov s2, s16
     b 0xa687f4
 
+// CW: the wind x F; the point's turn back is in the q5 that a6883c saved at sp + 0xa0 (s5 is
+// used for other things around the wind's calls and loaded back at a68994).
 r_CW:
     fadd v0.4s, v1.4s, v0.4s
-    adrp x16, TABLE
-    ldr w16, [x16, {L('S2')}]
-    cbz w16, 1f
-    fmov s16, w16
-    fmul v0.4s, v0.4s, v16.s[0]
-1:  b 0xa68994
+    ldr s20, [sp, #0xa0]
+    adr x17, 1f
+    b r_CF
+1:  fmul v0.4s, v0.4s, v21.s[0]
+    b 0xa68994
 
 r_CK:
     fsub s16, s14, s5
-{POWQ}
+    adr x17, 1f
+    b r_POW
+1:
     fmov s2, s16
     fsub s5, s14, s16
     b 0xa68a9c
@@ -366,7 +431,7 @@ r_UG{i}:
 # replace a bl and return to its caller.
 CALL_SITES = set()
 SITES = [(s, n) for n, s, *_ in MOVK] + [
-    (0xA686E8, 'CP'), (0xA68734, 'CB'), (0xA687F0, 'CD'), (0xA68990, 'CW'), (0xA68A98, 'CK'),
+    (0xA687E4, 'CG'), (0xA686E8, 'CP'), (0xA68734, 'CB'), (0xA687F0, 'CD'), (0xA68990, 'CW'), (0xA68A98, 'CK'),
     (0x11EA5CC, 'Q'), (0x112291C, 'I1'), (0x10D7320, 'LA'), (0x133FB90, 'A1'),
     (0x133FEB4, 'M2'), (0x14CF5D4, 'P34'), (0x16A8D68, 'BG1'), (0x16A8D74, 'BG2'),
     (0x16A8EF4, 'BG5'), (0x115D330, 'TX')] + [(s, f'UD{i}') for i, s in enumerate(UMD_SITES)] + \
@@ -374,7 +439,7 @@ SITES = [(s, n) for n, s, *_ in MOVK] + [
 
 # The original instruction at every site (checked against main before patching).
 EXPECT = {
-    0xA686E8: 'fdiv\ts0, s0, s1', 0xA68734: 'fsub\ts1, s14, s1', 0xA687F0: 'fsub\ts2, s14, s2',
+    0xA687E4: 'movk\tw8, #0xbc88, lsl #16', 0xA686E8: 'fdiv\ts0, s0, s1', 0xA68734: 'fsub\ts1, s14, s1', 0xA687F0: 'fsub\ts2, s14, s2',
     0xA68990: 'fadd\tv0.4s, v1.4s, v0.4s', 0xA68A98: 'fsub\ts2, s14, s5',
     0x11EA5CC: 'ldrb\tw8, [x19, #0xc8]',
     0x112291C: 'sdiv\tw10, w10, w12', 0x10D7320: 'ldr\ts2, [x0, #0xa4]',
