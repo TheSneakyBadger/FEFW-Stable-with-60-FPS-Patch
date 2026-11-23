@@ -1218,38 +1218,6 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
         }
         channel_state->fast_bound_uniform_buffers[stage] |= 1u << binding_index;
         channel_state->uniform_buffer_binding_sizes[stage][binding_index] = size;
-        namespace BackStats = VideoCommon::BackStats;
-        const u64 uniform_start = BackStats::Enabled() ? BackStats::Stamp() : 0;
-        SCOPE_EXIT {
-            if (uniform_start != 0) {
-                BackStats::shared.uniform_copies.fetch_add(1, std::memory_order_relaxed);
-                BackStats::shared.uniform_bytes.fetch_add(size, std::memory_order_relaxed);
-                BackStats::shared.uniform_ticks.fetch_add(BackStats::Stamp() - uniform_start,
-                                                          std::memory_order_relaxed);
-            }
-        };
-        if constexpr (requires {
-                          runtime.BindMappedUniformBufferData(stage, binding_index, u64{},
-                                                              std::span<const u8>{});
-                      }) {
-            // Fortune's Eden: the bytes are read first, and a copy made earlier in the same
-            // submission is bound again when they haven't changed (#89).
-            // EDEN_UNIFORM_REUSE=0: a new copy for every draw, as before.
-            static const bool reuse = [] {
-                const char* const value = std::getenv("EDEN_UNIFORM_REUSE");
-                return !(value && value[0] == '0');
-            }();
-            if (reuse && size <= uniform_scratch.size()) {
-                device_memory.ReadBlockUnsafe(device_addr, uniform_scratch.data(), size);
-                if (runtime.BindMappedUniformBufferData(
-                        stage, binding_index, device_addr,
-                        std::span<const u8>{uniform_scratch.data(), size}) &&
-                    uniform_start != 0) {
-                    BackStats::shared.uniform_reused.fetch_add(1, std::memory_order_relaxed);
-                }
-                return;
-            }
-        }
         // Stream buffer path to avoid stalling on non-Nvidia drivers or Vulkan
         const std::span<u8> span = runtime.BindMappedUniformBuffer(stage, binding_index, size);
         device_memory.ReadBlockUnsafe(device_addr, span.data(), size);

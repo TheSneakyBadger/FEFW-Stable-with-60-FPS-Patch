@@ -589,9 +589,6 @@ private:
     /// cache's: game threads waited 600 ms of every 10 s for the cache's lock while the GPU thread
     /// recorded a busy map, just to note a read (#63, the game at 45 FPS after 26 minutes).
     std::mutex cpu_read_mutex;
-    /// Fortune's Eden: a small uniform buffer's bytes, read before deciding whether the copy
-    /// made earlier in the submission can be bound again.
-    std::array<u8, 4096> uniform_scratch{};
     Common::RangeSet<DAddr> cpu_read_ranges;
 
     /// Per caching page: the held-write interval of its last held guest CPU write (0: none

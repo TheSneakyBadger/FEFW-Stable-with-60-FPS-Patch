@@ -174,12 +174,6 @@ struct Shared {
     std::atomic<u64> compute{};
     std::atomic<u64> dma{};
     std::atomic<u64> inline_upload{};
-    // Small uniform buffers copied for a draw (the stream path), and those whose copy from
-    // earlier in the same submission was used again because the bytes hadn't changed.
-    std::atomic<u64> uniform_copies{};
-    std::atomic<u64> uniform_bytes{};
-    std::atomic<u64> uniform_reused{};
-    std::atomic<u64> uniform_ticks{};
     // Vulkan worker.
     std::atomic<u64> worker_busy{};
     std::atomic<u64> worker_idle{};
