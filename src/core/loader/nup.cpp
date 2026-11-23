@@ -301,9 +301,69 @@ AppLoader::LoadResult AppLoader_NUP::Load(Kernel::KProcess& process, Core::Syste
             FileSys::GetBaseTitleID(base_title_id), packages[i].title_id,
             FileSys::CreateRomFS(romfs_dir));
     }
+    RegisterSiblingAddOnContent(system);
 
     is_loaded = true;
     return result;
+}
+
+void AppLoader_NUP::RegisterSiblingAddOnContent(Core::System& system) {
+    const auto dir = file != nullptr ? file->GetContainingDirectory() : nullptr;
+    if (dir == nullptr) {
+        return;
+    }
+    const u64 base = FileSys::GetBaseTitleID(base_title_id);
+    auto& controller = system.GetFileSystemController();
+    for (const auto& other : dir->GetFiles()) {
+        if (other == nullptr || other->GetName() == file->GetName() ||
+            !NupContainer::IsNupFile(other)) {
+            continue;
+        }
+        auto container = std::make_unique<NupContainer>(other);
+        if (container->GetStatus() != ResultStatus::Success) {
+            continue;
+        }
+        const auto& packages = container->GetPackages();
+        // Another copy of this program (its add-ons are this program's), or a NUP of add-ons
+        // only, whose ids belong to this program.
+        const bool same_program =
+            std::any_of(packages.begin(), packages.end(), [base](const auto& package) {
+                return package.kind != NupContainer::PackageKind::Addon &&
+                       FileSys::GetBaseTitleID(package.title_id) == base;
+            });
+        const bool other_has_program =
+            std::any_of(packages.begin(), packages.end(), [](const auto& package) {
+                return package.kind != NupContainer::PackageKind::Addon;
+            });
+        bool used = false;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            const auto& package = packages[i];
+            if (package.kind != NupContainer::PackageKind::Addon) {
+                continue;
+            }
+            if (!same_program && (other_has_program || FileSys::GetBaseTitleID(package.title_id) != base)) {
+                continue;
+            }
+            if (controller.OpenLooseAddOnContent(package.title_id) != nullptr) {
+                continue; // Already registered (from the started NUP or an earlier file)
+            }
+            const auto romfs_dir = container->GetRomFSDir(i);
+            if (romfs_dir == nullptr ||
+                (romfs_dir->GetFiles().empty() && romfs_dir->GetSubdirectories().empty())) {
+                LOG_WARNING(Loader, "NUP add-on content {:016X} in {} has no files; not registered",
+                            package.title_id, other->GetName());
+                continue;
+            }
+            LOG_INFO(Loader, "NUP add-on content {:016X} found in {}, next to the started game",
+                     package.title_id, other->GetName());
+            controller.RegisterLooseAddOnContent(base, package.title_id,
+                                                 FileSys::CreateRomFS(romfs_dir));
+            used = true;
+        }
+        if (used) {
+            sibling_nups.push_back(std::move(container));
+        }
+    }
 }
 
 ResultStatus AppLoader_NUP::VerifyIntegrity(
