@@ -351,9 +351,11 @@ public:
 
     /// The guest CPU reads [addr, addr + size) (a reactive flush asked for it): without
     /// AsyncBufferDownloads, GPU writes there are still copied back at fences from now on.
+    /// Takes only cpu_read_mutex, not the cache's lock.
     void NoteCpuRead(DAddr addr, size_t size);
-    /// Fortune's Eden: how many separate ranges NoteCpuRead has noted (under the lock).
-    [[nodiscard]] size_t CpuReadRangeCount() const {
+    /// Fortune's Eden: how many separate ranges NoteCpuRead has noted.
+    [[nodiscard]] size_t CpuReadRangeCount() {
+        std::scoped_lock read_lock{cpu_read_mutex};
         size_t count = 0;
         cpu_read_ranges.ForEach([&count](auto, auto) { ++count; });
         return count;
@@ -583,7 +585,10 @@ private:
     bool AsyncBufferDownloads() const {
         return gpu_memory == nullptr || !gpu_memory->UsesNativeTiling();
     }
-    /// Buffer pages the guest CPU reads (NoteCpuRead).
+    /// Buffer pages the guest CPU reads (NoteCpuRead). It has its own lock, taken after the
+    /// cache's: game threads waited 600 ms of every 10 s for the cache's lock while the GPU thread
+    /// recorded a busy map, just to note a read (#63, the game at 45 FPS after 26 minutes).
+    std::mutex cpu_read_mutex;
     Common::RangeSet<DAddr> cpu_read_ranges;
 
     /// Per caching page: the held-write interval of its last held guest CPU write (0: none
@@ -613,6 +618,7 @@ private:
             uncommitted_gpu_modified_ranges.Add(addr, size);
             return;
         }
+        std::scoped_lock read_lock{cpu_read_mutex};
         cpu_read_ranges.ForEachInRange(addr, size, [this](DAddr start, DAddr end) {
             uncommitted_gpu_modified_ranges.Add(start, end - start);
         });

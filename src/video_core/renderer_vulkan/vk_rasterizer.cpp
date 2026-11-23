@@ -874,9 +874,7 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
     };
     {
         // Guest CPU reads of buffer memory decide which GPU-written buffer data is copied back.
-        const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
-        std::scoped_lock lock{buffer_cache.mutex};
-        lock_timer.Acquired();
+        // Only the read record's own lock is taken, not the buffer cache's (#63).
         const u64 locked = FefwGuestWaits::NowNs();
         buffer_cache.NoteCpuRead(Common::AlignDown(addr, Core::DEVICE_PAGESIZE),
                                  Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE) -
@@ -1107,11 +1105,7 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
         std::scoped_lock lock{texture_cache.mutex};
         image_pages = texture_cache.ImagePageCount();
     }
-    size_t read_ranges = 0;
-    {
-        std::scoped_lock lock{buffer_cache.mutex};
-        read_ranges = buffer_cache.CpuReadRangeCount();
-    }
+    const size_t read_ranges = buffer_cache.CpuReadRangeCount();
     const u64 ever_pages = texture_cache.page_filter.CountPages();
     const auto ms = [](u64 ns) { return static_cast<double>(ns) / 1e6; };
     LOG_INFO(Render_Vulkan,
