@@ -45,8 +45,8 @@ namespace FefwUpdater {
 namespace {
 
 constexpr const char* kApiHost = "https://api.github.com";
-constexpr const char* kLatestPath =
-    "/repos/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/latest";
+constexpr const char* kReleasesPath =
+    "/repos/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases?per_page=10";
 #ifdef _WIN32
 constexpr const char* kAssetName = "FEFW-Stable-60FPS-Portable.zip";
 #else
@@ -365,48 +365,58 @@ std::optional<Release> CheckForUpdate() {
     }
 #endif
     try {
+        // The newest few releases, newest first: a release whose Linux files are still being
+        // built has no AppImage for a while (#89), so the newest one that has it is taken.
         const auto result = MakeClient(kApiHost)->Get(
-            kLatestPath, httplib::Headers{{"User-Agent", kUserAgent},
-                                          {"Accept", "application/vnd.github+json"}});
+            kReleasesPath, httplib::Headers{{"User-Agent", kUserAgent},
+                                            {"Accept", "application/vnd.github+json"}});
         if (!result || result->status != 200) {
             LOG_INFO(Frontend, "Update check: no answer ({})",
                      result ? fmt::format("HTTP {}", result->status) : httplib::to_string(result.error()));
             return std::nullopt;
         }
-        const auto json = nlohmann::json::parse(result->body);
-        Release release;
-        release.tag = json.value("tag_name", "");
-        release.name = json.value("name", release.tag);
-        release.html_url = json.value("html_url", "");
-        if (json.value("draft", false) || json.value("prerelease", false)) {
+        const auto list = nlohmann::json::parse(result->body);
+        if (!list.is_array()) {
             return std::nullopt;
         }
-        if (!IsNewer(release.tag, CurrentVersion())) {
-            LOG_INFO(Frontend, "Update check: {} is the newest release", CurrentVersion());
-            return std::nullopt;
-        }
-        if (release.tag == SkippedTag()) {
-            LOG_INFO(Frontend, "Update check: {} is available but was skipped", release.tag);
-            return std::nullopt;
-        }
-        for (const auto& asset : json.value("assets", nlohmann::json::array())) {
-            if (asset.value("name", "") != kAssetName) {
+        for (const auto& json : list) {
+            if (json.value("draft", false) || json.value("prerelease", false)) {
                 continue;
             }
-            release.asset_url = asset.value("browser_download_url", "");
-            release.asset_size = asset.value("size", u64{0});
-            const std::string digest = asset.value("digest", "");
-            if (digest.rfind("sha256:", 0) == 0) {
-                release.sha256 = digest.substr(7);
+            Release release;
+            release.tag = json.value("tag_name", "");
+            release.name = json.value("name", release.tag);
+            release.html_url = json.value("html_url", "");
+            if (!IsNewer(release.tag, CurrentVersion())) {
+                // Newest first: nothing further down is newer either.
+                LOG_INFO(Frontend, "Update check: {} is the newest release with a download",
+                         CurrentVersion());
+                return std::nullopt;
             }
+            for (const auto& asset : json.value("assets", nlohmann::json::array())) {
+                if (asset.value("name", "") != kAssetName) {
+                    continue;
+                }
+                release.asset_url = asset.value("browser_download_url", "");
+                release.asset_size = asset.value("size", u64{0});
+                const std::string digest = asset.value("digest", "");
+                if (digest.rfind("sha256:", 0) == 0) {
+                    release.sha256 = digest.substr(7);
+                }
+            }
+            if (release.asset_url.empty()) {
+                LOG_INFO(Frontend, "Update check: {} has no {} yet", release.tag, kAssetName);
+                continue;
+            }
+            if (release.tag == SkippedTag()) {
+                LOG_INFO(Frontend, "Update check: {} is available but was skipped", release.tag);
+                return std::nullopt;
+            }
+            LOG_INFO(Frontend, "Update check: {} is available (this is {})", release.tag,
+                     CurrentVersion());
+            return release;
         }
-        if (release.asset_url.empty()) {
-            LOG_WARNING(Frontend, "Update check: {} has no {}", release.tag, kAssetName);
-            return std::nullopt;
-        }
-        LOG_INFO(Frontend, "Update check: {} is available (this is {})", release.tag,
-                 CurrentVersion());
-        return release;
+        return std::nullopt;
     } catch (const std::exception& e) {
         LOG_WARNING(Frontend, "Update check failed: {}", e.what());
         return std::nullopt;
