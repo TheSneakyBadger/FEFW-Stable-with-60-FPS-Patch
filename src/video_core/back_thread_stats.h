@@ -119,6 +119,12 @@ struct DrawThread {
     std::array<u64, 5> ring_ticks{};
     std::array<u64, 5> ring_count{};
     u64 sink_ticks{};           ///< Engine::ConsumeSink (inside the method entries)
+    // Test 97a: method and macro-write entries by method (all engines together), and runs of
+    // consecutive constant buffer data writes made by macros (what one multi-word write could do).
+    std::array<u64, 0x1000> method_ticks{};
+    std::array<u64, 0x1000> method_count{};
+    u64 cb_macro_writes{};
+    u64 cb_macro_runs{};
     u64 last_compute_serial{};  ///< draw_serial at the last compute dispatch
     // Handle tables a compute shader wrote (buffer-backed texture arrays, downloaded per frame).
     u64 table_downloads{};

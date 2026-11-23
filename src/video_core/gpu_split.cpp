@@ -470,6 +470,7 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
     system->RegisterHostThread();
     namespace BackStats = VideoCommon::BackStats;
     u64 read_position = 0;
+    bool last_was_cb = false; // Statistics (test 97a)
     u64 idle_start = BackStats::Enabled() ? BackStats::Stamp() : 0;
     while (!stop_token.stop_requested()) {
         u64 available = published.load(std::memory_order_acquire);
@@ -523,8 +524,23 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
             const size_t size = Execute(&ring[index]);
             if (entry_start != 0) {
                 const u64 now = BackStats::Stamp();
-                BackStats::draw_thread.ring_ticks[kind] += now - entry_start;
-                ++BackStats::draw_thread.ring_count[kind];
+                auto& d = BackStats::draw_thread;
+                d.ring_ticks[kind] += now - entry_start;
+                ++d.ring_count[kind];
+                if (kind <= 1) {
+                    const u32 method = static_cast<u32>((head >> 8) & 0xfff);
+                    d.method_ticks[method] += now - entry_start;
+                    ++d.method_count[method];
+                    // Maxwell3D const_buffer.buffer[0..15]: methods 0x8e4-0x8f3.
+                    const bool cb = kind == 1 && method >= 0x8e4 && method < 0x8f4;
+                    if (cb) {
+                        ++d.cb_macro_writes;
+                        d.cb_macro_runs += !last_was_cb;
+                    }
+                    last_was_cb = cb;
+                } else {
+                    last_was_cb = false; // Plain register batches too (const_buffer.offset...)
+                }
                 entry_start = now;
             }
             read_position += size != 0 ? size : RingWords - index;
