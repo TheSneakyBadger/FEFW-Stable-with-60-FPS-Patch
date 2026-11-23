@@ -862,6 +862,7 @@ void BufferCache<P>::NoteCpuRead(DAddr addr, size_t size) {
     if (AsyncBufferDownloads() || size == 0) {
         return;
     }
+    std::scoped_lock read_lock{cpu_read_mutex};
     size_t covered = 0;
     cpu_read_ranges.ForEachInRange(addr, size,
                                    [&](DAddr start, DAddr end) { covered += end - start; });
