@@ -70,6 +70,12 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
 
     ui->setupUi(this);
 
+    graphics_scroll = std::make_unique<QScrollArea>(this);
+    graphics_scroll->setWidgetResizable(true);
+    graphics_scroll->setFrameShape(QFrame::NoFrame);
+    graphics_scroll->setWidget(graphics_tab.get());
+    graphics_scroll->setAccessibleName(graphics_tab->accessibleName());
+
     // Post-processing effects live on the Advanced page.
     graphics_advanced_tab->AddExtraWidget(graphics_tab->PostProcessWidget());
 
@@ -79,7 +85,7 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
     ui->tabWidget->addTab(debug_tab_tab.get(), tr("Debug"));
     ui->tabWidget->addTab(filesystem_tab.get(), tr("Filesystem"));
     ui->tabWidget->addTab(general_tab.get(), tr("General"));
-    ui->tabWidget->addTab(graphics_tab.get(), tr("Graphics"));
+    ui->tabWidget->addTab(graphics_scroll.get(), tr("Graphics"));
     ui->tabWidget->addTab(graphics_advanced_tab.get(), tr("GraphicsAdvanced"));
     ui->tabWidget->addTab(graphics_extensions_tab.get(), tr("GraphicsExtra"));
     ui->tabWidget->addTab(performance_tab.get(), tr("Performance"));
@@ -125,7 +131,12 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
     ui->buttonBox->setFocus();
 }
 
-ConfigureDialog::~ConfigureDialog() = default;
+ConfigureDialog::~ConfigureDialog() {
+    // graphics_tab is owned by its unique_ptr, not by the scroll area.
+    if (graphics_scroll) {
+        graphics_scroll->takeWidget();
+    }
+}
 
 void ConfigureDialog::SetConfiguration() {}
 
@@ -201,7 +212,7 @@ void ConfigureDialog::PopulateSelectionList() {
     const std::array<std::pair<QString, QList<QWidget*>>, 8> items{
         {{tr("General"), general_tabs},
          {tr("System"), {system_tab.get(), profile_tab.get()}},
-         {tr("Graphics"), {graphics_tab.get()}},
+         {tr("Graphics"), {graphics_scroll.get()}},
          {tr("Performance"), {performance_tab.get()}},
          {tr("Audio"), {audio_tab.get()}},
          {tr("Controls"), input_tab->GetSubTabs()},

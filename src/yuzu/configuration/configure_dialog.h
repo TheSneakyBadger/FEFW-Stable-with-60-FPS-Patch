@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 #include <QDialog>
+#include <QScrollArea>
 #include "configuration/shared_widget.h"
 #include "qt_common/config/shared_translation.h"
 #include "qt_common/util/vk.h"
@@ -103,4 +104,8 @@ private:
     std::unique_ptr<ConfigureProfileManager> profile_tab;
     std::unique_ptr<ConfigureSystem> system_tab;
     std::unique_ptr<ConfigureWeb> web_tab;
+    /// The Graphics tab in a scroll area: on a short screen (720p, a Steam Deck) its rows were
+    /// squeezed together, hiding the DLSS and MFG Unlocker panels. Declared last, so it goes
+    /// first; the destructor takes graphics_tab back out of it.
+    std::unique_ptr<QScrollArea> graphics_scroll;
 };
