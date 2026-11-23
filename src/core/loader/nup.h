@@ -52,7 +52,13 @@ public:
     ResultStatus ReadNSOModules(Modules& modules) override;
 
 private:
+    /// Registers the add-on content of the other NUP files in this one's folder that belong to
+    /// this program (#89: the DLC in another NUP than the one started).
+    void RegisterSiblingAddOnContent(Core::System& system);
+
     std::unique_ptr<FileSys::NupContainer> nup;
+    /// The other NUP files whose add-on content was registered (their RomFS reads from them).
+    std::vector<std::unique_ptr<FileSys::NupContainer>> sibling_nups;
     std::unique_ptr<AppLoader> secondary_loader;
 
     std::unique_ptr<FileSys::NACP> nacp_file;
