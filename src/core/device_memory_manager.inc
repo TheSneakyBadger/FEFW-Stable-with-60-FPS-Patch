@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <boost/container/deque.hpp>
+#include <boost/container/small_vector.hpp>
 
 #include "common/address_space.h"
 #include "common/address_space.inc"
@@ -725,12 +726,16 @@ void DeviceMemoryManager<Traits>::UpdatePagesCachedBatch(std::span<const std::pa
     if (ranges.empty()) {
         return;
     }
-    // Make a local copy and sort by address
-    std::vector<std::pair<DAddr, size_t>> tmp(ranges.begin(), ranges.end());
-    std::sort(tmp.begin(), tmp.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    // Make a local copy and sort by address. Fortune's Eden: no heap allocations for the usual
+    // few ranges, and no sort when they come in order (#89).
+    boost::container::small_vector<std::pair<DAddr, size_t>, 16> tmp(ranges.begin(), ranges.end());
+    const auto by_address = [](const auto& a, const auto& b) { return a.first < b.first; };
+    if (!std::is_sorted(tmp.begin(), tmp.end(), by_address)) {
+        std::sort(tmp.begin(), tmp.end(), by_address);
+    }
 
     // Coalesce adjacent/overlapping ranges
-    std::vector<std::pair<DAddr, size_t>> coalesced;
+    boost::container::small_vector<std::pair<DAddr, size_t>, 16> coalesced;
     DAddr cur_addr = tmp[0].first;
     size_t cur_size = tmp[0].second;
     for (size_t i = 1; i < tmp.size(); ++i) {
