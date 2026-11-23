@@ -858,13 +858,14 @@ bool VsyncSleep() {
     // Ti at 120 Hz; #90, an RTX 4060 Laptop at 144 Hz). So every 2 s while it is held off: when
     // over 5% of that time went on waits for free frames, Reflex sleeps again and the guard is
     // off for the rest of the session (in the Dagsion case it helped, 1-3 ms in 10 s).
-    // EDEN_DLSSG_REFLEX_HOLD_GUARD=0: off.
+    // Off by default since v1.7.6.1: it helped one PC (a locked 59 in Dagsion at 4K) and hurt
+    // two others the day v1.7.6 came out. EDEN_DLSSG_REFLEX_HOLD_GUARD=1: on.
     static bool hold_backpressure = false;
     static s64 hold_check_start = 0;
     static s64 hold_check_wait = 0;
     static const bool hold_guard = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_HOLD_GUARD");
-        return !(value && value[0] == '0');
+        return value && value[0] == '1';
     }();
     static s64 hold_window_start = 0;
     static u32 hold_window_vsyncs = 0;
