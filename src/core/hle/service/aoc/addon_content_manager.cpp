@@ -19,6 +19,7 @@
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/kernel/k_event.h"
 #include "core/hle/service/aoc/addon_content_manager.h"
+#include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/aoc/purchase_event_manager.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/ipc_helpers.h"
@@ -34,6 +35,13 @@ static bool CheckAOCTitleIDMatchesBase(u64 title_id, u64 base) {
 
 static u64 GetCallerBaseTitleID(Core::System& system, const ClientProcessId& process_id) {
     return FileSys::GetBaseTitleID(system.ResolveCallerProgramId(*process_id));
+}
+
+// Add-ons a container loader (NUP, NX) registered for this program. Switch 2 Editions keep the
+// Switch 1 application's add-on ids (Kirby: program 04004D300C5AE001, add-on 01004D300C5AF001),
+// so these are matched by registration, not by title id arithmetic.
+static std::vector<u64> LooseAddOnContent(Core::System& system, u64 base) {
+    return system.GetFileSystemController().ListLooseAddOnContent(base);
 }
 
 static std::vector<u64> AccumulateAOCTitleIDs(Core::System& system) {
@@ -106,7 +114,8 @@ Result IAddOnContentManager::CountAddOnContent(Out<u32> out_count, ClientProcess
 
     *out_count = static_cast<u32>(
         std::count_if(add_on_content.begin(), add_on_content.end(),
-                      [current](u64 tid) { return CheckAOCTitleIDMatchesBase(tid, current); }));
+                      [current](u64 tid) { return CheckAOCTitleIDMatchesBase(tid, current); }) +
+        LooseAddOnContent(system, current).size());
 
     R_SUCCEED();
 }
@@ -129,6 +138,9 @@ Result IAddOnContentManager::ListAddOnContent(Out<u32> out_count,
 
             out.push_back(static_cast<u32>(FileSys::GetAOCID(content_id)));
         }
+        for (u64 content_id : LooseAddOnContent(system, current)) {
+            out.push_back(static_cast<u32>(FileSys::GetAOCID(content_id)));
+        }
     }
 
     R_UNLESS(out.size() >= offset, AM::ResultApplicationRecordNotFound);
@@ -146,6 +158,13 @@ Result IAddOnContentManager::GetAddOnContentBaseId(Out<u64> out_title_id,
     LOG_DEBUG(Service_AOC, "called. process_id={}", process_id.pid);
 
     const auto title_id = system.ResolveCallerProgramId(*process_id);
+    if (const auto loose = LooseAddOnContent(system, FileSys::GetBaseTitleID(title_id));
+        !loose.empty()) {
+        *out_title_id = loose.front() & ~u64{0xFFF};
+        LOG_DEBUG(Service_AOC, "add-on base id {:016X} from the container's add-on content",
+                  *out_title_id);
+        R_SUCCEED();
+    }
     const FileSys::PatchManager pm{title_id, system.GetFileSystemController(),
                                    system.GetContentProvider()};
 

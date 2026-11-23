@@ -794,9 +794,36 @@ void FileSystemController::InitTempStorage() {
     }
 }
 
+void FileSystemController::RegisterLooseAddOnContent(u64 program_base_id, u64 add_on_title_id,
+                                                     FileSys::VirtualFile romfs) {
+    std::scoped_lock lk{registration_lock};
+    LOG_INFO(Service_FS, "Add-on content {:016X} registered for program {:016X} ({} bytes)",
+             add_on_title_id, program_base_id, romfs ? romfs->GetSize() : 0);
+    loose_add_on_content.insert_or_assign(add_on_title_id,
+                                          LooseAddOnContent{program_base_id, std::move(romfs)});
+}
+
+std::vector<u64> FileSystemController::ListLooseAddOnContent(u64 program_base_id) {
+    std::scoped_lock lk{registration_lock};
+    std::vector<u64> out;
+    for (const auto& [title_id, entry] : loose_add_on_content) {
+        if (entry.program_base_id == program_base_id && entry.romfs) {
+            out.push_back(title_id);
+        }
+    }
+    return out;
+}
+
+FileSys::VirtualFile FileSystemController::OpenLooseAddOnContent(u64 add_on_title_id) {
+    std::scoped_lock lk{registration_lock};
+    const auto it = loose_add_on_content.find(add_on_title_id);
+    return it == loose_add_on_content.end() ? nullptr : it->second.romfs;
+}
+
 void FileSystemController::Reset() {
     std::scoped_lock lk{registration_lock};
     registrations.clear();
+    loose_add_on_content.clear();
 }
 
 void LoopProcess(Core::System& system) {

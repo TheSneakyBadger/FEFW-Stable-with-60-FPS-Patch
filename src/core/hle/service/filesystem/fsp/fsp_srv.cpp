@@ -515,6 +515,12 @@ Result FSP_SRV::OpenDataStorageByDataId(OutInterface<IStorage> out_interface,
     LOG_DEBUG(Service_FS, "called with storage_id={:02X}, unknown={:08X}, title_id={:016X}",
               storage_id, unknown, title_id);
 
+    if (auto loose = fsc.OpenLooseAddOnContent(title_id)) {
+        LOG_INFO(Service_FS, "Opening container add-on content {:016X}", title_id);
+        *out_interface = std::make_shared<IStorage>(system, std::move(loose));
+        R_SUCCEED();
+    }
+
     auto data = romfs_controller->OpenRomFS(title_id, storage_id, FileSys::ContentRecordType::Data);
 
     if (!data) {
