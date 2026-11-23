@@ -24,6 +24,7 @@
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/service/filesystem/filesystem.h"
+#include "core/loader/nup.h"
 #include "core/loader/deconstructed_rom_directory.h"
 #include "core/loader/nso.h"
 
@@ -404,6 +405,13 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
     is_loaded = true;
     if (standalone) {
         title_id = metadata.GetTitleID();
+        // DLC dumped as loose files: dlc/<title id>/romfs in the dump's folder (next to exefs and
+        // romfs), or next to the folder holding main when that is the dump itself.
+        if (const auto main_dir = file != nullptr ? file->GetContainingDirectory() : nullptr) {
+            RegisterLooseDlcFolder(system, title_id,
+                                   main_dir->GetName() == "exefs" ? main_dir->GetParentDirectory()
+                                                                  : main_dir);
+        }
         // Register the game's own program ID (as the NUP, NSP and XCI loaders do), so account
         // saves go to save/.../<program id> instead of save/.../0000000000000000.
         system.GetFileSystemController().RegisterProcess(

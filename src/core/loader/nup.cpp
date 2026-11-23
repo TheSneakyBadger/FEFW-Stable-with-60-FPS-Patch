@@ -4,6 +4,7 @@
 #include "core/loader/nup.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cstring>
 
@@ -302,9 +303,62 @@ AppLoader::LoadResult AppLoader_NUP::Load(Kernel::KProcess& process, Core::Syste
             FileSys::CreateRomFS(romfs_dir));
     }
     RegisterSiblingAddOnContent(system);
+    if (file != nullptr) {
+        RegisterLooseDlcFolder(system, base_title_id, file->GetContainingDirectory());
+    }
 
     is_loaded = true;
     return result;
+}
+
+void RegisterLooseDlcFolder(Core::System& system, u64 program_id,
+                            const FileSys::VirtualDir& folder) {
+    const auto dlc = folder != nullptr ? folder->GetSubdirectory("dlc") : nullptr;
+    if (dlc == nullptr) {
+        return;
+    }
+    const u64 base = FileSys::GetBaseTitleID(program_id);
+    auto& controller = system.GetFileSystemController();
+    const auto add = [&](u64 title_id, const FileSys::VirtualDir& dir, const std::string& where) {
+        const auto romfs = dir->GetSubdirectory("romfs") != nullptr ? dir->GetSubdirectory("romfs")
+                                                                     : dir;
+        if (romfs->GetFiles().empty() && romfs->GetSubdirectories().empty()) {
+            LOG_WARNING(Loader, "DLC folder {} has no files; not loaded", where);
+            return;
+        }
+        if (controller.OpenLooseAddOnContent(title_id) != nullptr) {
+            return; // A NUP next to it already brought this add-on
+        }
+        LOG_INFO(Loader, "DLC {:016X} found in the folder {}", title_id, where);
+        controller.RegisterLooseAddOnContent(base, title_id, FileSys::CreateRomFS(romfs));
+    };
+    for (const auto& entry : dlc->GetSubdirectories()) {
+        const std::string name = entry->GetName();
+        if (name == "romfs") {
+            add(base + FileSys::AOC_TITLE_ID_OFFSET + 1, dlc, "dlc");
+            continue;
+        }
+        u64 title_id = 0;
+        // 16 hex digits: a title ID; up to 4 decimal digits: an add-on index.
+        bool ok = name.size() == 16 || (!name.empty() && name.size() <= 4);
+        for (const char c : name) {
+            ok = ok && (name.size() == 16 ? std::isxdigit(static_cast<unsigned char>(c)) != 0
+                                          : std::isdigit(static_cast<unsigned char>(c)) != 0);
+        }
+        if (!ok) {
+            LOG_WARNING(Loader, "DLC folder dlc/{} isn't named by a title ID; skipped", name);
+            continue;
+        }
+        title_id = std::stoull(name, nullptr, name.size() == 16 ? 16 : 10);
+        if (name.size() != 16) {
+            // An add-on index (decimal): the title ID follows from the program's.
+            title_id = base + FileSys::AOC_TITLE_ID_OFFSET + title_id;
+        } else if (FileSys::GetBaseTitleID(title_id) != base) {
+            LOG_WARNING(Loader, "DLC folder dlc/{} belongs to another game; skipped", name);
+            continue;
+        }
+        add(title_id, entry, "dlc/" + name);
+    }
 }
 
 void AppLoader_NUP::RegisterSiblingAddOnContent(Core::System& system) {

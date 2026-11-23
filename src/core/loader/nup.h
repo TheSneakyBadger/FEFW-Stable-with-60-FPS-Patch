@@ -17,6 +17,13 @@ class NupContainer;
 
 namespace Loader {
 
+/// Registers the add-on content (DLC) dumped as loose files in `folder`'s "dlc" folder for the
+/// program `program_id`: one folder per add-on, named by its 16-hex-digit title ID, holding a
+/// "romfs" folder (or the romfs files themselves), as Obelisk Chamber lays them out. A folder
+/// named by a small number n is the add-on with index n (title ID program + 0x1000 + n), and a
+/// "romfs" folder straight in "dlc" is taken as index 1.
+void RegisterLooseDlcFolder(Core::System& system, u64 program_id, const FileSys::VirtualDir& folder);
+
 /// Loads a NUP (NX Package) container: loose ExeFS/RomFS trees for a base
 /// program plus its updates in one file. The newest update package is layered
 /// over the base; add-on content packages are recognized but not yet mounted.
