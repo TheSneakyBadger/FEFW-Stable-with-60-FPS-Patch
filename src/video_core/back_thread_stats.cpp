@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -132,6 +133,26 @@ void Report() {
              pct(list_start), pct(list_end),
              d.ring_ticks[3] > list_start + list_end ? pct(d.ring_ticks[3] - list_start - list_end)
                                                      : 0.0);
+    {
+        // Test 97a: the methods that take the most back time.
+        std::array<u32, 0x1000> order;
+        for (u32 i = 0; i < order.size(); ++i) {
+            order[i] = i;
+        }
+        std::partial_sort(order.begin(), order.begin() + 12, order.end(),
+                          [&d](u32 a, u32 b) { return d.method_ticks[a] > d.method_ticks[b]; });
+        std::string top;
+        for (u32 i = 0; i < 12 && d.method_ticks[order[i]] != 0; ++i) {
+            const u32 m = order[i];
+            top += fmt::format("{}{:#x} {:.1f}% {:.0f}/s ({:.0f} ns)", i != 0 ? ", " : "", m,
+                               pct(d.method_ticks[m]), per_s(d.method_count[m]),
+                               avg(d.method_ticks[m], d.method_count[m]) / ticks_per_us * 1000.0);
+        }
+        LOG_INFO(Render_Vulkan,
+                 "Back thread methods by time (% of wall time, /s, ns each): {}; constant buffer "
+                 "data written by macros {:.0f}/s in {:.0f} runs/s",
+                 top, per_s(d.cb_macro_writes), per_s(d.cb_macro_runs));
+    }
     const u64 readbacks = Take(shared.semaphore_readbacks);
     LOG_INFO(Render_Vulkan,
              "Fences: coalesced signals run at once {:.0f}/s, at a fence {:.0f}/s; fences {:.0f}/s; "
