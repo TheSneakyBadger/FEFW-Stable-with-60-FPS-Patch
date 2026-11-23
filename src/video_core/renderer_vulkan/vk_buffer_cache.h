@@ -178,32 +178,7 @@ public:
     /// earlier copy was used. The stream memory of a copy stays valid until its submission
     /// finishes, so a copy is only used again within the submission it was made in.
     bool BindMappedUniformBufferData(size_t stage, u32 binding_index, u64 device_addr,
-                                     std::span<const u8> data) {
-        const u32 size = static_cast<u32>(data.size());
-        UniformReuseSlot& slot = uniform_reuse[stage * UNIFORM_REUSE_BINDINGS +
-                                               (binding_index % UNIFORM_REUSE_BINDINGS)];
-        const u64 tick = scheduler.CurrentTick();
-        if (slot.tick == tick && slot.device_addr == device_addr && slot.size == size &&
-            std::memcmp(slot.bytes.data(), data.data(), size) == 0) {
-            guest_descriptor_queue.AddBuffer(slot.ref.buffer, slot.ref.device_address,
-                                             static_cast<u32>(slot.ref.offset), size);
-            return true;
-        }
-        const StagingBufferRef ref = staging_pool.Request(size, MemoryUsage::Upload);
-        std::memcpy(ref.mapped_span.data(), data.data(), size);
-        guest_descriptor_queue.AddBuffer(ref.buffer, ref.device_address,
-                                         static_cast<u32>(ref.offset), size);
-        if (size <= slot.bytes.size()) {
-            std::memcpy(slot.bytes.data(), data.data(), size);
-            slot.ref = ref;
-            slot.tick = tick;
-            slot.device_addr = device_addr;
-            slot.size = size;
-        } else {
-            slot.tick = ~0ULL;
-        }
-        return false;
-    }
+                                     std::span<const u8> data);
 
     [[nodiscard]] VkDeviceSize SparseAlignmentFor(bool sparse_compatible) const noexcept {
         if (!sparse_compatible || !multi_range_buffers.use_sparse) {
