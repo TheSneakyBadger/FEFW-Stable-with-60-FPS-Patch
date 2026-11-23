@@ -514,6 +514,34 @@ private:
 
     void TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept;
 
+    // Test 98a (from Lichii #2215, DuskDarf1): less per-draw work on the draw thread.
+    // EDEN_DRAW_TRIM=0 turns it off.
+    static bool DrawTrim() noexcept {
+        static const bool enabled = [] {
+            const char* const value = std::getenv("EDEN_DRAW_TRIM");
+            return !(value && value[0] == '0');
+        }();
+        return enabled;
+    }
+    /// The buffer a binding slot last touched in the LRU, and in which frame (TouchBufferOnce).
+    struct TouchMemo {
+        u64 frame{~u64{0}};
+        BufferId buffer_id{};
+        u64 registrations{}; ///< page_table_changes then: the id may be another buffer's since
+    };
+    /// TouchBuffer once a frame per binding slot: the collector only compares the frame of a
+    /// buffer's last touch.
+    void TouchBufferOnce(TouchMemo& memo, Buffer& buffer, BufferId buffer_id) noexcept;
+    /// FindBuffer's recent results by caching page.
+    struct FindMemo {
+        u64 page{~u64{0}};
+        u64 registrations{}; ///< page_table_changes then
+        DAddr begin{};
+        DAddr end{};
+        BufferId buffer_id{};
+        bool sparse_compatible{};
+    };
+
     bool SynchronizeBuffer(Buffer& buffer, DAddr device_addr, u32 size);
 
     void UploadMemory(Buffer& buffer, u64 total_size_bytes, u64 largest_copy,
@@ -651,6 +679,12 @@ private:
     std::vector<MultiRangeSegment> graphics_segments;
     std::vector<MultiRangeSegment> compute_segments;
     u64 frame_tick = 0;
+    /// Test 98a: counts every change of the page table (a buffer registered, unregistered or a
+    /// stale entry dropped). A memo made at another count may name a deleted or reused id.
+    u64 page_table_changes = 0;
+    std::array<TouchMemo, NUM_VERTEX_BUFFERS> vertex_touches{};
+    std::array<std::array<TouchMemo, NUM_GRAPHICS_UNIFORM_BUFFERS>, NUM_STAGES> uniform_touches{};
+    std::array<FindMemo, 256> find_memos{};
     u64 total_used_memory = 0;
     u64 minimum_memory = 0;
     u64 stale_memory = ~0ULL;

@@ -1064,7 +1064,7 @@ void BufferCache<P>::BindHostVertexBuffers() {
             enabled_mask &= (enabled_mask - 1);
             const Binding& binding = VertexBufferSlot(index);
             Buffer& buffer = slot_buffers[binding.buffer_id];
-            TouchBuffer(buffer, binding.buffer_id);
+            TouchBufferOnce(vertex_touches[index], buffer, binding.buffer_id);
             SynchronizeBuffer(buffer, binding.device_addr, binding.size);
             if (!flags[Dirty::VertexBuffer0 + index]) {
                 flush_bindings();
@@ -1181,7 +1181,7 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
     const DAddr device_addr = binding.device_addr;
     const u32 size = (std::min)(binding.size, (*channel_state->uniform_buffer_sizes)[stage][index]);
     Buffer& buffer = slot_buffers[binding.buffer_id];
-    TouchBuffer(buffer, binding.buffer_id);
+    TouchBufferOnce(uniform_touches[stage][index], buffer, binding.buffer_id);
     const bool has_host_buffer = binding.buffer_id != NULL_BUFFER_ID;
     const u32 offset = has_host_buffer ? buffer.Offset(device_addr) : 0;
     const bool needs_alignment_stream = [&]() {
@@ -1749,6 +1749,15 @@ void BufferCache<P>::UpdateVertexBuffer(u32 index) {
         return;
     }
     const auto& array = maxwell3d->regs.vertex_streams[index];
+    if (array.enable == 0 && DrawTrim()) {
+        // Nothing binds a disabled stream (BindHostVertexBuffers takes the enabled ones), so its
+        // flag stayed set and every later change of another stream resolved it again. Enabling
+        // it writes its registers, which set the flag again.
+        maxwell3d->dirty.flags[Dirty::VertexBuffer0 + index] = false;
+        channel_state->vertex_buffers[index] = NULL_BINDING;
+        UpdateVertexBufferSlot(index, NULL_BINDING);
+        return;
+    }
     const auto& limit = maxwell3d->regs.vertex_stream_limits[index];
     const GPUVAddr gpu_addr_begin = array.Address();
     const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
@@ -1929,21 +1938,33 @@ BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_com
         return NULL_BUFFER_ID;
     }
     const u64 page = device_addr >> CACHING_PAGEBITS;
+    const bool should_sync = Settings::IsGPUFenceBehaviorAccurate();
+    // Test 98a: a recent result for the page, found without reading the buffer (a draw looks up
+    // about 20 ranges). Only a page table change can make it wrong. Accurate fences synchronize
+    // the buffer's writes on every lookup, so they don't use it.
+    const bool use_memo = !should_sync && DrawTrim();
+    FindMemo& memo = find_memos[page % find_memos.size()];
+    if (use_memo && memo.page == page && memo.registrations == page_table_changes &&
+        device_addr >= memo.begin && device_addr + size <= memo.end &&
+        (memo.sparse_compatible || !sparse_compatible)) {
+        return memo.buffer_id;
+    }
     const BufferId buffer_id = page_table[page];
     if (buffer_id) {
         Buffer& buffer = slot_buffers[buffer_id];
         if (buffer.IsInBounds(device_addr, size)) {
-            const bool should_sync = Settings::IsGPUFenceBehaviorAccurate();
             if (should_sync) {
                 SynchronizeBufferWrites(buffer);
             }
-            bool usable = true;
+            bool sparse = true;
             if constexpr (requires { buffer.IsSparseCompatible(); }) {
-                if (sparse_compatible && !buffer.IsSparseCompatible()) {
-                    usable = false;
-                }
+                sparse = buffer.IsSparseCompatible();
             }
-            if (usable) {
+            if (!sparse_compatible || sparse) {
+                if (use_memo) {
+                    memo = {page, page_table_changes, buffer.CpuAddr(),
+                            buffer.CpuAddr() + buffer.SizeBytes(), buffer_id, sparse};
+                }
                 return buffer_id;
             }
         }
@@ -2022,6 +2043,7 @@ typename BufferCache<P>::OverlapResult BufferCache<P>::ResolveOverlaps(DAddr dev
                           candidate ? candidate->SizeBytes() : 0);
             }
             page_table[device_addr >> CACHING_PAGEBITS] = BufferId{};
+            ++page_table_changes;
             continue;
         }
         Buffer& overlap = slot_buffers[overlap_id];
@@ -2120,6 +2142,7 @@ void BufferCache<P>::Unregister(BufferId buffer_id) {
 template <class P>
 template <bool insert>
 void BufferCache<P>::ChangeRegister(BufferId buffer_id) {
+    ++page_table_changes; // Test 98a: FindBuffer and touch memos made before are stale
     Buffer& buffer = slot_buffers[buffer_id];
     const auto size = buffer.SizeBytes();
     const DAddr device_addr_begin = buffer.CpuAddr();
@@ -2149,6 +2172,19 @@ template <class P>
 void BufferCache<P>::TouchBuffer(Buffer& buffer, BufferId buffer_id) noexcept {
     if (buffer_id != NULL_BUFFER_ID && buffer.getLRUID() != SIZE_MAX) {
         lru_cache.Touch(buffer.getLRUID(), frame_tick);
+    }
+}
+
+template <class P>
+void BufferCache<P>::TouchBufferOnce(TouchMemo& memo, Buffer& buffer, BufferId buffer_id) noexcept {
+    if (!DrawTrim()) {
+        TouchBuffer(buffer, buffer_id);
+        return;
+    }
+    if (memo.frame != frame_tick || memo.buffer_id != buffer_id ||
+        memo.registrations != page_table_changes) {
+        memo = {frame_tick, buffer_id, page_table_changes};
+        TouchBuffer(buffer, buffer_id);
     }
 }
 

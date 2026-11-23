@@ -175,6 +175,7 @@ struct GPU::Impl {
     [[nodiscard]] u64 RequestSyncOperation(Func&& action) {
         std::unique_lock lck{sync_request_mutex};
         const u64 fence = ++last_sync_fence;
+        requested_sync_fence.store(fence, std::memory_order_release);
         sync_requests.emplace_back(std::forward<Func>(action));
         return fence;
     }
@@ -197,6 +198,16 @@ struct GPU::Impl {
 
     /// Tick pending requests within the GPU.
     void TickWork() {
+        // Test 98a (Lichii #2215): every draw ticks; take the mutex only with a request queued.
+        // Each request run advances current_sync_fence, so they match once all ran.
+        static const bool trim = [] {
+            const char* const value = std::getenv("EDEN_DRAW_TRIM");
+            return !(value && value[0] == '0');
+        }();
+        if (trim && requested_sync_fence.load(std::memory_order_acquire) ==
+                        current_sync_fence.load(std::memory_order_acquire)) {
+            return;
+        }
         std::unique_lock lck{sync_request_mutex};
         while (!sync_requests.empty()) {
             auto request = std::move(sync_requests.front());
@@ -400,6 +411,7 @@ struct GPU::Impl {
     std::list<std::function<void()>> sync_requests;
     std::atomic<u64> current_sync_fence{};
     u64 last_sync_fence{};
+    std::atomic<u64> requested_sync_fence{}; ///< last_sync_fence, for TickWork without the mutex
     std::mutex sync_request_mutex;
     std::condition_variable sync_request_cv;
 
