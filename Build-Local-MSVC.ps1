@@ -203,7 +203,7 @@ try {
         @"
 function(eden_fefw_pgo)
     if(MSVC)
-        foreach(lib IN ITEMS common core video_core shader_recompiler audio_core hid_core)
+        foreach(lib IN ITEMS common core video_core shader_recompiler audio_core hid_core dynarmic input_common frontend_common qt_common network yuzu)
             if(TARGET `${lib})
                 set_property(TARGET `${lib} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
                 if("$symCompile")
