@@ -404,7 +404,7 @@ bool GpuSplit::BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u
 
 const bool GpuSplit::inline_runs = [] {
     const char* const value = std::getenv("EDEN_INLINE_RUNS");
-    return value && value[0] == '1';
+    return !(value && value[0] == '0');
 }();
 
 bool GpuSplit::RunWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
