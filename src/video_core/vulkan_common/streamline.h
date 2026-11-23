@@ -43,8 +43,12 @@ struct DlssFiles {
 /// Streamline folder's "mfg-unlocker" folder). Downloaded from Settings, never shipped.
 [[nodiscard]] std::filesystem::path MfgUnlockerPath();
 
-/// Its SHA-256 (the release Fortune's Eden downloads); a file that doesn't match isn't loaded.
+/// Its SHA-256 (the release Fortune's Eden downloads, v1.7.2); a file that matches neither this
+/// nor the previous release's isn't loaded.
 inline constexpr const char* MfgUnlockerSha256 =
+    "a9b1c01727fa72763bef8f604e44ec165ce1c98272de00719572b766a11cf28f";
+/// The release before it (v1.7.1): still loaded, and Settings offers the newer one.
+inline constexpr const char* MfgUnlockerPreviousSha256 =
     "5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74";
 
 /// Streamline's own modules carry a second, Streamline-only signature.

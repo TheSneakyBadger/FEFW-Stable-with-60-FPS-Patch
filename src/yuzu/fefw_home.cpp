@@ -1167,7 +1167,8 @@ void FefwHome::OfferMfgUnlocker() {
     // itself (RTX 50): offer to download it.
     if (Settings::values.frame_generation.GetValue() != Settings::FrameGeneration::NvidiaDlss ||
         Settings::values.mfg_multiplier.GetValue() == Settings::MfgMultiplier::X2 ||
-        Settings::values.dlss_mfg_max_seen.GetValue() > 1 || HasMfgUnlocker()) {
+        Settings::values.dlss_mfg_max_seen.GetValue() > 1 || HasMfgUnlocker() ||
+        HasPreviousMfgUnlocker()) {
         return;
     }
     const auto answer = QMessageBox::question(

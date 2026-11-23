@@ -62,9 +62,9 @@ constexpr const char* REFLEX_LICENSE_ENTRY = "bin/x64/reflex.license.txt";
 // dashdogy's MFG Unlocker (MIT licence): lifts NVIDIA's 2x limit on DLSS frame generation on
 // GeForce RTX 40 and older. Downloaded on request into the Streamline folder, never shipped.
 constexpr const char* MFG_PAGE = "https://github.com/dashdogy/MFG-Unlocker";
-constexpr const char* MFG_VERSION = "1.7.1";
+constexpr const char* MFG_VERSION = "1.7.2";
 constexpr const char* MFG_ZIP_PATH =
-    "/dashdogy/MFG-Unlocker/releases/download/v1.7.1/MFGUnlocker-v1.7.1.zip";
+    "/dashdogy/MFG-Unlocker/releases/download/v1.7.2/MFGUnlocker-v1.7.2.zip";
 constexpr const char* MFG_LICENCE =
     "MIT License\n\nCopyright (c) 2026 Michael Robles\n\nPermission is hereby granted, free "
     "of charge, to any person obtaining a copy of this software and associated documentation "
@@ -349,15 +349,25 @@ QString PathText(const std::filesystem::path& path) {
 
 } // Anonymous namespace
 
-/// Whether the MFG Unlocker Fortune's Eden downloads is in place.
-bool HasMfgUnlocker() {
+/// The installed MFG Unlocker's SHA-256 (hex), or empty when there is none.
+static QByteArray MfgUnlockerHash() {
     QFile file(PathText(Streamline::MfgUnlockerPath()));
     if (!file.open(QIODevice::ReadOnly)) {
-        return false;
+        return {};
     }
     QCryptographicHash hash(QCryptographicHash::Sha256);
     hash.addData(&file);
-    return hash.result().toHex() == QByteArray(Streamline::MfgUnlockerSha256);
+    return hash.result().toHex();
+}
+
+/// Whether the MFG Unlocker Fortune's Eden downloads is in place.
+bool HasMfgUnlocker() {
+    return MfgUnlockerHash() == QByteArray(Streamline::MfgUnlockerSha256);
+}
+
+/// Whether the release before it is in place (still loaded; Settings offers the update).
+bool HasPreviousMfgUnlocker() {
+    return MfgUnlockerHash() == QByteArray(Streamline::MfgUnlockerPreviousSha256);
 }
 
 NvidiaDlssPanel::NvidiaDlssPanel(QWidget* parent, bool frame_generation_)
@@ -475,7 +485,10 @@ void NvidiaDlssPanel::Refresh() {
                      "cards only. On RTX 40 and older, the community %1 (by dashdogy, not "
                      "NVIDIA) lifts that limit.")
                       .arg(link));
-        mfg_button->setText(Tr("Download the MFG Unlocker (about 3.5 MB)"));
+        mfg_button->setText(HasPreviousMfgUnlocker()
+                                ? Tr("Update the MFG Unlocker to %1 (about 5 MB)")
+                                      .arg(QString::fromLatin1(MFG_VERSION))
+                                : Tr("Download the MFG Unlocker (about 5 MB)"));
         mfg_button->setVisible(!unlocker);
         return;
     }
