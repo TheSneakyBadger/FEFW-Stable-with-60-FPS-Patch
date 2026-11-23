@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// NVIDIA's frame generation wants the game's own depth and motion: it does its own dilation, and
+// the dilated ones made for AMD's frame generation spread a moving character's motion onto the
+// background around it (ghosting, #91). This keeps a copy of each frame's (the game reuses its
+// images before the frame is presented), with the motion in UV units as the dilated ones are.
+
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform texture2D depth_in;
+layout(set = 0, binding = 1) uniform texture2D motion_in;
+layout(set = 0, binding = 2, r32f) uniform writeonly image2D depth_out;
+layout(set = 0, binding = 3, rg16f) uniform writeonly image2D motion_out;
+layout(set = 0, binding = 4, std140) uniform Constants {
+    vec2 motion_scale;
+    ivec2 size;
+} c;
+
+void main() {
+    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pos, c.size))) {
+        return;
+    }
+    imageStore(depth_out, pos, vec4(texelFetch(depth_in, pos, 0).r, 0.0, 0.0, 0.0));
+    imageStore(motion_out, pos, vec4(texelFetch(motion_in, pos, 0).xy * c.motion_scale, 0.0, 0.0));
+}

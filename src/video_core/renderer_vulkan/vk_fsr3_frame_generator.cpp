@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <numbers>
 #include <span>
@@ -27,6 +28,7 @@
 #include "video_core/host_shaders/fsr3_fg_of_scd_divergence_comp_spv.h"
 #include "video_core/host_shaders/fsr3_fg_of_scd_histogram_comp_spv.h"
 #include "video_core/host_shaders/fsr3_fg_of_search_comp_spv.h"
+#include "video_core/host_shaders/vulkan_fsr3_fg_raw_inputs_comp_spv.h"
 #include "video_core/host_shaders/vulkan_fsr3_fg_ui_mask_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include <bit>
@@ -142,6 +144,24 @@ constexpr auto FILTER = Sequential(std::array{T, I, U});
 constexpr auto SCALE = Sequential(std::array{T, T, T, I, I, U});
 // The UI mask (vulkan_fsr3_fg_ui_mask.comp; linear clamp sampler at 1000).
 constexpr auto UI_MASK = Sequential(std::array{T, T, T, T, T, I, U, I});
+// The game's own depth and motion, kept for NVIDIA's frame generation
+// (vulkan_fsr3_fg_raw_inputs.comp).
+constexpr auto RAW_INPUTS = Sequential(std::array{T, T, I, I, U});
+
+struct RawInputsConstants {
+    std::array<f32, 2> motion_scale;
+    std::array<s32, 2> size;
+};
+
+/// NVIDIA's frame generation gets the game's own depth and motion (test 95d, #91); 0: the
+/// dilated ones made for AMD's, as before.
+bool DlssRawInputs() {
+    static const bool raw = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_RAW_INPUTS");
+        return !(value && value[0] == '0');
+    }();
+    return raw;
+}
 
 struct UiMaskConstants {
     std::array<s32, 2> rect_base;
@@ -172,6 +192,7 @@ enum PassId : size_t {
     PassFilter,
     PassScale,
     PassUiMask,
+    PassRawInputs,
     PassCount,
 };
 
@@ -397,6 +418,7 @@ Fsr3FrameGenerator::Fsr3FrameGenerator(const Device& device_, Scheduler& schedul
     passes[PassFilter] = pass(FILTER, FSR3_FG_OF_FILTER_COMP_SPV, false);
     passes[PassScale] = pass(SCALE, FSR3_FG_OF_SCALE_COMP_SPV, false);
     passes[PassUiMask] = pass(UI_MASK, VULKAN_FSR3_FG_UI_MASK_COMP_SPV, true);
+    passes[PassRawInputs] = pass(RAW_INPUTS, VULKAN_FSR3_FG_RAW_INPUTS_COMP_SPV, false);
 
     distortion_field = CreateTexture(VK_FORMAT_R8G8_UNORM, 1, 1);
     no_ui = CreateTexture(VK_FORMAT_R8G8B8A8_UNORM, 1, 1);
@@ -496,6 +518,10 @@ void Fsr3FrameGenerator::CreateRenderResources(VkExtent2D render_size) {
         frame.dilated_depth = CreateTexture(VK_FORMAT_R32_SFLOAT, w, h);
         frame.dilated_motion_vectors = CreateTexture(VK_FORMAT_R16G16_SFLOAT, w, h);
         frame.reconstructed_previous_depth = CreateTexture(VK_FORMAT_R32_UINT, w, h);
+        if (DlssRawInputs()) {
+            frame.raw_depth = CreateTexture(VK_FORMAT_R32_SFLOAT, w, h);
+            frame.raw_motion_vectors = CreateTexture(VK_FORMAT_R16G16_SFLOAT, w, h);
+        }
         frame.ready = false;
     }
     reconstructed_interpolated_depth = CreateTexture(VK_FORMAT_R32_UINT, w, h);
@@ -669,6 +695,10 @@ void Fsr3FrameGenerator::Prepare(const PrepareInputs& in, u64 seq) {
             initialize.push_back(*kept.dilated_depth.image);
             initialize.push_back(*kept.dilated_motion_vectors.image);
             initialize.push_back(*kept.reconstructed_previous_depth.image);
+            if (kept.raw_depth.image) {
+                initialize.push_back(*kept.raw_depth.image);
+                initialize.push_back(*kept.raw_motion_vectors.image);
+            }
         }
         for (const Texture* texture :
              {&reconstructed_interpolated_depth, &game_motion_x, &game_motion_y, &flow_motion_x,
@@ -688,6 +718,25 @@ void Fsr3FrameGenerator::Prepare(const PrepareInputs& in, u64 seq) {
                    tex(reconstructed_previous_depth), tex(dilated_motion_vectors),
                    tex(dilated_depth), cb},
         (render_extent.width + 7) / 8, (render_extent.height + 7) / 8);
+    if (frame.raw_depth.image) {
+        const RawInputsConstants raw_constants{
+            .motion_scale = in.motion_vector_scale,
+            .size = {static_cast<s32>(render_extent.width), static_cast<s32>(render_extent.height)},
+        };
+        const VkDeviceSize raw_slot =
+            Common::AlignUp(VkDeviceSize{sizeof(RawInputsConstants)}, alignment);
+        const StagingBufferRef raw_uniforms =
+            staging_buffer_pool.Request(raw_slot, MemoryUsage::Upload);
+        std::memcpy(raw_uniforms.mapped_span.data(), &raw_constants, sizeof(raw_constants));
+        passes[PassRawInputs]->Dispatch(
+            scheduler, descriptor_queue,
+            std::array{Resource{.view = in.depth}, Resource{.view = in.motion_vectors},
+                       tex(frame.raw_depth), tex(frame.raw_motion_vectors),
+                       Resource{.buffer = raw_uniforms.buffer,
+                                .offset = raw_uniforms.offset,
+                                .size = raw_slot}},
+            (render_extent.width + 7) / 8, (render_extent.height + 7) / 8);
+    }
     frame.seq = seq;
     frame.ready = true;
 }
@@ -1021,12 +1070,15 @@ void Fsr3FrameGenerator::Generate(const GenerateInputs& in) {
                                                 real_current, tex(ui_less_now), cb_ui_remove,
                                                 tex(ui_alpha_now)},
                                      groups(dw, 8), groups(dh, 8));
+        const bool raw = static_cast<bool>(frame.raw_depth.image);
+        const Texture& depth_for_dlss = raw ? frame.raw_depth : frame.dilated_depth;
+        const Texture& motion_for_dlss =
+            raw ? frame.raw_motion_vectors : frame.dilated_motion_vectors;
         dlss_images = DlssImages{
-            .depth = {*frame.dilated_depth.image, *frame.dilated_depth.view,
-                      VK_FORMAT_R32_SFLOAT, render_extent},
-            .motion_vectors = {*frame.dilated_motion_vectors.image,
-                               *frame.dilated_motion_vectors.view, VK_FORMAT_R16G16_SFLOAT,
-                               render_extent},
+            .depth = {*depth_for_dlss.image, *depth_for_dlss.view, VK_FORMAT_R32_SFLOAT,
+                      render_extent},
+            .motion_vectors = {*motion_for_dlss.image, *motion_for_dlss.view,
+                               VK_FORMAT_R16G16_SFLOAT, render_extent},
             .hudless = {*ui_less_now.image, *ui_less_now.view, display_format, display_extent},
             .ui_alpha = {*ui_alpha_now.image, *ui_alpha_now.view, VK_FORMAT_R16_SFLOAT,
                          display_extent},
