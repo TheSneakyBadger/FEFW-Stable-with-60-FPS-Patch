@@ -781,11 +781,7 @@ void Marker(sl::PCLMarker marker, const sl::FrameToken& token);
 /// generation isn't making frames. Not for the first 8 vsyncs after it starts again (Reflex's
 /// first sleeps then were 65-90 ms). EDEN_DLSSG_VSYNC_SLEEP=0: Reflex sleeps on the GPU thread
 /// with the vsync timer pacing the game, as before.
-static std::atomic<s64> free_frame_wait_ns{0};
-
-void NoteFreeFrameWait(s64 ns) {
-    free_frame_wait_ns.fetch_add(ns, std::memory_order_relaxed);
-}
+std::atomic<s64> free_frame_wait_ns{0};
 
 bool VsyncSleep() {
     std::scoped_lock vsync_lock{vsync_sleep_mutex};
@@ -1095,6 +1091,10 @@ sl::Resource FrameGenResource(const FrameGenImage& image) {
 }
 
 } // Anonymous namespace
+
+void NoteFreeFrameWait(s64 ns) {
+    free_frame_wait_ns.fetch_add(ns, std::memory_order_relaxed);
+}
 
 void FrameGenSleep(u64 index) {
     if (!LoadFrameGen()) {
