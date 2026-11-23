@@ -1,4 +1,4 @@
-# One-off: once the v1.7.6.1 Linux build (linux-build 4403125) is on the test-builds branch, put
+# One-off: once the v1.7.6.1 Linux build (linux-build 5a90b14) is on the test-builds branch, put
 # it on the v1.7.6.1 release as Fortunes-Eden-linux-x86_64.tar.gz and Fortunes-Eden-x86_64.AppImage.
 name: Upload v1.7.6.1 Linux assets
 on:
@@ -19,7 +19,7 @@ jobs:
             rm -rf tb
             git clone -q --depth=30 --branch test-builds "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" tb
             # Not only the newest commit: test builds can land after it.
-            commit=$(git -C tb log -30 --format='%H %s' | grep "Fortunes-Eden-v1.7.6.1-linux-x86_64-4403125" | head -1 | cut -d' ' -f1)
+            commit=$(git -C tb log -30 --format='%H %s' | grep "Fortunes-Eden-v1.7.6.1-linux-x86_64-5a90b14" | head -1 | cut -d' ' -f1)
             if [ -n "$commit" ]; then git -C tb checkout -q "$commit"; break; fi
             rm -rf tb
             sleep 60
@@ -27,7 +27,7 @@ jobs:
           test -d tb || { echo "The v1.7.6.1 Linux build never arrived"; exit 1; }
           cd tb
           mkdir x && tar -xzf Fortunes-Eden-linux-x86_64.tar.gz -C x
-          cp x/Fortunes-Eden-v1.7.6.1-linux-x86_64-4403125/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
+          cp x/Fortunes-Eden-v1.7.6.1-linux-x86_64-5a90b14/Fortunes-Eden.AppImage ../Fortunes-Eden-x86_64.AppImage
           cp Fortunes-Eden-linux-x86_64.tar.gz ..
           cd ..
           sha256sum Fortunes-Eden-linux-x86_64.tar.gz Fortunes-Eden-x86_64.AppImage
