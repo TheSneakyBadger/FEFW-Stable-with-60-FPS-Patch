@@ -893,7 +893,9 @@ Next:
         Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
         $archive = [IO.Compression.ZipFile]::Open($pkg, [IO.Compression.ZipArchiveMode]::Create)
         try {
-            Get-ChildItem -LiteralPath $outDir -Recurse -File | ForEach-Object {
+            # eden.map and eden.pdb stay in the folder for reading crash logs, never in the zip.
+            Get-ChildItem -LiteralPath $outDir -Recurse -File |
+                Where-Object { $_.Extension -notin '.map', '.pdb' } | ForEach-Object {
                 $entry = $_.FullName.Substring($outDir.Length + 1).Replace('\', '/')
                 [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
                     $archive, $_.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal)
