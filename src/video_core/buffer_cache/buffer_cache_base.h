@@ -352,6 +352,12 @@ public:
     /// The guest CPU reads [addr, addr + size) (a reactive flush asked for it): without
     /// AsyncBufferDownloads, GPU writes there are still copied back at fences from now on.
     void NoteCpuRead(DAddr addr, size_t size);
+    /// Fortune's Eden: how many separate ranges NoteCpuRead has noted (under the lock).
+    [[nodiscard]] size_t CpuReadRangeCount() const {
+        size_t count = 0;
+        cpu_read_ranges.ForEach([&count](auto, auto) { ++count; });
+        return count;
+    }
 
     /// Fortune's Eden (#60): a guest CPU write to [addr, addr + size) was held for the next
     /// command list. Lock-free (from the emulated cores). Until it is applied, GPU data copied
