@@ -193,6 +193,9 @@ public:
         return page_table.size();
     }
 
+    /// Fortune's Eden: image entries walked by lookups in the game's memory (under the lock).
+    u64 region_entries_walked = 0;
+
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
     ~TextureCache();
 

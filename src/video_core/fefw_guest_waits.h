@@ -24,6 +24,14 @@ struct Counters {
     std::atomic<u64> texture_write_work_ns{0}; ///< under it
     std::atomic<u64> read_areas{0};        ///< reads that asked the caches what to copy back
     std::atomic<u64> read_area_ns{0};
+    // Where that time goes (#82: a read took 8 us at the start of a session and 28-32 us after
+    // 10-16 minutes): waiting for the buffer cache's lock, its record of the pages the CPU reads,
+    // waiting for the texture cache's lock, its lookup, and the image entries that lookup walked.
+    std::atomic<u64> read_buffer_wait_ns{0};
+    std::atomic<u64> read_buffer_work_ns{0};
+    std::atomic<u64> read_texture_wait_ns{0};
+    std::atomic<u64> read_texture_work_ns{0};
+    std::atomic<u64> read_texture_entries{0};
     std::atomic<u64> read_syncs{0};        ///< reads that waited for the GPU thread to copy back
     std::atomic<u64> read_sync_ns{0};
     std::atomic<s64> last_report_ms{0};

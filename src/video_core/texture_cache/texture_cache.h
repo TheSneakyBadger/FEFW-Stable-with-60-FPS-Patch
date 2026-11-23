@@ -3371,6 +3371,7 @@ void TextureCache<P>::ForEachImageInRegion(DAddr cpu_addr, size_t size, Func&& f
                 return;
             }
         }
+        region_entries_walked += it->second.size();
         for (const ImageMapId map_id : it->second) {
             ImageMapView& map = slot_map_views[map_id];
             if (map.picked) {

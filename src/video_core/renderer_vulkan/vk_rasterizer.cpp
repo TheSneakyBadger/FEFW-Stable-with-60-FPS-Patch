@@ -877,15 +877,27 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
         std::scoped_lock lock{buffer_cache.mutex};
         lock_timer.Acquired();
+        const u64 locked = FefwGuestWaits::NowNs();
         buffer_cache.NoteCpuRead(Common::AlignDown(addr, Core::DEVICE_PAGESIZE),
                                  Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE) -
                                      Common::AlignDown(addr, Core::DEVICE_PAGESIZE));
+        waits.read_buffer_wait_ns.fetch_add(locked - area_start, std::memory_order_relaxed);
+        waits.read_buffer_work_ns.fetch_add(FefwGuestWaits::NowNs() - locked,
+                                            std::memory_order_relaxed);
     }
     {
+        const u64 wait_start = FefwGuestWaits::NowNs();
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
         std::scoped_lock lock{texture_cache.mutex};
         lock_timer.Acquired();
+        const u64 locked = FefwGuestWaits::NowNs();
+        const u64 entries_before = texture_cache.region_entries_walked;
         auto area = texture_cache.GetFlushArea(addr, size);
+        waits.read_texture_entries.fetch_add(texture_cache.region_entries_walked - entries_before,
+                                             std::memory_order_relaxed);
+        waits.read_texture_wait_ns.fetch_add(locked - wait_start, std::memory_order_relaxed);
+        waits.read_texture_work_ns.fetch_add(FefwGuestWaits::NowNs() - locked,
+                                             std::memory_order_relaxed);
         if (area) {
             return *area;
         }
@@ -1080,16 +1092,25 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
     }
     struct Snapshot {
         u64 writes, write_wait, write_work, areas, area, syncs, sync;
+        u64 buffer_wait, buffer_work, texture_wait, texture_work, entries;
     };
     static Snapshot last{};
     auto& c = FefwGuestWaits::Get();
-    const Snapshot now{c.texture_writes.load(), c.texture_write_wait_ns.load(),
-                       c.texture_write_work_ns.load(), c.read_areas.load(), c.read_area_ns.load(),
-                       c.read_syncs.load(), c.read_sync_ns.load()};
+    const Snapshot now{c.texture_writes.load(),       c.texture_write_wait_ns.load(),
+                       c.texture_write_work_ns.load(), c.read_areas.load(),
+                       c.read_area_ns.load(),          c.read_syncs.load(),
+                       c.read_sync_ns.load(),          c.read_buffer_wait_ns.load(),
+                       c.read_buffer_work_ns.load(),   c.read_texture_wait_ns.load(),
+                       c.read_texture_work_ns.load(),  c.read_texture_entries.load()};
     size_t image_pages;
     {
         std::scoped_lock lock{texture_cache.mutex};
         image_pages = texture_cache.ImagePageCount();
+    }
+    size_t read_ranges = 0;
+    {
+        std::scoped_lock lock{buffer_cache.mutex};
+        read_ranges = buffer_cache.CpuReadRangeCount();
     }
     const u64 ever_pages = texture_cache.page_filter.CountPages();
     const auto ms = [](u64 ns) { return static_cast<double>(ns) / 1e6; };
@@ -1102,6 +1123,16 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
              ms(now.write_work - last.write_work), now.areas - last.areas,
              ms(now.area - last.area), now.syncs - last.syncs, ms(now.sync - last.sync),
              image_pages, ever_pages * VideoCommon::PageFilter::PageSize >> 20);
+    const u64 reads = now.areas - last.areas;
+    LOG_INFO(Render_Vulkan,
+             "Those reads: {:.1f} ms waiting for the buffer cache's lock, {:.1f} ms noting the "
+             "pages read ({} ranges noted so far), {:.1f} ms waiting for the texture cache's lock, "
+             "{:.1f} ms looking for textures ({:.1f} image entries walked each)",
+             ms(now.buffer_wait - last.buffer_wait), ms(now.buffer_work - last.buffer_work),
+             read_ranges, ms(now.texture_wait - last.texture_wait),
+             ms(now.texture_work - last.texture_work),
+             reads ? static_cast<double>(now.entries - last.entries) / static_cast<double>(reads)
+                   : 0.0);
     last = now;
 }
 
