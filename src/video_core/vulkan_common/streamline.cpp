@@ -1283,8 +1283,22 @@ void FrameGenTagFrame(VkCommandBuffer cmdbuf, const FrameGenInputs& in) {
                         sl::ResourceLifecycle::eValidUntilPresent, &display_area},
         sl::ResourceTag{nullptr, sl::kBufferTypeBackbuffer, sl::ResourceLifecycle{}, &picture},
     };
+    // EDEN_DLSSG_UI_ALPHA=0: no UI coverage, so NVIDIA's frame generation works the UI out from
+    // the frame with and without it (as fefw-recomp does; a test for UI ghosting, #91).
+    static const bool ui_alpha_tag = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_UI_ALPHA");
+        return !(value && value[0] == '0');
+    }();
+    std::vector<sl::ResourceTag> sent;
+    sent.reserve(std::size(tags));
+    for (const sl::ResourceTag& tag : tags) {
+        if (ui_alpha_tag || tag.type != sl::kBufferTypeUIAlpha) {
+            sent.push_back(tag);
+        }
+    }
     if (const sl::Result result =
-            api.set_tag_for_frame(*token, viewport, tags, static_cast<uint32_t>(std::size(tags)),
+            api.set_tag_for_frame(*token, viewport, sent.data(),
+                                  static_cast<uint32_t>(sent.size()),
                                   reinterpret_cast<sl::CommandBuffer*>(cmdbuf));
         result != sl::Result::eOk) {
         static bool logged{};

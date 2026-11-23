@@ -151,6 +151,9 @@ private:
         Texture dilated_depth;
         Texture dilated_motion_vectors;
         Texture reconstructed_previous_depth;
+        /// The game's own depth and motion (UV units), for NVIDIA's frame generation.
+        Texture raw_depth;
+        Texture raw_motion_vectors;
         std::array<f32, 2> jitter{};
         std::array<f32, 2> motion_vector_scale{};
         u64 seq{};
