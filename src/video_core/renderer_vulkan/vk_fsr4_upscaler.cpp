@@ -137,6 +137,11 @@ private:
         candidates.push_back(Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) /
                              LIBRARY_NAME);
 #else
+        // Next to the AppImage (where the Linux package puts it): inside a running AppImage,
+        // /proc/self/exe is the mounted image, not the folder holding it.
+        if (const char* appimage = std::getenv("APPIMAGE"); appimage && *appimage) {
+            candidates.push_back(std::filesystem::path{appimage}.parent_path() / LIBRARY_NAME);
+        }
         if (const auto executable = std::filesystem::read_symlink("/proc/self/exe", ec); !ec) {
             candidates.push_back(executable.parent_path() / LIBRARY_NAME);
         }
