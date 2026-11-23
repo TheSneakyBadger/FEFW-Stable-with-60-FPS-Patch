@@ -11,7 +11,9 @@
 #include <execinfo.h>
 #endif
 #include <bit>
+#include <chrono>
 #include <limits>
+#include <thread>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -22,6 +24,7 @@
 #include "common/common_types.h"
 #include "common/literals.h"
 #include "common/logging.h"
+#include "common/memory_detect.h"
 #include <ranges>
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -396,6 +399,31 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
             (relaxed.preferredFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
             relaxed.preferredFlags &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
             result = vmaCreateBuffer(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+        }
+        if (result != VK_SUCCESS) {
+            // Fortune's Eden: a 256 MiB download buffer was refused with 15 GB of system memory
+            // heap free, and the session ended (#86). Download and upload buffers only ever
+            // asked for their preferred memory type: try any type the CPU can reach, in its
+            // own allocation, and give the driver a moment before giving up.
+            const auto status = Common::GetMemoryStatus();
+            LOG_WARNING(Render_Vulkan,
+                        "System memory: {} MiB free, {} MiB of {} MiB committable left",
+                        status.available_physical >> 20, status.commit_available >> 20,
+                        status.commit_limit >> 20);
+            relaxed.preferredFlags = 0;
+            relaxed.usage = VMA_MEMORY_USAGE_AUTO;
+            relaxed.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+            for (int attempt = 0; attempt < 4 && result != VK_SUCCESS; ++attempt) {
+                if (attempt > 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50 * attempt));
+                }
+                result =
+                    vmaCreateBuffer(allocator, &ci, &relaxed, &handle, &allocation, &alloc_info);
+            }
+            if (result == VK_SUCCESS) {
+                LOG_WARNING(Render_Vulkan,
+                            "Buffer allocation succeeded in any memory type, in its own block");
+            }
         }
         if (result != VK_SUCCESS) {
             LOG_CRITICAL(Render_Vulkan,
