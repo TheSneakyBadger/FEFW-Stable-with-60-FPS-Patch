@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <mutex>
+#include <vector>
 #include "common/common_types.h"
 #include "core/file_sys/fs_directory.h"
 #include "core/file_sys/fs_filesystem.h"
@@ -78,6 +79,15 @@ public:
                        ProcessId process_id);
     void SetPackedUpdate(ProcessId process_id, FileSys::VirtualFile update_raw);
 
+    /// Add-on content that a container loader (NUP, NX) carries next to the program instead of
+    /// installing it: listed by aoc:u for the program's base title and opened by
+    /// OpenDataStorageByDataId. Cleared by Reset().
+    void RegisterLooseAddOnContent(u64 program_base_id, u64 add_on_title_id,
+                                   FileSys::VirtualFile romfs);
+    /// Add-on title ids registered for a program base title.
+    std::vector<u64> ListLooseAddOnContent(u64 program_base_id);
+    FileSys::VirtualFile OpenLooseAddOnContent(u64 add_on_title_id);
+
     std::shared_ptr<SaveDataController> OpenSaveDataController();
 
     Result OpenSDMC(FileSys::VirtualDir* out_sdmc) const;
@@ -142,6 +152,11 @@ private:
 
     std::mutex registration_lock;
     std::map<ProcessId, Registration> registrations;
+    struct LooseAddOnContent {
+        u64 program_base_id;
+        FileSys::VirtualFile romfs;
+    };
+    std::map<u64, LooseAddOnContent> loose_add_on_content;
 
     std::unique_ptr<FileSys::SDMCFactory> sdmc_factory;
     std::unique_ptr<FileSys::BISFactory> bis_factory;

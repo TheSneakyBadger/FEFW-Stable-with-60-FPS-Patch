@@ -10,6 +10,7 @@
 #include "common/logging.h"
 #include "common/string_util.h"
 #include "core/core.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/nup_container.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
@@ -251,10 +252,7 @@ AppLoader_NUP::AppLoader_NUP(FileSys::VirtualFile file_)
                                                       NupContainer::PackageKind::Addon;
                                            });
     if (addon_count > 0) {
-        LOG_WARNING(Loader,
-                    "NUP container has {} add-on content package(s); AoC mounting is not "
-                    "supported yet",
-                    addon_count);
+        LOG_INFO(Loader, "NUP container has {} add-on content package(s)", addon_count);
     }
 }
 
@@ -284,6 +282,25 @@ AppLoader::LoadResult AppLoader_NUP::Load(Kernel::KProcess& process, Core::Syste
         process.GetProcessId(), base_title_id,
         std::make_shared<FileSys::RomFSFactory>(*this, system.GetContentProvider(),
                                                 system.GetFileSystemController()));
+
+    // Add-on content (DLC) packages are served to the game through aoc:u and
+    // OpenDataStorageByDataId (from n2den f550775, #89).
+    const auto& packages = nup->GetPackages();
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        if (packages[i].kind != FileSys::NupContainer::PackageKind::Addon) {
+            continue;
+        }
+        const auto romfs_dir = nup->GetRomFSDir(i);
+        if (romfs_dir == nullptr ||
+            (romfs_dir->GetFiles().empty() && romfs_dir->GetSubdirectories().empty())) {
+            LOG_WARNING(Loader, "NUP add-on content {:016X} has no files; not registered",
+                        packages[i].title_id);
+            continue;
+        }
+        system.GetFileSystemController().RegisterLooseAddOnContent(
+            FileSys::GetBaseTitleID(base_title_id), packages[i].title_id,
+            FileSys::CreateRomFS(romfs_dir));
+    }
 
     is_loaded = true;
     return result;
