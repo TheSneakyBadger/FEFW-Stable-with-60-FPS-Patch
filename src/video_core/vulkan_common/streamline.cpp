@@ -870,7 +870,20 @@ bool VsyncSleep() {
     static s64 hold_backoff_ns = 30'000'000'000;
     static s64 hold_good_since = 0;
     static u32 hold_count = 0;
-    bool held_off = hold_guard && !hold_backpressure && now < hold_until;
+    // Resetting Reflex stopped helping: on a battle map after 22 minutes (v1.7.6.1, #63, an RTX
+    // 4080 Laptop at 180 Hz with the vsync timer pacing), the reset below fired every 0.8 s, 800
+    // times in 17 minutes, and each time Reflex went straight back to sleeping 16 ms a frame: the
+    // game at 47-48 FPS with the card half busy until a restart. With the vsync timer pacing,
+    // Reflex's sleep isn't what paces the game, so after 5 resets within a minute it doesn't sleep
+    // for the rest of the session; the check for free-frame waits below puts it back if frame
+    // generation starts to starve without it (#82, #90). EDEN_DLSSG_REFLEX_STUCK_HOLD=0: off.
+    static bool stuck_hold = false;
+    static const bool stuck_hold_allowed = [] {
+        const char* const value = std::getenv("EDEN_DLSSG_REFLEX_STUCK_HOLD");
+        return !(value && value[0] == '0');
+    }();
+    bool held_off = !hold_backpressure &&
+                    ((hold_guard && now < hold_until) || (stuck_hold && timer_paces));
     if (held_off) {
         hold_window_start = 0;
         const s64 waited = free_frame_wait_ns.load(std::memory_order_relaxed);
@@ -968,6 +981,20 @@ bool VsyncSleep() {
             long_sleeps = 0;
             skip_left = 8;
             ++unstuck_count;
+            static std::array<s64, 5> recent_unstuck{};
+            const s64 unstuck_now = NowNs();
+            const s64 fifth_last = recent_unstuck[unstuck_count % recent_unstuck.size()];
+            recent_unstuck[unstuck_count % recent_unstuck.size()] = unstuck_now;
+            if (stuck_hold_allowed && timer_paces && !stuck_hold && !hold_backpressure &&
+                unstuck_count > recent_unstuck.size() &&
+                unstuck_now - fifth_last < 60'000'000'000) {
+                stuck_hold = true;
+                LOG_WARNING(Render_Vulkan,
+                            "NVIDIA Reflex kept holding the game back after being reset ({} "
+                            "times, 5 within {} s): no Reflex sleep for the rest of the session "
+                            "(the vsync timer paces the game)",
+                            unstuck_count, (unstuck_now - fifth_last) / 1'000'000'000);
+            }
             {
                 std::scoped_lock lock{reflex_options_mutex};
                 sl::ReflexOptions reflex{};
