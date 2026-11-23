@@ -21,6 +21,7 @@
 #include "input_common/drivers/mouse.h"
 #include "input_common/main.h"
 #include "qt_common/config/qt_config.h"
+#include "qt_common/config/uisettings.h"
 #include "ui_configure_input_player.h"
 #include "yuzu/bootmanager.h"
 #include "yuzu/configuration/configure_input_player.h"
@@ -794,6 +795,11 @@ ConfigureInputPlayer::ConfigureInputPlayer(QWidget* parent, std::size_t player_i
 
     connect(ui->comboDevices, qOverload<int>(&QComboBox::activated), this,
             &ConfigureInputPlayer::UpdateMappingWithDefaults);
+    if (player_index == 0) {
+        // A device the player chose (Keyboard included) is never switched to a controller.
+        connect(ui->comboDevices, qOverload<int>(&QComboBox::activated), this,
+                [] { UISettings::values.fefw_controller_auto_mapped = true; });
+    }
     ui->comboDevices->installEventFilter(this);
 
     ui->comboDevices->setCurrentIndex(-1);

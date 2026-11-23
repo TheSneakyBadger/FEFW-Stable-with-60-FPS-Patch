@@ -471,6 +471,7 @@ private:
     void UpdateUISettings();
     void UpdateInputDrivers();
     void HideMouseCursor();
+    void FefwAutoMapController();
     void ShowMouseCursor();
     void OpenURL(const QUrl& url);
     void LoadTranslation();
@@ -593,6 +594,9 @@ private:
     bool auto_paused = false;
     bool auto_muted = false;
     QTimer mouse_hide_timer;
+    /// Fortune's Eden: maps Player 1 to the first controller found while it still has the
+    /// keyboard mapping that ships with Fortune's Eden.
+    QTimer fefw_pad_timer;
     QTimer update_input_timer;
 
     QString startup_icon_theme;
