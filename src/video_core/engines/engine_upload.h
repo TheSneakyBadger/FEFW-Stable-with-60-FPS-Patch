@@ -66,6 +66,9 @@ public:
     void ProcessExec(bool is_linear_);
     void ProcessData(u32 data, bool is_last_call);
     void ProcessData(const u32* data, size_t num_data);
+    /// Test 97b: ProcessData(data[i], true) for each word, with one flush for all of them when
+    /// flushes are deferred (the same bytes reach memory in one write instead of one per word).
+    void ProcessDataRun(const u32* data, size_t num_data);
 
     /// Native partial transfers write each flushed chunk straight to memory, so data words may be
     /// buffered (is_last_call = false) and flushed together with FlushPartial().

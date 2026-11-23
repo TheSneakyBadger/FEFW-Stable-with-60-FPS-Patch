@@ -93,6 +93,9 @@ public:
         if (BatchWrite(engine, method, argument)) {
             return;
         }
+        if (inline_runs && RunWrite(engine, method, argument)) {
+            return;
+        }
         SelectEngine(engine);
         u64* const entry = Reserve(1);
         entry[0] = static_cast<u64>(Kind::Method) | IsLast | Direct | (u64{method & 0xffff} << 8) |
@@ -132,6 +135,7 @@ private:
         Multi,  ///< Bits 8-23 method, 32-63 amount; word 1 methods pending, [segment], words
         Call,   ///< Bits 8-31 payload size in words; word 1 thunk, then the payload
         Regs,   ///< Bits 8-31 count; then a word per write: bits 32-47 method, 0-31 value
+        Run,    ///< Bits 8-23 method, 32-63 count; then the values, two to a word (test 97b)
     };
     static constexpr u64 IsLast = 1 << 4;
     static constexpr u64 HasSegment = 1 << 5;
@@ -161,12 +165,30 @@ private:
     /// Front: adds the write to the open batch (opening one) when it may go there.
     bool BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument);
     void CloseBatch() {
+        if (run_open) {
+            CloseRun();
+        }
         if (!batch_open) {
             return;
         }
         batch_open = false;
         batch_entry[0] = static_cast<u64>(Kind::Regs) | (u64{batch_count} << 8);
         Commit(1 + batch_count);
+    }
+
+    // Test 97b runs: a macro's consecutive writes of an engine's inline upload data method
+    // (inline_run_method) go as one Run entry, which the back executes with CallMacroRun: one
+    // write of the data to memory instead of one per word (#89: about 1.4 million words a second
+    // in a battle, 700 thousand at the Dagsion crowd, mostly compute dispatch descriptors).
+    // Opened, filled and closed like the register batches. EDEN_INLINE_RUNS=1 turns them on.
+    static constexpr u32 MaxRun = 128;
+    static const bool inline_runs;
+    bool RunWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument);
+    void CloseRun() {
+        run_open = false;
+        run_entry[0] = static_cast<u64>(Kind::Run) | (u64{run_method & 0xffff} << 8) |
+                       (u64{run_count} << 32);
+        Commit(1 + (run_count + 1) / 2);
     }
 
     /// Room for an entry of `words` at the write position (never across the ring's end).
@@ -219,6 +241,10 @@ private:
     bool batch_open{};
     u32 batch_count{};
     u64* batch_entry{};
+    bool run_open{};
+    u32 run_count{};
+    u32 run_method{};
+    u64* run_entry{};
 
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};

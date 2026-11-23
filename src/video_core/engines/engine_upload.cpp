@@ -47,6 +47,21 @@ void State::ProcessData(const u32 data, const bool is_last_call) {
     ProcessData(inner_buffer);
 }
 
+void State::ProcessDataRun(const u32* data, size_t num_data) {
+    if (!DefersPartialFlush()) {
+        for (size_t i = 0; i < num_data; ++i) {
+            ProcessData(data[i], true);
+        }
+        return;
+    }
+    for (size_t i = 0; i < num_data; ++i) {
+        const u32 sub_copy_size = (std::min)(4U, copy_size - write_offset);
+        std::memcpy(&inner_buffer[write_offset], &data[i], sub_copy_size);
+        write_offset += sub_copy_size;
+    }
+    FlushPartial();
+}
+
 void State::FlushPartial() {
     if (!DefersPartialFlush()) {
         return;

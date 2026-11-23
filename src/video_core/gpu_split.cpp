@@ -402,6 +402,33 @@ bool GpuSplit::BatchWrite(Tegra::Engines::EngineInterface* engine, u32 method, u
     return true;
 }
 
+const bool GpuSplit::inline_runs = [] {
+    const char* const value = std::getenv("EDEN_INLINE_RUNS");
+    return value && value[0] == '1';
+}();
+
+bool GpuSplit::RunWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+    if (method != engine->inline_run_method) {
+        if (run_open) {
+            CloseRun(); // Keeps the order: the run before this write
+        }
+        return false;
+    }
+    SelectEngine(engine);
+    if (!run_open || run_method != method) {
+        run_entry = Reserve(1 + MaxRun / 2); // Closes an open batch or run first
+        run_count = 0;
+        run_method = method;
+        run_open = true;
+    }
+    std::memcpy(reinterpret_cast<u8*>(run_entry + 1) + run_count * sizeof(u32), &argument,
+                sizeof(u32));
+    if (++run_count == MaxRun) {
+        CloseRun();
+    }
+    return true;
+}
+
 size_t GpuSplit::Execute(const u64* entry) {
     const u64 head = entry[0];
     switch (static_cast<Kind>(head & 0xf)) {
@@ -449,6 +476,15 @@ size_t GpuSplit::Execute(const u64* entry) {
         const size_t payload = static_cast<size_t>((head >> 8) & 0xffffff);
         reinterpret_cast<void (*)(const u64*)>(entry[1])(entry + 2);
         return 2 + payload;
+    }
+    case Kind::Run: {
+        const u32 method = static_cast<u32>((head >> 8) & 0xffff);
+        const u32 count = static_cast<u32>(head >> 32);
+        auto* const engine = back_engine;
+        // As for each of the macro's Direct writes: the sink first, no failure clearing.
+        ConsumeSinkTimed(engine, *system);
+        engine->CallMacroRun(*system, method, reinterpret_cast<const u32*>(entry + 1), count);
+        return 1 + (count + 1) / 2;
     }
     case Kind::Regs: {
         const u32 count = static_cast<u32>((head >> 8) & 0xffffff);
@@ -518,6 +554,7 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
             const u64 head = ring[index];
             const size_t kind = (head & 0xf) == static_cast<u64>(Kind::Method)
                                     ? ((head & Direct) != 0 ? 1 : 0)
+                                : (head & 0xf) == static_cast<u64>(Kind::Run) ? 1
                                 : (head & 0xf) == static_cast<u64>(Kind::Multi) ? 2
                                 : (head & 0xf) == static_cast<u64>(Kind::Call)  ? 3
                                                                                 : 4;
