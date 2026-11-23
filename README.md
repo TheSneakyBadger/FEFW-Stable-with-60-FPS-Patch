@@ -23,8 +23,9 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.6 (to v1.7.6.2)
+## What's new in v1.7.6 (to v1.7.6.3)
 
+- **A controller works out of the box, and a little more speed in busy places** (v1.7.6.3): a fresh speed profile now covers the CPU emulator too.
 - **Game reads no longer wait for the draw thread, and less work on it in busy places** (v1.7.6.2, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63), [#82](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/82), [#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)).
 - **DLSS frame generation gets the game's own depth and motion** (v1.7.6.2, [#91](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/91)), and NVIDIA Reflex no longer keeps holding the game back after failed resets.
 - **DLC in NUP packages is loaded, and Linux's AMD FSR 4 works from the AppImage** (v1.7.6.2, [#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)).

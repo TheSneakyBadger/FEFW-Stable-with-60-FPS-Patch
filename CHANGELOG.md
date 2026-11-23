@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.6.3
+
+A little more speed in busy places, a controller that works without setting it up, and a frame generation note removed.
+
+- **Built with a fresh speed profile, now covering more of the emulator.** Profile-guided and whole-program optimisation now also cover the CPU emulator, input and the app, not only the GPU emulation, with a new profile recorded in Dagsion, the Saramis hub and a battle. In the busiest Dagsion spot tested, the GPU thread needs about 2% less time per draw. The buffer tracker also no longer allocates memory each time the game writes its own constant data.
+- **A controller works out of the box.** Player 1 used the keyboard until a controller was picked in Controls ("Any" keeps the current buttons as they are). Now, while Player 1 still has the keyboard buttons Fortune's Eden comes with, the first controller found is mapped to it. Choosing a device in Controls, or mapping your own buttons, keeps your choice.
+- **No more "AMD FSR 3.1 is usually smoother" note** for NVIDIA DLSS multi frame generation on RTX 40 and older cards with the MFG Unlocker.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing, including a battle.
+
+Everything else is as in [v1.7.6.2](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.2).
+
 ## v1.7.6.2
 
 Fewer stalls when the game reads back from the graphics card, a lighter draw thread in busy places, cleaner DLSS frame generation, DLC from NUP packages, and AMD FSR 4 inside the Linux AppImage.
