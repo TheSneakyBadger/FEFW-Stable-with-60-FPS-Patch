@@ -250,11 +250,16 @@ void LoadMfgUnlocker() {
                                 "(Settings, Graphics, Frame generation can download it)");
         return;
     }
-    if (FileSha256(path) != MfgUnlockerSha256) {
+    const auto sha256 = FileSha256(path);
+    if (sha256 != MfgUnlockerSha256 && sha256 != MfgUnlockerPreviousSha256) {
         LOG_ERROR(Render_Vulkan, "{} isn't the MFG Unlocker release Fortune's Eden downloads; not "
                                  "loading it",
                   Common::FS::PathToUTF8String(path));
         return;
+    }
+    if (sha256 == MfgUnlockerPreviousSha256) {
+        LOG_INFO(Render_Vulkan, "DLSS multi frame generation: an older MFG Unlocker release is "
+                                "installed (Settings, Graphics, Frame generation can update it)");
     }
     if (LoadLibraryW(path.c_str()) == nullptr) {
         LOG_ERROR(Render_Vulkan, "Could not load the MFG Unlocker (error {})", GetLastError());
