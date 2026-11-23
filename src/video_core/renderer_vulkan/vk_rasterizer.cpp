@@ -1461,9 +1461,15 @@ void RasterizerVulkan::AccelerateInlineToMemory(GPUVAddr address, size_t copy_si
     //  2: the texture cache too (PokeDinner's behaviour). A guest CPU read that downloads a
     //     GPU-written image over these words before the next FlushCaching would undo them, and a
     //     present could show the image as it was.
+    // Mode 1 is the default (#89: on a battle map with a unit's range tiles, about 97,500 draws a
+    // second, the back thread's inline uploads went from 16% to 8% of its time and its busy time
+    // from 68% to 62%); EDEN_INLINE_DEFER=0 tells every cache straight away, as before.
     static const int defer = [] {
         const char* const value = std::getenv("EDEN_INLINE_DEFER");
-        return value != nullptr && (value[0] == '1' || value[0] == '2') ? value[0] - '0' : 0;
+        if (value == nullptr || value[0] == '\0') {
+            return 1;
+        }
+        return value[0] == '1' || value[0] == '2' ? value[0] - '0' : 0;
     }();
     bool uploaded;
     {
