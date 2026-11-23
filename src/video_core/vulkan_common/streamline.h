@@ -128,6 +128,10 @@ struct FrameGenInputs {
 /// EDEN_DLSSG_REFLEX_SLEEP=0: no sleep (testing).
 void FrameGenSleep(u64 index);
 
+/// Time the presenting thread waited for a free frame (frame generation's queue full): the
+/// Reflex hold guard puts Reflex's sleep back when holding it off makes these waits grow.
+void NoteFreeFrameWait(s64 ns);
+
 /// On the GPU thread, just before the frame's tags: the end of its simulation marker (its start is
 /// FrameGenSleep's).
 void FrameGenSimulationEnd(u64 index);

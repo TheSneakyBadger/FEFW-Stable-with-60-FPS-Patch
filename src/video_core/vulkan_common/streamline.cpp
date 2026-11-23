@@ -781,6 +781,12 @@ void Marker(sl::PCLMarker marker, const sl::FrameToken& token);
 /// generation isn't making frames. Not for the first 8 vsyncs after it starts again (Reflex's
 /// first sleeps then were 65-90 ms). EDEN_DLSSG_VSYNC_SLEEP=0: Reflex sleeps on the GPU thread
 /// with the vsync timer pacing the game, as before.
+static std::atomic<s64> free_frame_wait_ns{0};
+
+void NoteFreeFrameWait(s64 ns) {
+    free_frame_wait_ns.fetch_add(ns, std::memory_order_relaxed);
+}
+
 bool VsyncSleep() {
     std::scoped_lock vsync_lock{vsync_sleep_mutex};
     FrameGenRuntime& fg = GetFrameGen();
@@ -846,7 +852,16 @@ bool VsyncSleep() {
     // back to 30 s after a minute at full rate with it sleeping). Each time it came back it held
     // the game back again within 2 s (test 94h, Dagsion: caught at 34, 66 and 134 s, a dip each
     // time), so from the second time on it stays off for the rest of the session.
+    // Reflex's sleep can also be what keeps frame generation fed: where the card has no time to
+    // spare, the game ran ahead without it and the presenting thread waited for free frames 2.2
+    // to 5.2 s of every 10 (was 3 ms), the game stuttering at 30-46 FPS (v1.7.6: #82, an RTX 5070
+    // Ti at 120 Hz; #90, an RTX 4060 Laptop at 144 Hz). So every 2 s while it is held off: when
+    // over 5% of that time went on waits for free frames, Reflex sleeps again and the guard is
+    // off for the rest of the session (in the Dagsion case it helped, 1-3 ms in 10 s).
     // EDEN_DLSSG_REFLEX_HOLD_GUARD=0: off.
+    static bool hold_backpressure = false;
+    static s64 hold_check_start = 0;
+    static s64 hold_check_wait = 0;
     static const bool hold_guard = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_HOLD_GUARD");
         return !(value && value[0] == '0');
@@ -858,9 +873,29 @@ bool VsyncSleep() {
     static s64 hold_backoff_ns = 30'000'000'000;
     static s64 hold_good_since = 0;
     static u32 hold_count = 0;
-    const bool held_off = hold_guard && now < hold_until;
+    bool held_off = hold_guard && !hold_backpressure && now < hold_until;
     if (held_off) {
         hold_window_start = 0;
+        const s64 waited = free_frame_wait_ns.load(std::memory_order_relaxed);
+        if (hold_check_start == 0) {
+            hold_check_start = now;
+            hold_check_wait = waited;
+        } else if (now - hold_check_start >= 2'000'000'000) {
+            const s64 span = now - hold_check_start;
+            const s64 frame_waits = waited - hold_check_wait;
+            if (frame_waits > span / 20) {
+                hold_backpressure = true;
+                hold_until = 0;
+                held_off = false;
+                LOG_WARNING(Render_Vulkan,
+                            "NVIDIA Reflex sleeping again: without it the frames waited {} ms of "
+                            "{} ms for free frames; no more holding it off this session",
+                            frame_waits / 1'000'000, span / 1'000'000);
+            }
+            hold_check_start = 0;
+        }
+    } else {
+        hold_check_start = 0;
     }
     if (skip_left > 0) {
         --skip_left;
@@ -884,7 +919,8 @@ bool VsyncSleep() {
                 static constexpr s64 GAME_VSYNC_NS = 16'666'667;
                 const s64 expected = (std::max)(GAME_VSYNC_NS, period_ns);
                 const s64 interval = span / hold_window_vsyncs;
-                if (interval > expected * 103 / 100 && hold_window_sleep > span / 4) {
+                if (!hold_backpressure && interval > expected * 103 / 100 &&
+                    hold_window_sleep > span / 4) {
                     ++hold_count;
                     const bool for_good = hold_count >= 2;
                     hold_until = for_good ? (std::numeric_limits<s64>::max)()

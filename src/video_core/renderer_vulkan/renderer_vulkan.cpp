@@ -250,9 +250,12 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     const auto frame_wait_start = std::chrono::steady_clock::now();
     Frame* frame = present_manager.GetRenderFrame();
     // Frame generation's pacing doesn't count time spent here waiting for a free frame.
-    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() -
-                                                             frame_wait_start)
-                          .count();
+    const auto frame_waited = std::chrono::steady_clock::now() - frame_wait_start;
+    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(frame_waited).count();
+#ifdef EGLANTINE_STREAMLINE
+    Streamline::NoteFreeFrameWait(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(frame_waited).count());
+#endif
 
     scheduler.RequestOutsideRenderPassOperationContext();
     blit_swapchain.DrawToFrame(device, rasterizer, frame, framebuffers,
@@ -660,9 +663,12 @@ void RendererVulkan::GenerateFsrFrame(Frame* frame, DAddr presented, u32 present
         made[i] = present_manager.GetRenderFrame();
         blit_swapchain.PrepareFrame(device, made[i], layout);
     }
-    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() -
-                                                             generated_wait_start)
-                          .count();
+    const auto generated_waited = std::chrono::steady_clock::now() - generated_wait_start;
+    fsr_fg_wait_ms += std::chrono::duration<f32, std::milli>(generated_waited).count();
+#ifdef EGLANTINE_STREAMLINE
+    Streamline::NoteFreeFrameWait(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(generated_waited).count());
+#endif
     Frame* const generated = made[0];
     const bool all_storage = std::all_of(made.begin(), made.begin() + made_count, [&](Frame* f) {
         return f->storage_view && f->width == frame->width && f->height == frame->height;
