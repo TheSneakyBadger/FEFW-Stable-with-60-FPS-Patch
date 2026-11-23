@@ -23,8 +23,9 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.6 (to v1.7.6.4)
+## What's new in v1.7.6 (to v1.7.6.5)
 
+- **No crash when closing, DLC from a loose `dlc` folder, and MFG Unlocker 1.7.2** (v1.7.6.5, [#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)).
 - **Less work for the draw thread in busy places and battles, and DLC in a separate NUP is loaded** (v1.7.6.4, [#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)): the game's small uploads reach the draw thread in one piece, and Linux updates no longer miss a release whose AppImage is still uploading.
 - **A controller works out of the box, and a little more speed in busy places** (v1.7.6.3): a fresh speed profile now covers the CPU emulator too.
 - **Game reads no longer wait for the draw thread, and less work on it in busy places** (v1.7.6.2, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63), [#82](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/82), [#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)).

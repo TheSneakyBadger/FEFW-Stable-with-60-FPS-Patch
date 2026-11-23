@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.7.6.5
+
+No more crash when closing the emulator, DLC from a loose folder, MFG Unlocker 1.7.2, and a little less work per draw.
+
+- **No crash when closing.** On shutdown, the renderer wrote one last time into the game's GPU state after it had been freed, which could crash the emulator as it closed. The fix is from Lichii.
+- **DLC dumped as loose files is loaded** ([#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)). Put each add-on in a `dlc` folder next to your `.nup` (or in your loose dump's folder, next to `exefs` and `romfs`), as `dlc\<title id>\romfs`, the same layout Obelisk Chamber uses. The log says which DLC it found.
+- **MFG Unlocker 1.7.2** for 3x and 4x DLSS frame generation on RTX 40 and older cards. It brings dashdogy's latest fixes, including how it shuts down with Streamline. An installed 1.7.1 keeps working, and Settings offers the update.
+- **A little less work per draw for the draw thread**, from Lichii (DuskDarf1): disabled vertex streams aren't looked up again on every draw, buffers are marked as used once a frame, recent buffer lookups are remembered, and a per-draw lock is skipped when there's nothing to do. In testing, about 2% less draw-thread time per draw at the busiest Dagsion spot. `EDEN_DRAW_TRIM=0` turns it off.
+- **The Graphics settings page scrolls** on short screens (720p, Steam Deck) instead of squeezing its rows, which hid the DLSS and MFG Unlocker options.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.4](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.4).
+
 ## v1.7.6.4
 
 Less work for the draw thread in busy places and battles, DLC found in a NUP next to the game, and Linux updates that don't miss a release.
