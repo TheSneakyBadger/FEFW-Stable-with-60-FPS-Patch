@@ -96,6 +96,10 @@ struct Values {
     Setting<bool> fullscreen{linkage, false, "fullscreen", Category::Ui};
     /// Fortune's Eden: the DLDSR factor used in fullscreen (the pixel count times 100; 0: off).
     Setting<u32> fefw_dldsr{linkage, 0, "fefw_dldsr", Category::Ui};
+    /// Fortune's Eden: Player 1 was given a controller by itself, or the player chose a device in
+    /// Controls, so the shipped keyboard mapping is no longer switched to a controller.
+    Setting<bool> fefw_controller_auto_mapped{linkage, false, "fefw_controller_auto_mapped",
+                                              Category::Ui};
     Setting<bool> show_filter_bar{linkage, true, "showFilterBar", Category::Ui};
     Setting<bool> show_status_bar{linkage, true, "showStatusBar", Category::Ui};
 

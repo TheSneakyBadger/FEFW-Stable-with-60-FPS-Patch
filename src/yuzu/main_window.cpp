@@ -106,6 +106,7 @@
 
 // Qt Common //
 #include "qt_common/config/shared_translation.h"
+#include "qt_common/config/qt_config.h"
 #include "qt_common/config/uisettings.h"
 
 #include "qt_common/abstract/frontend.h"
@@ -551,6 +552,11 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 
     mouse_hide_timer.setInterval(default_mouse_hide_timeout);
     connect(&mouse_hide_timer, &QTimer::timeout, this, &MainWindow::HideMouseCursor);
+    fefw_pad_timer.setInterval(2000);
+    connect(&fefw_pad_timer, &QTimer::timeout, this, &MainWindow::FefwAutoMapController);
+    if (!UISettings::values.fefw_controller_auto_mapped.GetValue()) {
+        fefw_pad_timer.start();
+    }
     connect(ui->menubar, &QMenuBar::hovered, this, &MainWindow::ShowMouseCursor);
 
     update_input_timer.setInterval(default_input_update_timeout);
@@ -4833,6 +4839,78 @@ void MainWindow::UpdateInputDrivers() {
     if (!input_subsystem)
         return;
     input_subsystem->PumpEvents();
+}
+
+void MainWindow::FefwAutoMapController() {
+    // "Any" in Controls keeps the current mapping, and the mapping Fortune's Eden ships with is
+    // the keyboard, so a controller did nothing until it was picked from the list. While Player 1
+    // still has that keyboard mapping, the first controller found is mapped as if it were picked.
+    if (UISettings::values.fefw_controller_auto_mapped.GetValue()) {
+        fefw_pad_timer.stop();
+        return;
+    }
+    const auto& player = Settings::values.players.GetValue()[0];
+    for (std::size_t i = 0; i < player.buttons.size(); ++i) {
+        const Common::ParamPackage param{player.buttons[i]};
+        if (param.Get("engine", "") != "keyboard" ||
+            param.Get("code", -1) != QtConfig::default_buttons[i]) {
+            // The player has their own mapping: leave it alone from now on.
+            UISettings::values.fefw_controller_auto_mapped = true;
+            fefw_pad_timer.stop();
+            return;
+        }
+    }
+
+    Common::ParamPackage pad{};
+    for (const char* engine : {"sdl", "joycon"}) {
+        for (const auto& device : input_subsystem->GetInputDevices()) {
+            if (device.Get("engine", "") == engine) {
+                pad = device;
+                break;
+            }
+        }
+        if (pad.Has("engine")) {
+            break;
+        }
+    }
+    if (!pad.Has("engine")) {
+        return;
+    }
+
+    const auto buttons = input_subsystem->GetButtonMappingForDevice(pad);
+    const auto analogs = input_subsystem->GetAnalogMappingForDevice(pad);
+    const auto motions = input_subsystem->GetMotionMappingForDevice(pad);
+    if (buttons.empty()) {
+        return;
+    }
+    auto& hid_core = QtCommon::system->HIDCore();
+    for (const auto id : {Core::HID::NpadIdType::Player1, Core::HID::NpadIdType::Handheld}) {
+        auto* controller = hid_core.GetEmulatedController(id);
+        for (std::size_t i = 0; i < Settings::NativeButton::NumButtons; ++i) {
+            controller->SetButtonParam(i, {});
+        }
+        for (std::size_t i = 0; i < Settings::NativeAnalog::NumAnalogs; ++i) {
+            controller->SetStickParam(i, {});
+        }
+        for (std::size_t i = 0; i < Settings::NativeMotion::NumMotions; ++i) {
+            controller->SetMotionParam(i, {});
+        }
+        for (const auto& [index, param] : buttons) {
+            controller->SetButtonParam(index, param);
+        }
+        for (const auto& [index, param] : analogs) {
+            controller->SetStickParam(index, param);
+        }
+        for (const auto& [index, param] : motions) {
+            controller->SetMotionParam(index, param);
+        }
+        controller->SaveCurrentConfig();
+    }
+    UISettings::values.fefw_controller_auto_mapped = true;
+    fefw_pad_timer.stop();
+    config->SaveAllValues();
+    LOG_INFO(Frontend, "Controller: Player 1 had the keyboard mapping, so {} was mapped to it",
+             pad.Get("display", "a controller"));
 }
 
 void MainWindow::HideMouseCursor() {

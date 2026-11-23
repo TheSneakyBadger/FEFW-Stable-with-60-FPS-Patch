@@ -460,13 +460,11 @@ void NvidiaDlssPanel::Refresh() {
         mfg_label->setText(
             unlocker
                 ? Tr("<b>Multi frame generation:</b> the community %1 %2 is installed, for 3x and "
-                     "4x on GeForce RTX 40 and older cards (used when 3x or 4x is chosen). On "
-                     "those cards, AMD FSR 3.1 at 3x or 4x is usually smoother.")
+                     "4x on GeForce RTX 40 and older cards (used when 3x or 4x is chosen).")
                       .arg(link, QString::fromLatin1(MFG_VERSION))
                 : Tr("<b>Multi frame generation:</b> NVIDIA allows 3x and 4x on GeForce RTX 50 "
                      "cards only. On RTX 40 and older, the community %1 (by dashdogy, not "
-                     "NVIDIA) lifts that limit, though AMD FSR 3.1 at 3x or 4x is usually "
-                     "smoother there.")
+                     "NVIDIA) lifts that limit.")
                       .arg(link));
         mfg_button->setText(Tr("Download the MFG Unlocker (about 3.5 MB)"));
         mfg_button->setVisible(!unlocker);
