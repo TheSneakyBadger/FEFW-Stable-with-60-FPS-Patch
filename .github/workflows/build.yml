@@ -6,7 +6,7 @@ name: Linux build
 
 on:
   push:
-    branches: [linux-build, linux-test-fsr4]
+    branches: [linux-build, linux-test-fsr4, linux-test-appimage-fsr4]
   workflow_dispatch:
 
 concurrency:
@@ -125,6 +125,18 @@ jobs:
             https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh
           chmod a+x quick-sharun
           ./quick-sharun build/bin/eden
+          # The FSR 4 provider inside the AppImage too, so the AppImage on its own (its separate
+          # download, and its own updater) has it (#89); the code looks in $APPDIR.
+          appdir="${APPDIR:-$PWD/AppDir}"
+          if [ -f amd_fidelityfx_upscaler_vk.so ]; then
+            test -d "$appdir" || { echo "No AppDir at $appdir"; exit 1; }
+            cp amd_fidelityfx_upscaler_vk.so "$appdir/"
+            mkdir -p "$appdir/licenses/fsr4-vk"
+            cp fsr4-vk-build/LICENSE "$appdir/licenses/fsr4-vk/LICENSE"
+            cp fsr4-vk-build/THIRD_PARTY_NOTICES.md "$appdir/licenses/fsr4-vk/"
+            cp -r fsr4-vk-build/LICENSES "$appdir/licenses/fsr4-vk/"
+            ls -la "$appdir/amd_fidelityfx_upscaler_vk.so"
+          fi
           ./quick-sharun --make-appimage
           version=$(sed -n 's/.*FEFW_VERSION_STRING "\(v[0-9.]*\)".*/\1/p' src/common/fefw_version.h | head -n 1)
           test -n "$version" || { echo "No version in src/common/fefw_version.h"; exit 1; }

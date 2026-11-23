@@ -145,8 +145,11 @@ private:
         if (const auto executable = std::filesystem::read_symlink("/proc/self/exe", ec); !ec) {
             candidates.push_back(executable.parent_path() / LIBRARY_NAME);
         }
-        if (const char* appimage = std::getenv("APPIMAGE"); appimage && *appimage) {
-            candidates.push_back(std::filesystem::path{appimage}.parent_path() / LIBRARY_NAME);
+        // Inside the AppImage itself (the package puts a copy at its root, so the AppImage
+        // download and its own updater carry it too, #89). One next to the AppImage, above,
+        // is still used first.
+        if (const char* appdir = std::getenv("APPDIR"); appdir && *appdir) {
+            candidates.push_back(std::filesystem::path{appdir} / LIBRARY_NAME);
         }
         candidates.push_back(Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / LIBRARY_NAME);
         candidates.emplace_back(std::filesystem::current_path() / LIBRARY_NAME);
