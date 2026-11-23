@@ -180,7 +180,9 @@ private:
     // (inline_run_method) go as one Run entry, which the back executes with CallMacroRun: one
     // write of the data to memory instead of one per word (#89: about 1.4 million words a second
     // in a battle, 700 thousand at the Dagsion crowd, mostly compute dispatch descriptors).
-    // Opened, filled and closed like the register batches. EDEN_INLINE_RUNS=1 turns them on.
+    // Opened, filled and closed like the register batches. Measured (#89): 3.12 -> 2.81 us of
+    // draw thread work per draw at the Dagsion crowd, 49% -> 38.5% busy in a battle.
+    // EDEN_INLINE_RUNS=0: one entry per word, as before.
     static constexpr u32 MaxRun = 128;
     static const bool inline_runs;
     bool RunWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument);
