@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.7.6.1
+
+A fix for DLSS frame generation stalling in v1.7.6, and AMD FSR 4 in the Linux build.
+
+- **DLSS frame generation no longer stalls after a few minutes** ([#82](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/82), [#90](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/90)). v1.7.6's new rule turned NVIDIA Reflex's waits off when they seemed to hold the game back. On PCs where the graphics card has little time to spare, those waits are what keep frame generation fed: without them, frames waited seconds for a free slot and the game stuck at 30–46 FPS with stutter. The rule is now off by default, so Reflex works as in v1.7.5.15. (Setting `EDEN_DLSSG_REFLEX_HOLD_GUARD=1` turns it on; it now also puts Reflex back by itself if frame generation starts to stall.)
+- **Linux: AMD FSR 4** ([#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)). The Linux build now includes FSR 4 through [fsr4-vk](https://github.com/Astyyyyy/fsr4-vk), an independent Vulkan version built from the models in AMD's FidelityFX SDK, since AMD's own FSR 4 library is Windows-only. Thanks to **elunesgraces** for testing it.
+
+Everything else is as in [v1.7.6](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6).
+
 ## v1.7.6
 
 Smoother busy towns with NVIDIA frame generation, and world map routes in the right place on ultrawide screens.
