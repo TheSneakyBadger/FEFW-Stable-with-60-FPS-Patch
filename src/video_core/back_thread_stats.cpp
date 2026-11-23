@@ -159,6 +159,22 @@ void Report() {
              avg(d.assigned_bytes, d.draws) / 1024.0, per_s(d.ring_exhausted),
              us_per_s(d.ring_frame_wait));
 
+    {
+        const u64 copies = Take(shared.uniform_copies);
+        const u64 reused = Take(shared.uniform_reused);
+        const u64 bytes = Take(shared.uniform_bytes);
+        const u64 uniform_ticks = Take(shared.uniform_ticks);
+        LOG_INFO(Render_Vulkan,
+                 "Back thread small uniform buffers: {:.1f} per draw, {:.0f} bytes each, {:.1f}% "
+                 "reused from earlier in the submission; {:.1f}% of wall time ({:.2f} us/draw)",
+                 avg(copies, d.draws), avg(bytes, copies),
+                 copies != 0 ? static_cast<double>(reused) * 100.0 / static_cast<double>(copies)
+                             : 0.0,
+                 pct(uniform_ticks),
+                 d.draws != 0 ? static_cast<double>(uniform_ticks) / ticks_per_us /
+                                    static_cast<double>(d.draws)
+                              : 0.0);
+    }
     const u64 gm_queries = Take(shared.gpu_modified_queries);
     LOG_INFO(Render_Vulkan,
              "Back thread tables and ranges: handle table downloads {:.1f}/s, {:.0f} us each, {:.0f} "
