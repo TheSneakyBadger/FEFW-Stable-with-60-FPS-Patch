@@ -18,4 +18,13 @@ struct MemoryInfo {
  */
 [[nodiscard]] const MemoryInfo& GetMemInfo();
 
+// Fortune's Eden: the system's memory right now, for logs when an allocation fails (#86).
+// Zero where the platform doesn't say.
+struct MemoryStatus {
+    u64 available_physical{};
+    u64 commit_limit{};     // RAM plus page file
+    u64 commit_available{}; // what can still be committed before the limit
+};
+[[nodiscard]] MemoryStatus GetMemoryStatus();
+
 } // namespace Common

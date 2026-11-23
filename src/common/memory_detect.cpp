@@ -69,4 +69,27 @@ const MemoryInfo& GetMemInfo() {
     return mem_info;
 }
 
+MemoryStatus GetMemoryStatus() {
+    MemoryStatus status{};
+#ifdef _WIN32
+    MEMORYSTATUSEX memorystatus;
+    memorystatus.dwLength = sizeof(memorystatus);
+    if (GlobalMemoryStatusEx(&memorystatus)) {
+        status.available_physical = memorystatus.ullAvailPhys;
+        status.commit_limit = memorystatus.ullTotalPageFile;
+        status.commit_available = memorystatus.ullAvailPageFile;
+    }
+#elif defined(__linux__)
+    struct sysinfo meminfo;
+    if (sysinfo(&meminfo) == 0) {
+        status.available_physical = static_cast<u64>(meminfo.freeram) * meminfo.mem_unit;
+        status.commit_limit =
+            static_cast<u64>(meminfo.totalram + meminfo.totalswap) * meminfo.mem_unit;
+        status.commit_available =
+            static_cast<u64>(meminfo.freeram + meminfo.freeswap) * meminfo.mem_unit;
+    }
+#endif
+    return status;
+}
+
 } // namespace Common
