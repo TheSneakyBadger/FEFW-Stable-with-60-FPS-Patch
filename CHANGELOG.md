@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.6.4
+
+Less work for the draw thread in busy places and battles, DLC found in a NUP next to the game, and Linux updates that don't miss a release.
+
+- **The game's small uploads go to the draw thread in one piece** ([#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)). The game's macros send small uploads, mostly the settings for each compute job, one 4-byte word at a time, and each word was handed to the draw thread and written to graphics memory on its own: up to 1.4 million words a second in a battle. Consecutive words now go as one entry and one write. In testing, the draw thread needed about 10% less time per draw at the busiest Dagsion spot, and in a battle it went from 49% to 38.5% busy. This helps most on CPUs where the draw thread is what holds the frame rate down. `EDEN_INLINE_RUNS=0` turns it off.
+- **DLC in another NUP next to the game is loaded** ([#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)). Only the add-ons inside the NUP you start were loaded, so DLC in a separate NUP (or in another copy of the game) wasn't seen. Add-ons in the other NUP files in the same folder that belong to the same game are now loaded too, and the log says which file each came from.
+- **Built with a fresh speed profile** recorded in Dagsion, a battle and the Saramis hub, for the new code.
+- **Linux: automatic updates find the newest release that has its AppImage** ([#89](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/89)). A new release's Linux files are built and uploaded about half an hour after it goes up; in that time the updater found no AppImage and offered nothing. It now offers the newest release whose AppImage is already there.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.3](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.3).
+
 ## v1.7.6.3
 
 A little more speed in busy places, a controller that works without setting it up, and a frame generation note removed.
