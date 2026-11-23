@@ -294,6 +294,10 @@ RasterizerVulkan::RasterizerVulkan(Core::Frontend::EmuWindow& emu_window_, Tegra
 }
 
 RasterizerVulkan::~RasterizerVulkan() {
+    // The channels are gone by now, and submitting invalidates the state tracker's flags: they
+    // were the last channel's Maxwell3D's, so Finish wrote into freed memory, a crash on exit
+    // (from Lichii).
+    state_tracker.ClearChannel();
     scheduler.WaitWorker();
     scheduler.Finish();
 }
