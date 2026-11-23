@@ -71,6 +71,7 @@ Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
     for (size_t i = 0; i < execution_mask.size(); i++)
         execution_mask[i] = IsMethodExecutable(u32(i));
     macro_writes_may_sink = true;
+    inline_run_method = MAXWELL3D_REG_INDEX(inline_data);
 }
 
 Maxwell3D::~Maxwell3D() = default;
@@ -472,6 +473,20 @@ void Maxwell3D::CallMethod(Core::System& system, u32 method, u32 method_argument
     const u32 argument = ProcessShadowRam(method, method_argument);
     ProcessDirtyRegisters(method, argument);
     ProcessMethodCall(method, argument, method_argument, is_last_call);
+}
+
+void Maxwell3D::CallMacroRun(Core::System& system, u32 method, const u32* words, u32 count) {
+    // CallMethod per word: the register and shadow writes for each, then their upload data at
+    // once. In Replay the uploaded value is the shadow copy: one word at a time as before.
+    if (method != MAXWELL3D_REG_INDEX(inline_data) || executing_macro != 0 ||
+        shadow_state.shadow_ram_control == Regs::ShadowRamControl::Replay) {
+        EngineInterface::CallMacroRun(system, method, words, count);
+        return;
+    }
+    for (u32 i = 0; i < count; ++i) {
+        ProcessDirtyRegisters(method, ProcessShadowRam(method, words[i]));
+    }
+    upload_state.ProcessDataRun(words, count);
 }
 
 void Maxwell3D::CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) {

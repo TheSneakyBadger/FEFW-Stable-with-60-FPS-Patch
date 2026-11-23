@@ -272,6 +272,9 @@ private:
     GPUVAddr dlss_motion_color{};
     std::array<f32, 2> dlss_jitter{};
     bool ProcessNativeMethod(Core::System& system, u32 method, u32 argument, bool is_last_call);
+public:
+    void CallMacroRun(Core::System& system, u32 method, const u32* words, u32 count) override;
+private:
     NativeQmdScheduler native_qmd;
     TuringMacroInterpreter native_interpreter;
     bool native_mode{};

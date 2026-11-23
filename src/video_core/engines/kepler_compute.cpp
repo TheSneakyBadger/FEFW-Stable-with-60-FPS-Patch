@@ -47,6 +47,7 @@ KeplerCompute::KeplerCompute(MemoryManager& memory_manager_)
     execution_mask.reset();
     execution_mask[KEPLER_COMPUTE_REG_INDEX(exec_upload)] = true;
     execution_mask[KEPLER_COMPUTE_REG_INDEX(data_upload)] = true;
+    inline_run_method = KEPLER_COMPUTE_REG_INDEX(data_upload);
     execution_mask[KEPLER_COMPUTE_REG_INDEX(launch)] = true;
 }
 
@@ -62,6 +63,32 @@ void KeplerCompute::ConsumeSinkImpl(Core::System& system) {
         regs.reg_array[method] = value;
     }
     method_sink.clear();
+}
+
+void KeplerCompute::CallMacroRun(Core::System& system, u32 method, const u32* words, u32 count) {
+    // CallMethod per word (data_upload): the native register file sees each word (it reports
+    // the method as not handled), the class registers and upload address are set, then the data
+    // is uploaded at once.
+    if (method != KEPLER_COMPUTE_REG_INDEX(data_upload) || count == 0) {
+        EngineInterface::CallMacroRun(system, method, words, count);
+        return;
+    }
+    if (native_mode) {
+        for (u32 i = 0; i < count; ++i) {
+            if (ProcessNativeMethod(system, method, words[i], true)) [[unlikely]] {
+                // Not expected for data_upload: the rest one word at a time, as CallMethod would.
+                for (u32 j = i + 1; j < count; ++j) {
+                    CallMethod(system, method, words[j], true);
+                }
+                return;
+            }
+        }
+    }
+    regs.reg_array[method] = words[count - 1];
+    upload_address = current_dma_segment;
+    upload_dirty = current_dirty;
+    current_dirty = false;
+    upload_state.ProcessDataRun(words, count);
 }
 
 bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 argument, bool is_last_call) {
