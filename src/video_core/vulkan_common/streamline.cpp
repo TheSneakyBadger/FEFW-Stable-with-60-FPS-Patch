@@ -890,6 +890,18 @@ bool VsyncSleep() {
     // for the rest of the session; the check for free-frame waits below puts it back if frame
     // generation starts to starve without it (#82, #90). EDEN_DLSSG_REFLEX_STUCK_HOLD=0: off.
     static bool stuck_hold = false;
+    // v1.7.6.5, #63 (an RTX 4080 Laptop at 180 Hz, 2x): the stuck rule took Reflex's sleep away
+    // 52 s in, and the free-frame check gave it back 2 s later for the rest of the session on one
+    // 2 s span with 1.1 s of waits (none before it, none after: a hitch, not frame generation
+    // starving). Reflex then got stuck again 1000 times in 16 minutes and held the game at 39 FPS
+    // until a menu. Now the first 2 s after Reflex stops sleeping don't count (the game catching
+    // up fills the queue for a moment), the waits have to last two spans in a row, and giving it
+    // back after the stuck rule only stops that rule for a while (1 minute, then 2); the third
+    // time it is given back it sleeps for the rest of the session, as before.
+    static u32 stuck_returns = 0;
+    static s64 stuck_hold_after = 0;
+    static bool hold_settled = false;
+    static u32 hold_busy_spans = 0;
     static const bool stuck_hold_allowed = [] {
         const char* const value = std::getenv("EDEN_DLSSG_REFLEX_STUCK_HOLD");
         return !(value && value[0] == '0');
@@ -905,19 +917,41 @@ bool VsyncSleep() {
         } else if (now - hold_check_start >= 2'000'000'000) {
             const s64 span = now - hold_check_start;
             const s64 frame_waits = waited - hold_check_wait;
-            if (frame_waits > span / 20) {
-                hold_backpressure = true;
-                hold_until = 0;
+            if (!hold_settled) {
+                hold_settled = true;
+            } else if (frame_waits <= span / 20) {
+                hold_busy_spans = 0;
+            } else if (++hold_busy_spans >= 2) {
+                const bool from_stuck = stuck_hold && timer_paces;
                 held_off = false;
-                LOG_WARNING(Render_Vulkan,
-                            "NVIDIA Reflex sleeping again: without it the frames waited {} ms of "
-                            "{} ms for free frames; no more holding it off this session",
-                            frame_waits / 1'000'000, span / 1'000'000);
+                hold_busy_spans = 0;
+                hold_settled = false;
+                if (from_stuck && stuck_returns < 2) {
+                    stuck_hold = false;
+                    ++stuck_returns;
+                    const s64 pause_ns = 60'000'000'000LL << (stuck_returns - 1);
+                    stuck_hold_after = now + pause_ns;
+                    LOG_WARNING(Render_Vulkan,
+                                "NVIDIA Reflex sleeping again: without it the frames waited {} "
+                                "ms of {} ms for free frames; not held off again for {} s",
+                                frame_waits / 1'000'000, span / 1'000'000,
+                                pause_ns / 1'000'000'000);
+                } else {
+                    hold_backpressure = true;
+                    hold_until = 0;
+                    LOG_WARNING(Render_Vulkan,
+                                "NVIDIA Reflex sleeping again: without it the frames waited {} "
+                                "ms of {} ms for free frames; no more holding it off this "
+                                "session",
+                                frame_waits / 1'000'000, span / 1'000'000);
+                }
             }
             hold_check_start = 0;
         }
     } else {
         hold_check_start = 0;
+        hold_settled = false;
+        hold_busy_spans = 0;
     }
     if (skip_left > 0) {
         --skip_left;
@@ -998,7 +1032,7 @@ bool VsyncSleep() {
             const s64 fifth_last = recent_unstuck[unstuck_count % recent_unstuck.size()];
             recent_unstuck[unstuck_count % recent_unstuck.size()] = unstuck_now;
             if (stuck_hold_allowed && timer_paces && !stuck_hold && !hold_backpressure &&
-                unstuck_count > recent_unstuck.size() &&
+                unstuck_now >= stuck_hold_after && unstuck_count > recent_unstuck.size() &&
                 unstuck_now - fifth_last < 60'000'000'000) {
                 stuck_hold = true;
                 LOG_WARNING(Render_Vulkan,
