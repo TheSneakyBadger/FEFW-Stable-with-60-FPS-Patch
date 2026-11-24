@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.6.6
+
+A fix for the frame rate locking low with NVIDIA Reflex until you open a menu.
+
+- **The frame rate no longer stays locked low with NVIDIA Reflex** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). When Reflex gets stuck holding the game back, Fortune's Eden stops its sleep. But a single hitch right after that could look like frame generation running out of frames and turn Reflex back on for the rest of the session. On some laptops it then kept getting stuck and held the game at about 39 FPS (78 shown with 2x) until a menu reset it. Short hitches no longer count: the waits now have to last, and even then Reflex is only let back for a minute or two before the guard can step in again.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.5](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.5).
+
 ## v1.7.6.5
 
 No more crash when closing the emulator, DLC from a loose folder, MFG Unlocker 1.7.2, and a little less work per draw.
