@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.6.7
+
+Fewer long slowdowns when video memory runs short.
+
+- **Video memory cleanups no longer drag the frame rate down for seconds** ([#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)). When a new scene pushed video memory past its limit, each cleanup could spend 60-85 ms waiting for the GPU to copy images back, only to free one or two of them, and the game's threads waited behind it: 30 FPS for about 20 seconds on a 16 GB card. After a cleanup like that, the next ones skip the copying for 2 seconds and free other images instead.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.6](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.6).
+
 ## v1.7.6.6
 
 A fix for the frame rate locking low with NVIDIA Reflex until you open a menu.
