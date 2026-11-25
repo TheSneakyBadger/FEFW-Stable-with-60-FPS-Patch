@@ -2387,6 +2387,20 @@ void MainWindow::OnEmulationStopped() {
         // Never terminate() the emulation thread: it would die holding its locks with the
         // System half shut down, and that System is reused by the next boot. Keep waiting, or
         // let the player quit the whole emulator.
+        // #94: when the whole emulator is closing (the window was closed), a shutdown stuck
+        // for 20 seconds quits on its own: the box below could stay hidden behind the closing
+        // window, and players had to end the process by hand. The game's saves are written by
+        // then; a stuck shutdown never got further anyway.
+        if (closing_emulator && !QtCommon::emu_thread->wait(QDeadlineTimer(20'000))) {
+            LOG_CRITICAL(Frontend,
+                         "Emulation thread did not stop within 20 seconds of closing, quitting");
+            config->SaveAllValues();
+            Common::Log::Stop();
+#ifdef _WIN32
+            TerminateProcess(GetCurrentProcess(), 1);
+#endif
+            std::_Exit(1);
+        }
         while (!QtCommon::emu_thread->wait(QDeadlineTimer(10'000))) {
             LOG_ERROR(Frontend, "Emulation thread has not stopped after 10 seconds");
             QMessageBox box(QMessageBox::Warning, tr("Closing software"),
@@ -2399,6 +2413,11 @@ void MainWindow::OnEmulationStopped() {
                 box.addButton(tr("Quit Emulator"), QMessageBox::DestructiveRole);
             box.setDefaultButton(wait_button);
             box.setEscapeButton(wait_button);
+            // #94: it could open behind the game window and never be seen.
+            box.setWindowFlag(Qt::WindowStaysOnTopHint, true);
+            box.show();
+            box.raise();
+            box.activateWindow();
             box.exec();
             if (box.clickedButton() == quit_button && !QtCommon::emu_thread->isFinished()) {
                 LOG_CRITICAL(Frontend, "Emulation thread did not stop, quitting the emulator");
@@ -5128,8 +5147,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     game_list->UnloadController();
 
     // Shutdown session if the emu thread is active...
-    if (QtCommon::emu_thread != nullptr)
+    if (QtCommon::emu_thread != nullptr) {
+        closing_emulator = true;
         ShutdownGame();
+    }
 
     render_window->close();
     multiplayer_state->Close();
