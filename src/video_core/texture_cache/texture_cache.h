@@ -469,6 +469,13 @@ u32 TextureCache<P>::RunGarbageCollector() {
         return num_deleted;
     }
     Configure(false);
+    // Fortune's Eden: after a pass whose write-backs cost a GPU wait for almost nothing, the
+    // normal and fast passes skip write-backs for 2 s (the hard ones still write back). Leaving
+    // a scene over the hard limit, passes of 60-85 ms each freed 1-7 images, nearly all the
+    // time spent waiting for the GPU to copy them back, while the game's threads waited 4-5.6 s
+    // per 10 s for the texture cache's lock: 30 FPS for 20 s on a 16 GB RTX 5080 (#63).
+    const bool writebacks_paused = frame_tick < writeback_pause_until;
+    allow_writebacks = !writebacks_paused;
     // Large GPU-drawn images that can't be written back, unused for 30 s (EDEN_TC_OLD_GPU_AGE
     // frames; 0 turns it off), and the small ones unused for 5 minutes go first, from the
     // collecting level on (see Cleanup). Fortune's Eden: they went only over the expected level,
@@ -514,7 +521,7 @@ u32 TextureCache<P>::RunGarbageCollector() {
     // Over the hard level, write back only images unused for 2 s (see below).
     static constexpr u64 RECENT_WRITEBACK_TICKS = 120;
     const bool hard_pass = total_used_memory >= critical_memory;
-    allow_writebacks = !hard_pass;
+    allow_writebacks = !hard_pass && !writebacks_paused;
     if (frame_tick > ticks_to_destroy) {
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
@@ -549,6 +556,9 @@ u32 TextureCache<P>::RunGarbageCollector() {
                              std::chrono::steady_clock::now() - pass_start)
                              .count();
     minute_collect_ms += pass_ms;
+    if (num_downloaded != 0 && !was_aggressive && pass_ms >= 20.0 && freed_bytes < 16_MiB) {
+        writeback_pause_until = frame_tick + 120;
+    }
     static u32 slow_passes_logged = 0;
     if (pass_ms >= 20.0 && slow_passes_logged < 200) {
         ++slow_passes_logged;
