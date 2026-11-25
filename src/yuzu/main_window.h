@@ -573,6 +573,8 @@ private:
 
     // Whether emulation is currently running in yuzu.
     bool emulation_running = false;
+    /// #94: set while the whole emulator is closing, so a stuck shutdown quits on its own.
+    bool closing_emulator = false;
     bool refresh_rate_connected = false;
     // What the game's button icons were drawn with as it started (Fortune's Eden's Xbox and
     // PlayStation icons), and the last change the player was told about.

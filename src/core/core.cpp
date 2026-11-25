@@ -424,11 +424,15 @@ struct System::Impl {
             gpu_core->NotifyShutdown();
         LOG_INFO(Core, "Shutdown: GPU thread stopped");
 
+        // #94: each step is logged, so a shutdown that never finishes shows where it stopped.
         stop_event.request_stop();
         core_timing.SyncPause(false);
+        LOG_INFO(Core, "Shutdown: timing paused");
         Network::CancelPendingSocketOperations();
         kernel.SuspendEmulation(true);
+        LOG_INFO(Core, "Shutdown: game threads suspended");
         kernel.CloseServices();
+        LOG_INFO(Core, "Shutdown: services closed");
         kernel.ShutdownCores();
         LOG_INFO(Core, "Shutdown: emulated cores stopped, closing services");
         services.reset();
