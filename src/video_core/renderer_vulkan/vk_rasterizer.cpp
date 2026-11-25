@@ -261,14 +261,19 @@ void Speaker(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_mem
         std::array<float, 2> first{};
         gpu_memory.ReadBlockUnsafe(regs.vertex_streams[0].Address(), first.data(),
                                    sizeof(first));
-        // The quad covers the whole picture: its x reaches the camera's edge, 1/scale (y scale
-        // is never changed). Its y can stop a little short when the picture is not square
-        // (Zarcone's is 768x755: x 798, y 787.6), so y only has to be close.
-        const float half = F(raw[5]) > 0.0f ? 1.0f / F(raw[5]) : 0.0f;
-        const float x = std::abs(first[0]);
-        const float y = std::abs(first[1]);
-        full_picture_pass = half > 0.0f && std::abs(x - half) < 1.0f && y <= half + 1.0f &&
-                            y >= half * 0.9f;
+        // The quad covers the whole picture: through the game's own camera its corners land on
+        // the picture's edges (-1/+1). Not simply +-1/scale: some cameras are offset sideways
+        // (Hong Hua's quad runs from -830 to 690), and a picture that isn't square stops a
+        // little short in y (Zarcone's 768x755: 787.6 against 798).
+        const bool squeezed_now = have_rows && raw[0] == squeezed_row[0] &&
+                                  raw[1] == squeezed_row[1] && raw[2] == squeezed_row[2] &&
+                                  raw[3] == squeezed_row[3];
+        const float sx = F(squeezed_now ? original_row[0] : raw[0]);
+        const float tx = F(squeezed_now ? original_row[3] : raw[3]);
+        const float ndc_x = std::abs(sx * first[0] + tx * F(raw[15]));
+        const float ndc_y = std::abs(F(raw[5]) * first[1] + F(raw[7]) * F(raw[15]));
+        full_picture_pass = sx > 0.0f && ndc_x > 0.99f && ndc_x < 1.01f && ndc_y > 0.95f &&
+                            ndc_y < 1.01f;
     }
     // x and y scale are both about 2/1520 but not bit for bit equal (the picture is 720x719).
     const bool square_camera =
