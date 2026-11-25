@@ -693,6 +693,9 @@ private:
     u64 base_expected_memory = 0;
     u64 base_critical_memory = 0;
     u64 budget_check_frame = 0;
+    // Fortune's Eden: normal and fast cleanups skip write-backs until this frame (see
+    // RunGarbageCollector).
+    u64 writeback_pause_until = 0;
     bool budget_limited = false;
     /// Bytes freed by recent cleanup passes (frame, bytes): images are destroyed, and stop
     /// counting in the memory in use, TICKS_TO_DESTROY frames after a pass frees them.
