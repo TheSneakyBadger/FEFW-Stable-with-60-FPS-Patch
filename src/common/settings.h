@@ -997,8 +997,9 @@ struct Values {
     Setting<bool> tas_loop{linkage, false, "tas_loop", Category::Controls};
     Setting<bool> tas_show_recording_dialog{linkage, true, "tas_show_recording_dialog", Category::Controls};
 
+    // #92: saved like other settings (upstream didn't save it, so it was off at every start).
     Setting<bool> mouse_panning{
-                                linkage, false, "mouse_panning", Category::Controls, Specialization::Default, false};
+                                linkage, false, "mouse_panning", Category::Controls, Specialization::Default, true};
     Setting<u8, true> mouse_panning_sensitivity{
                                                 linkage, 50, 1, 100, "mouse_panning_sensitivity", Category::Controls};
     Setting<bool> mouse_enabled{linkage, false, "mouse_enabled", Category::Controls};
