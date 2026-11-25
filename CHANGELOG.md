@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.6.11
+
+Every dialogue speaker now keeps their shape on ultrawide screens.
+
+- **Ultrawide: speakers like Hong Hua are no longer squeezed.** Some speakers' pictures are framed slightly off-centre, and like Zarcone before v1.7.6.10, they showed up narrow and faded beside the dialogue text. Fortune's Eden now checks the game's passes over the speaker picture the same way the game frames them, so every speaker is covered: tested with around 20 characters.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.10](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.10).
+
 ## v1.7.6.10
 
 A fix for some dialogue speakers looking squeezed on ultrawide screens, and mouse panning is remembered.
