@@ -56,7 +56,9 @@ jobs:
           wget -q --retry-connrefused --tries=30 \
             https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/get-debloated-pkgs.sh
           chmod +x get-debloated-pkgs.sh
-          ./get-debloated-pkgs.sh --add-mesa qt6-base-mini libxml2-mini opus-nano
+          # Not qt6-base-mini: it was still Qt 6.12.0 when Arch moved to 6.12.1, and Qt Charts
+          # 6.12.1 then found no matching Qt OpenGL (v1.7.6.7). The full qt6-base costs some size.
+          ./get-debloated-pkgs.sh --add-mesa libxml2-mini opus-nano
 
       - name: CPM cache
         uses: actions/cache@v4
