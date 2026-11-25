@@ -261,10 +261,14 @@ void Speaker(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_mem
         std::array<float, 2> first{};
         gpu_memory.ReadBlockUnsafe(regs.vertex_streams[0].Address(), first.data(),
                                    sizeof(first));
-        // The quad covers the whole camera: half its size is 1/y scale (y is never changed).
+        // The quad covers the whole picture: its x reaches the camera's edge, 1/scale (y scale
+        // is never changed). Its y can stop a little short when the picture is not square
+        // (Zarcone's is 768x755: x 798, y 787.6), so y only has to be close.
         const float half = F(raw[5]) > 0.0f ? 1.0f / F(raw[5]) : 0.0f;
-        full_picture_pass = half > 0.0f && std::abs(std::abs(first[0]) - half) < 1.0f &&
-                            std::abs(std::abs(first[1]) - half) < 1.0f;
+        const float x = std::abs(first[0]);
+        const float y = std::abs(first[1]);
+        full_picture_pass = half > 0.0f && std::abs(x - half) < 1.0f && y <= half + 1.0f &&
+                            y >= half * 0.9f;
     }
     // x and y scale are both about 2/1520 but not bit for bit equal (the picture is 720x719).
     const bool square_camera =
