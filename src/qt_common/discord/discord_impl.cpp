@@ -74,18 +74,31 @@ static constexpr char DEFAULT_DISCORD_IMAGE[] =
     "https://git.eden-emu.dev/eden-emu/eden/raw/branch/master/dist/qt_themes/default/icons/256x256/"
     "eden.png";
 
-void DiscordImpl::UpdateGameStatus(std::string_view game_url, bool has_boxart) {
-    const std::string url = std::string{has_boxart ? game_url : DEFAULT_DISCORD_IMAGE};
+// #62: Fortune's Eden only runs Fire Emblem: Fortune's Weave, so the status always names it (the
+// game's own title reads "FE Fortunes Weave", without the apostrophe), from the moment
+// Fortune's Eden opens. Its picture is the one on Nintendo's own eShop page: nothing is shipped
+// or hosted here, Discord loads it from Nintendo.
+static constexpr char FEFW_DISCORD_TITLE[] = "FE Fortune's Weave";
+static constexpr char FEFW_DISCORD_IMAGE[] =
+    "https://img-eshop.cdn.nintendo.net/i/"
+    "159bdf6c9f126feb35ae1123c370cf357bcf069fd5dda84d8d0c4f64ae097e40.jpg";
+// Discord loads it itself; a check from here (a HEAD request) failed against Nintendo's server
+// and swapped in the Eden logo once a game started, so it is used as it is.
+static const char* FefwImage() {
+    return FEFW_DISCORD_IMAGE;
+}
+
+void DiscordImpl::UpdateGameStatus(std::string_view, bool) {
     s64 start_time = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
     DiscordRichPresence presence{};
 
-    presence.largeImageKey = url.c_str();
-    presence.largeImageText = game_title.c_str();
+    presence.largeImageKey = FefwImage();
+    presence.largeImageText = FEFW_DISCORD_TITLE;
     presence.smallImageKey = DEFAULT_DISCORD_IMAGE;
     presence.smallImageText = DEFAULT_DISCORD_TEXT;
-    presence.state = game_title.c_str();
+    presence.state = FEFW_DISCORD_TITLE;
     presence.status_display_type = DiscordStatusDisplayType_State;
     presence.details = "Currently in game";
     presence.startTimestamp = start_time;
@@ -95,30 +108,7 @@ void DiscordImpl::UpdateGameStatus(std::string_view game_url, bool has_boxart) {
 void DiscordImpl::Update() {
     if (system.IsPoweredOn()) {
         system.GetAppLoader().ReadTitle(game_title);
-
-        // Used to format Icon URL for yuzu website game compatibility page
-        std::string icon_name = GetGameString(game_title);
-        auto const game_url = fmt::format(
-            "https://raw.githubusercontent.com/eden-emulator/boxart/refs/heads/master/img/{}.png",
-            icon_name);
-
-        httplib::SSLClient client(game_url);
-        client.set_connection_timeout(3);
-        client.set_read_timeout(3);
-        client.set_follow_location(true);
-
-#ifdef YUZU_BUNDLED_OPENSSL
-        client.load_ca_cert_store(kCert, sizeof(kCert));
-#endif
-
-        httplib::Request request{
-            .method = "HEAD",
-            .path = game_url,
-        };
-
-        auto res = client.send(request);
-        UpdateGameStatus(game_url, res && res->status == 200);
-
+        UpdateGameStatus({}, true);
         return;
     }
 
@@ -126,10 +116,13 @@ void DiscordImpl::Update() {
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
     DiscordRichPresence presence{};
-    presence.largeImageKey = DEFAULT_DISCORD_IMAGE;
-    presence.largeImageText = DEFAULT_DISCORD_TEXT;
-    presence.status_display_type = DiscordStatusDisplayType_Name;
-    presence.details = "Currently not in game";
+    presence.largeImageKey = FefwImage();
+    presence.largeImageText = FEFW_DISCORD_TITLE;
+    presence.smallImageKey = DEFAULT_DISCORD_IMAGE;
+    presence.smallImageText = DEFAULT_DISCORD_TEXT;
+    presence.state = FEFW_DISCORD_TITLE;
+    presence.status_display_type = DiscordStatusDisplayType_State;
+    presence.details = "Getting ready to play";
     presence.startTimestamp = start_time;
     Discord_UpdatePresence(&presence);
 }
