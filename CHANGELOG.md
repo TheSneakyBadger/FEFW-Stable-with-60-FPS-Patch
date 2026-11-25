@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.6.10
+
+A fix for some dialogue speakers looking squeezed on ultrawide screens, and mouse panning is remembered.
+
+- **Ultrawide: every dialogue speaker keeps their shape.** Since v1.7.6.8, a few speakers, Zarcone among them, showed up narrow and faded beside the dialogue text. Their picture isn't quite square, and one of the game's passes over it wasn't recognised, so it was squeezed twice. They now look like everyone else: whole and the right shape.
+- **Mouse panning stays on after a restart** ([#92](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/92)). It turned itself off every time Fortune's Eden started. It's now saved like other settings: once you turn it on (Controls → Player 1 → Mouse panning, or Ctrl + F9), it stays on. It still starts off for anyone who never turned it on.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.9](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.9).
+
 ## v1.7.6.9
 
 Closing Fortune's Eden no longer needs Task Manager, and Discord shows the game.
