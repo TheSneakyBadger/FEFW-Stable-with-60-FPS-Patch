@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.6.9
+
+Closing Fortune's Eden no longer needs Task Manager, and Discord shows the game.
+
+- **Closing no longer hangs forever** ([#94](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/94)). Sometimes the game didn't stop when you closed the window, and Fortune's Eden stayed open in the background until it was ended in Task Manager. Now, if the game hasn't stopped 20 seconds after you close the window, Fortune's Eden saves its settings and quits on its own. When you only stop the game, the "taking a long time to close" box now comes to the front instead of hiding behind the window. Each step of closing is written to the log, to find the cause.
+- **Discord shows FE Fortune's Weave** ([#62](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/62)). Your Discord status names the game from the moment Fortune's Eden opens, with the game's picture from Nintendo's eShop page instead of the Eden logo. Discord loads the picture from Nintendo; nothing is included in the download.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.8](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.8).
+
 ## v1.7.6.8
 
 The speaker beside the dialogue text is no longer cut off on ultrawide screens.

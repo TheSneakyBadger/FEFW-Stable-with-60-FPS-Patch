@@ -23,8 +23,9 @@ A portable, ready-to-play build of the Eden emulator for Windows (and Linux), ma
 
 It builds on Duck912's Fortune's Weave fork (eden-ns2-fe) and xDarkWindx's eden-fefw 1.12.
 
-## What's new in v1.7.6 (to v1.7.6.8)
+## What's new in v1.7.6 (to v1.7.6.9)
 
+- **Closing no longer hangs forever, and Discord shows FE Fortune's Weave** (v1.7.6.9, [#94](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/94), [#62](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/62)).
 - **Ultrawide: the speaker beside the dialogue text is no longer cut off** (v1.7.6.8).
 - **Fewer long slowdowns when video memory runs short** (v1.7.6.7, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)).
 - **The frame rate no longer stays locked low with NVIDIA Reflex until you open a menu** (v1.7.6.6, [#63](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/issues/63)).
