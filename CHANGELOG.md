@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7.6.8
+
+The speaker beside the dialogue text is no longer cut off on ultrawide screens.
+
+- **Ultrawide: the dialogue speaker is shown whole.** With the ultrawide patch, the character drawn beside the dialogue text was cut off at the edge of the old 16:9 area, the same place for every character. Fortune's Eden now draws the speaker with a wider view and lets their picture reach the left edge of the screen, so the speaker keeps their shape and nothing is cut off. Nothing changes without the ultrawide patch.
+- Built with v1.7.6.5's speed profile.
+- The compiled-code list that comes with Fortune's Eden has the newest entries from testing.
+
+Everything else is as in [v1.7.6.7](https://github.com/TheSneakyBadger/FEFW-Stable-with-60-FPS-Patch/releases/tag/v1.7.6.7).
+
 ## v1.7.6.7
 
 Fewer long slowdowns when video memory runs short.
