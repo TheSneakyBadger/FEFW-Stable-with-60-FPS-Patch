@@ -16,6 +16,7 @@
 #include <set>
 #include <tuple>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <cstdlib>
 #include <fstream>
@@ -216,6 +217,154 @@ void FefwUltrawideRoutes(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryMana
     }
 }
 
+// With the ultrawide patch, the speaker shown beside the dialogue text is cut at the
+// 16:9 edge. The game draws the speaker (a 2D mesh puppet) into its own 720x719 picture with a
+// square camera (x and y both 2/1520), then puts that picture on the UI as a 580x580 square whose
+// left side sits on the 16:9 edge (model translation -960, -540 in the 1920x1080 UI space). Parts
+// of the speaker left of the square were never drawn. Here the speaker camera is squeezed
+// sideways so it also takes in that much more on the left, and the UI square is stretched to the
+// left edge of the ultrawide screen by the same amount, so the speaker keeps its shape.
+// The speaker's camera buffer is shared with the game's full-picture passes over that picture
+// (a quad at +-760), so those get the original camera back.
+namespace FefwSpeakerWiden {
+// The extra width on the left as a share of the 580 wide square: (1290 - 960) / 580 for 3440x1440.
+float extra = 330.0f / 580.0f;
+std::array<u32, 4> original_row{};
+std::array<u32, 4> squeezed_row{};
+bool have_rows = false;
+// The square is only stretched while a speaker picture is being squeezed (it is redrawn about
+// every other frame), so a speaker whose camera is not recognised is left as the game draws it.
+std::chrono::steady_clock::time_point last_squeeze{};
+// Other pictures use the same kind of puppet camera (the save card's portrait), so a speaker
+// picture is only squeezed while the dialogue's speaker square is on screen.
+std::chrono::steady_clock::time_point last_square{};
+bool logged_speaker = false;
+bool logged_square = false;
+
+float F(u32 bits) {
+    return std::bit_cast<float>(bits);
+}
+
+void Speaker(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_memory,
+             bool is_indexed) {
+    const auto& regs = maxwell3d.regs;
+    const auto& cb = maxwell3d.state.shader_stages[0].const_buffers[3];
+    if (!cb.enabled || cb.address == 0 || cb.size < 64) {
+        return;
+    }
+    std::array<u32, 16> raw{};
+    gpu_memory.ReadBlockUnsafe(cb.address, raw.data(), sizeof(raw));
+    const auto& draw_state = maxwell3d.draw_manager.draw_state;
+    const u32 count = is_indexed ? draw_state.index_buffer.count : draw_state.vertex_buffer.count;
+    bool full_picture_pass = false;
+    if (count == 6 && regs.vertex_streams[0].IsEnabled()) {
+        std::array<float, 2> first{};
+        gpu_memory.ReadBlockUnsafe(regs.vertex_streams[0].Address(), first.data(),
+                                   sizeof(first));
+        // The quad covers the whole camera: half its size is 1/y scale (y is never changed).
+        const float half = F(raw[5]) > 0.0f ? 1.0f / F(raw[5]) : 0.0f;
+        full_picture_pass = half > 0.0f && std::abs(std::abs(first[0]) - half) < 1.0f &&
+                            std::abs(std::abs(first[1]) - half) < 1.0f;
+    }
+    // x and y scale are both about 2/1520 but not bit for bit equal (the picture is 720x719).
+    const bool square_camera =
+        F(raw[0]) > 0.0f && std::abs(F(raw[0]) - F(raw[5])) <= F(raw[5]) * 0.01f;
+    const bool is_original = square_camera && raw[1] == 0 && raw[2] == 0 && raw[4] == 0 &&
+                             raw[6] == 0 && raw[12] == 0 && raw[13] == 0 && raw[14] == 0 &&
+                             F(raw[15]) == 1.0f && std::abs(F(raw[10]) + 0.01f) < 0.0001f &&
+                             std::abs(F(raw[11]) - 0.1f) < 0.001f;
+    const bool is_squeezed = have_rows && raw[0] == squeezed_row[0] && raw[1] == squeezed_row[1] &&
+                             raw[2] == squeezed_row[2] && raw[3] == squeezed_row[3];
+    if (full_picture_pass) {
+        if (is_squeezed) {
+            std::copy(original_row.begin(), original_row.end(), raw.begin());
+            gpu_memory.WriteBlock(cb.address, raw.data(), 16);
+        }
+        return;
+    }
+    if (is_squeezed) {
+        last_squeeze = std::chrono::steady_clock::now();
+    }
+    if (!is_original ||
+        std::chrono::steady_clock::now() - last_square > std::chrono::milliseconds(500)) {
+        return;
+    }
+    // x' = k * x + b * w: the old -1..1 lands on the right part, the new left part is new room.
+    const float k = 1.0f / (1.0f + extra);
+    const float b = extra / (1.0f + extra);
+    std::copy(raw.begin(), raw.begin() + 4, original_row.begin());
+    raw[0] = std::bit_cast<u32>(F(raw[0]) * k);
+    raw[1] = std::bit_cast<u32>(F(raw[1]) * k);
+    raw[2] = std::bit_cast<u32>(F(raw[2]) * k);
+    raw[3] = std::bit_cast<u32>(F(raw[3]) * k + b * F(raw[15]));
+    std::copy(raw.begin(), raw.begin() + 4, squeezed_row.begin());
+    have_rows = true;
+    last_squeeze = std::chrono::steady_clock::now();
+    gpu_memory.WriteBlock(cb.address, raw.data(), 16);
+    if (!logged_speaker) {
+        logged_speaker = true;
+        LOG_INFO(Render_Vulkan, "Ultrawide: widened the dialogue speaker's picture by {:.0f}%",
+                 extra * 100.0f);
+    }
+}
+
+void Square(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_memory) {
+    const auto& cb = maxwell3d.state.shader_stages[0].const_buffers[3];
+    if (!cb.enabled || cb.address == 0 || cb.size < 136 * 4) {
+        return;
+    }
+    std::array<u32, 136> raw{};
+    gpu_memory.ReadBlockUnsafe(cb.address, raw.data(), sizeof(raw));
+    // UI camera wider than 1920 (the patch's), the square's place and size, and the speaker
+    // picture's texel size (1/719) next to it.
+    const float half_width = F(raw[0]) > 0.0f ? 1.0f / F(raw[0]) : 0.0f;
+    const float size = F(raw[132]);
+    const float texel = F(raw[112]);
+    // Already stretched (the game may not rewrite it every frame) still counts as on screen.
+    const bool stretched = F(raw[16]) > 1.0f && F(raw[19]) == -half_width;
+    const bool original = F(raw[16]) == 1.0f && F(raw[19]) == -960.0f;
+    if (half_width < 961.0f || half_width > 2000.0f || !(original || stretched) ||
+        raw[17] != 0 || raw[18] != 0 || raw[20] != 0 || F(raw[21]) != 1.0f ||
+        F(raw[23]) != -540.0f || size < 100.0f || size > 1080.0f || raw[133] != raw[132] ||
+        texel <= 0.0f || raw[113] != raw[112] || 1.0f / texel < 600.0f ||
+        1.0f / texel > 1000.0f) {
+        return;
+    }
+    last_square = std::chrono::steady_clock::now();
+    if (stretched) {
+        return;
+    }
+    if (!have_rows ||
+        std::chrono::steady_clock::now() - last_squeeze > std::chrono::milliseconds(250)) {
+        return;
+    }
+    extra = (half_width - 960.0f) / size;
+    raw[16] = std::bit_cast<u32>(1.0f + extra);
+    raw[19] = std::bit_cast<u32>(-half_width);
+    gpu_memory.WriteBlock(cb.address, raw.data(), 24 * 4);
+    if (!logged_square) {
+        logged_square = true;
+        LOG_INFO(Render_Vulkan, "Ultrawide: the dialogue speaker now reaches the screen's left edge");
+    }
+}
+
+void Apply(Tegra::Engines::Maxwell3D& maxwell3d, Tegra::MemoryManager& gpu_memory,
+           bool is_indexed) {
+    if (!Settings::values.fefw_ultrawide_active) {
+        return;
+    }
+    const auto& rt = maxwell3d.regs.rt[0];
+    // The speaker's picture differs per character (720x719, 736x726...): near square, 600-1000.
+    if (rt.width >= 600 && rt.width <= 1000 && rt.height >= 600 && rt.height <= 1000 &&
+        (rt.width > rt.height ? rt.width - rt.height : rt.height - rt.width) <= 32) {
+        Speaker(maxwell3d, gpu_memory, is_indexed);
+    } else if (rt.width >= 1280 && rt.width * 9 == rt.height * 16) {
+        Square(maxwell3d, gpu_memory);
+    }
+}
+} // namespace FefwSpeakerWiden
+
+
 DrawParams MakeDrawParams(const Tegra::Engines::Maxwell3D::DrawManager::State& draw_state, u32 num_instances, bool is_indexed) {
     DrawParams params{
         .base_instance = draw_state.base_instance,
@@ -341,6 +490,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
         }
     };
     FefwUltrawideRoutes(*maxwell3d, *gpu_memory);
+    FefwSpeakerWiden::Apply(*maxwell3d, *gpu_memory, is_indexed);
     FlushWork();
     BackStats::Mark(BackStats::FlushWork);
     gpu_memory->FlushCaching();
