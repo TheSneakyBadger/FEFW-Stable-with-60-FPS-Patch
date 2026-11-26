@@ -188,6 +188,19 @@ public:
     /// cached writes elsewhere skip its lock (Lichii).
     VideoCommon::PageFilter page_filter;
 
+    /// Fortune's Eden: device pages an image the GPU wrote was ever on (bits are never cleared),
+    /// and whether a sparse image was ever GPU-written (its pages aren't marked). A game read of
+    /// memory outside them has nothing to copy back, so it skips this cache's lock (#63: the
+    /// game's threads waited 0.6-1.5 s per 10 s for it while switching scenes in towns).
+    VideoCommon::PageFilter gpu_written_filter;
+    std::atomic<bool> sparse_gpu_written{false};
+
+    /// Whether [addr, addr + size) may hold an image the GPU wrote (no lock needed).
+    [[nodiscard]] bool MayHaveGpuWrites(DAddr addr, size_t size) const {
+        return sparse_gpu_written.load(std::memory_order_relaxed) ||
+               gpu_written_filter.Any(addr, size);
+    }
+
     /// Fortune's Eden: the 1 MiB pages of the game's memory images are on now (under the lock).
     [[nodiscard]] size_t ImagePageCount() const {
         return page_table.size();
@@ -495,6 +508,9 @@ private:
 
     /// Mark an image as modified from the GPU
     void MarkModification(ImageBase& image) noexcept;
+
+    /// Fortune's Eden: records image's pages in gpu_written_filter (before GpuModified is set).
+    void NoteGpuWritten(const ImageBase& image) noexcept;
 
     /// Synchronize image aliases, copying data if needed
     void SynchronizeAliases(ImageId image_id);

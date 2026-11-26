@@ -33,6 +33,7 @@
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
+#include "common/thread.h"
 #include "video_core/textures/decoders.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/gpu_logging/gpu_logging.h"
@@ -1018,6 +1019,10 @@ bool RasterizerVulkan::MustFlushRegion(DAddr addr, u64 size, VideoCommon::CacheT
         return false;
     }
     if (True(which & VideoCommon::CacheType::TextureCache)) {
+        // No image the GPU wrote was ever on this memory: nothing to copy back (#63).
+        if (!texture_cache.MayHaveGpuWrites(addr, size)) {
+            return false;
+        }
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
         std::scoped_lock lock{texture_cache.mutex};
         lock_timer.Acquired();
@@ -1046,12 +1051,19 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
         waits.read_buffer_work_ns.fetch_add(FefwGuestWaits::NowNs() - locked,
                                             std::memory_order_relaxed);
     }
-    {
+    // No image the GPU wrote was ever on this memory, so the texture cache has no area to give
+    // and the lock is skipped: the game's threads waited 0.6-1.5 s per 10 s for it while the
+    // GPU thread built a new town scene (#63).
+    if (!texture_cache.MayHaveGpuWrites(addr, size)) {
+        waits.read_texture_skipped.fetch_add(1, std::memory_order_relaxed);
+    } else {
         const u64 wait_start = FefwGuestWaits::NowNs();
         const VideoCommon::BackStats::LockTimer lock_timer{VideoCommon::BackStats::shared.other_locks};
         std::scoped_lock lock{texture_cache.mutex};
         lock_timer.Acquired();
         const u64 locked = FefwGuestWaits::NowNs();
+        FefwGuestWaits::NoteReadTextureWait(locked - wait_start,
+                                            Common::GetCurrentThreadNameForLog());
         const u64 entries_before = texture_cache.region_entries_walked;
         auto area = texture_cache.GetFlushArea(addr, size);
         waits.read_texture_entries.fetch_add(texture_cache.region_entries_walked - entries_before,
@@ -1254,6 +1266,7 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
     struct Snapshot {
         u64 writes, write_wait, write_work, areas, area, syncs, sync;
         u64 buffer_wait, buffer_work, texture_wait, texture_work, entries;
+        u64 skipped, waits_1ms, waits_50ms;
     };
     static Snapshot last{};
     auto& c = FefwGuestWaits::Get();
@@ -1262,7 +1275,12 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
                        c.read_area_ns.load(),          c.read_syncs.load(),
                        c.read_sync_ns.load(),          c.read_buffer_wait_ns.load(),
                        c.read_buffer_work_ns.load(),   c.read_texture_wait_ns.load(),
-                       c.read_texture_work_ns.load(),  c.read_texture_entries.load()};
+                       c.read_texture_work_ns.load(),  c.read_texture_entries.load(),
+                       c.read_texture_skipped.load(),  c.read_texture_waits_1ms.load(),
+                       c.read_texture_waits_50ms.load()};
+    const u64 longest_ns = c.read_texture_longest_ns.exchange(0, std::memory_order_relaxed);
+    const s32 longest_core = c.read_texture_longest_core.exchange(-1, std::memory_order_relaxed);
+    const u64 gpu_written_pages = texture_cache.gpu_written_filter.CountPages();
     size_t image_pages;
     {
         std::scoped_lock lock{texture_cache.mutex};
@@ -1290,6 +1308,20 @@ void RasterizerVulkan::MaybeReportGuestWaits() {
              ms(now.texture_work - last.texture_work),
              reads ? static_cast<double>(now.entries - last.entries) / static_cast<double>(reads)
                    : 0.0);
+    LOG_INFO(Render_Vulkan,
+             "Those reads and the texture cache's lock: {} skipped it (no texture the GPU drew to "
+             "was ever on that memory: {} MiB of the game's memory had one{}); {} waited over "
+             "1 ms and {} over 50 ms for it, the longest {:.1f} ms ({})",
+             now.skipped - last.skipped, gpu_written_pages * VideoCommon::PageFilter::PageSize >> 20,
+             texture_cache.sparse_gpu_written.load(std::memory_order_relaxed)
+                 ? ", and a sparse one: none skipped"
+                 : "",
+             now.waits_1ms - last.waits_1ms, now.waits_50ms - last.waits_50ms,
+             static_cast<double>(longest_ns) / 1e6,
+             longest_core >= 0 ? fmt::format("on emulated core {}, the game's main thread is "
+                                             "usually on core 0",
+                                             longest_core)
+                               : std::string{"not on an emulated core"});
     last = now;
 }
 

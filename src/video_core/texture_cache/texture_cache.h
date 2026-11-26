@@ -3126,6 +3126,7 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             continue;
         }
         if (True(overlap.flags & ImageFlagBits::GpuModified)) {
+            NoteGpuWritten(new_image);
             new_image.flags |= ImageFlagBits::GpuModified;
             new_image.last_gpu_write_frame =
                 (std::max)(new_image.last_gpu_write_frame, overlap.last_gpu_write_frame);
@@ -3913,7 +3914,19 @@ void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_vi
 }
 
 template <class P>
+void TextureCache<P>::NoteGpuWritten(const ImageBase& image) noexcept {
+    if (True(image.flags & ImageFlagBits::Sparse)) {
+        sparse_gpu_written.store(true, std::memory_order_relaxed);
+        return;
+    }
+    gpu_written_filter.Mark(image.cpu_addr, image.guest_size_bytes);
+}
+
+template <class P>
 void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
+    if (False(image.flags & ImageFlagBits::GpuModified)) {
+        NoteGpuWritten(image);
+    }
     image.flags |= ImageFlagBits::GpuModified;
     image.last_gpu_write_frame = frame_tick;
     image.modification_tick = ++modification_tick;
@@ -3948,6 +3961,7 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
     }
     image.modification_tick = most_recent_tick;
     if (any_modified) {
+        NoteGpuWritten(image);
         image.flags |= ImageFlagBits::GpuModified;
         image.last_gpu_write_frame = frame_tick;
     }
