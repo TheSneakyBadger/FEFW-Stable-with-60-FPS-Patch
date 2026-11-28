@@ -144,28 +144,35 @@ void StagingBufferPool::TickFrame() {
 }
 
 StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
+    // From Lichii #2576: the wrap used to move the cursor back to the start and only then ask
+    // whether the first region was still in use. When it was, that request took a separate
+    // buffer, but the cursor stayed at the start with the first region counted as checked, so
+    // the next requests were handed space in it over data whose copies had not run yet (uploads
+    // during a long load stall could hold other uploads' data for the rest of the session).
+    const u64 current_tick = scheduler.CurrentTick();
+    // The regions the cursor has left were written in this tick or before: marked first, so the
+    // check at the wrap never reads an older tick there.
+    std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + Region(iterator),
+              current_tick);
+    used_iterator = iterator;
+    const bool wraps = iterator + size >= stream_buffer_size;
+    // Asked before the cursor moves.
+    if (wraps && AreRegionsActive(0, Region(size) + 1)) {
+        // Avoid waiting for the previous usages to be free
+        return GetStagingBuffer(size, MemoryUsage::Upload);
+    }
     if (AreRegionsActive(Region(free_iterator) + 1,
                          (std::min)(Region(iterator + size) + 1, NUM_SYNCS))) {
         // Avoid waiting for the previous usages to be free
         return GetStagingBuffer(size, MemoryUsage::Upload);
     }
-    const u64 current_tick = scheduler.CurrentTick();
-    std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + Region(iterator),
-              current_tick);
-    used_iterator = iterator;
     free_iterator = (std::max)(free_iterator, iterator + size);
-
-    if (iterator + size >= stream_buffer_size) {
+    if (wraps) {
         std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + NUM_SYNCS,
                   current_tick);
         used_iterator = 0;
         iterator = 0;
         free_iterator = size;
-
-        if (AreRegionsActive(0, Region(size) + 1)) {
-            // Avoid waiting for the previous usages to be free
-            return GetStagingBuffer(size, MemoryUsage::Upload);
-        }
     }
     const size_t offset = iterator;
     iterator = Common::AlignUp(iterator + size, MAX_ALIGNMENT);

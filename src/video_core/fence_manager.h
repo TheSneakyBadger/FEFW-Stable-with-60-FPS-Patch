@@ -19,6 +19,7 @@
 
 #include "video_core/back_thread_stats.h"
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "video_core/delayed_destruction_ring.h"
@@ -189,7 +190,32 @@ protected:
 
     virtual ~FenceManager() {
         if constexpr (can_async_check) {
-            fence_thread.request_stop();
+            if (fence_thread.joinable()) {
+                // Too late to be safe: the derived destructor has run, and IsFenceSignaled and
+                // WaitFence are pure again.
+                LOG_ERROR(HW_GPU, "The fencing thread outlived the derived fence manager's "
+                                  "destructor, which must call StopFenceThread first");
+            }
+        }
+        StopFenceThread();
+    }
+
+    /// Stops and joins the fencing thread; later calls do nothing. A derived class must call it
+    /// first in its destructor: the thread calls IsFenceSignaled and WaitFence while it releases
+    /// fences, and once the derived destructor has run they are this class's pure functions
+    /// (a "pure virtual function call" ends the process with no log). From Lichii #2619.
+    void StopFenceThread() {
+        if constexpr (can_async_check) {
+            if (!fence_thread.joinable()) {
+                return;
+            }
+            {
+                // Under guard, as the fencing thread reads it before it sleeps: requested between
+                // that read and the sleep, the stop and its notify were lost, and the join never
+                // returned (closing a game hung; #94). From Lichii #2609.
+                std::scoped_lock lock{guard};
+                fence_thread.request_stop();
+            }
             cv.notify_all();
             fence_thread.join();
         }
