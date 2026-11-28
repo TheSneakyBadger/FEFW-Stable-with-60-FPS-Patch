@@ -558,6 +558,11 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                                        driver_id == VK_DRIVER_ID_MESA_TURNIP,
 
         .has_broken_spirv_clamp = driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS,
+        // Fortune's Eden: on unless EDEN_NAN_SAFE_MIN_MAX=0 (Eglantine 711a6058b).
+        .nan_safe_min_max = [] {
+            const char* const value = std::getenv("EDEN_NAN_SAFE_MIN_MAX");
+            return value == nullptr || value[0] != '0';
+        }(),
         .has_broken_spirv_position_input = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
         .has_broken_unsigned_image_offsets = false,
         .has_broken_signed_operations = false,

@@ -81,6 +81,9 @@ struct Profile {
 
     /// OpFClamp is broken and OpFMax + OpFMin should be used instead
     bool has_broken_spirv_clamp{};
+    /// Saturate, clamp and FMNMX return the operand that isn't NaN, as on the guest GPU
+    /// (SPIR-V NMin/NMax instead of FClamp/FMin/FMax, whose result is undefined for NaN).
+    bool nan_safe_min_max{};
     /// The Position builtin needs to be wrapped in a struct when used as an input
     bool has_broken_spirv_position_input{};
     /// Offset image operands with an unsigned type do not work
