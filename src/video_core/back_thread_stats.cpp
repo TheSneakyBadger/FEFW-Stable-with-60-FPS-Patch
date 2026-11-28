@@ -16,7 +16,12 @@ namespace {
 
 int ReadMode() {
     const char* const value = std::getenv("EDEN_BACK_THREAD_STATS");
-    if (value == nullptr || value[0] == '\0' || value[0] == '0') {
+    // Test 107b (#63): on unless asked off, so a scene switch that stays slow shows where the GPU
+    // thread's time goes (it holds the texture cache's lock the game's reads wait for).
+    if (value == nullptr || value[0] == '\0') {
+        return 1;
+    }
+    if (value[0] == '0') {
         return 0;
     }
     return value[0] == '2' ? 2 : 1;
@@ -58,7 +63,7 @@ void Report() {
         draw_thread = DrawThread{};
         return;
     }
-    if (now_time - window_time < std::chrono::seconds{4}) {
+    if (now_time - window_time < std::chrono::seconds{10}) {
         return;
     }
     const double seconds = std::chrono::duration<double>(now_time - window_time).count();
